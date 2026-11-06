@@ -1,0 +1,28 @@
+{
+  "id": "decade-71e626",
+  "title": "Prototype stage",
+  "body": "decade is a GUI session and pane multiplexer for agent workflows, after the\nshape of herdr. A session holds panes. The main pane is a chat with an agent\nharness. Other panes are a terminal, a code viewer, a drawing surface, and\nanything else that speaks the decade pane protocol, whether built into the host\nor a separate program. Every pane is reachable by the harness, so a request in\nchat becomes commands to a pane: scroll to this function, highlight these\nlines, open these three files side by side, draw this diagram with the drawing\nprimitives.\n\nTwo rules shape the whole thing. The UI pretends it has the limits of a TUI:\na grid of character cells, a monospace font, no proportional text. Pixel\nrendering is allowed only for what could not be built any other way, such as\na diagram or an image. And nothing is written into the README or `CLAUDE.md`\nuntil something runs; the description above lives here for that reason.\n\nThe code today is `src/main.rs` printing hello world. Nothing in this\nmilestone writes pane code. It settles the four questions below, because each\none changes what a pane is, and pane code written before them is written\nagainst a guess.\n\n## Pieces\n\n| Decision | Why it comes first |\n|---|---|\n| Pane primitive: cell grid with pixel regions, or free pixels | Fixes what a pane sends, which is the protocol's whole vocabulary |\n| Pane transport: pty, socket, or both | Fixes how an existing TUI tool becomes a pane, and where the agent channel runs |\n| Host renderer: wgpu directly, or a toolkit | Fixes how pixel-exact the grid is, and what the host depends on |\n| Harness chat pane: native or a pty program | Fixes whether the harness is replaceable, and whether it goes through the same protocol as everything else |\n\nThey belong together because each answer narrows the others. A cell grid\nprimitive makes the pty the obvious transport, the pty makes libghostty-vt\nthe obvious parser, and a grid-only host makes a toolkit's text layout a\nliability.\n\n## Out of scope\n\n- A remote-machine protocol in herdr's shape. It rides on whatever transport\n  wins here, and gets its own milestone once that is known.\n- The first decade-aware external tools. They need the protocol to exist.\n\n## Open\n\n- Whether a first wgpu window with placeholder panes is part of this\n  milestone or lands beside it. The window does not depend on any of the\n  four decisions as long as its panes draw nothing real.",
+  "type": "milestone",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-06T02:21:59.75357826Z",
+  "updated_at": "2026-11-06T02:21:59.75357826Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "none",
+      "branch": "main"
+    },
+    "closed": null
+  }
+}
