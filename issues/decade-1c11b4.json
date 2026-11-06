@@ -1,0 +1,28 @@
+{
+  "id": "decade-1c11b4",
+  "title": "Does the host draw with wgpu directly or through a toolkit?",
+  "body": "The host has to draw a grid of character cells for every pane, pixel regions\nover some of them, and its own chrome: pane borders, a session switcher, a\nstatus line. The TUI rule means the chrome is cells too. This decision is\nwhat the host draws with.\n\n## Options\n\n| Option | Grid alignment | Pixel regions | What it brings |\n|---|---|---|---|\n| wgpu directly, own glyph atlas | Exact, by construction | A second textured pass | A renderer we own, a few hundred lines |\n| egui on wgpu | Approximate; its text layout is proportional first | Through a paint callback | Widgets the TUI rule forbids anyway |\n| iced | Approximate, same reason | Through a custom shader widget | The Elm architecture, again mostly unused |\n| gpui | Good; built for an editor | Through custom elements | A widget layer the protocol replaces, and an API that moves with Zed |\n\nA cell-grid renderer is small and well understood: a monospace glyph atlas,\none instanced quad per cell, one pass for backgrounds, one for glyphs, one\nfor pixel regions. Every terminal emulator is one. Shaping and rasterising\ncome from a crate, `cosmic-text` or `swash`, which also covers font fallback\nand emoji inside a monospace grid.\n\nA toolkit brings text layout and widgets. Under the TUI rule the host uses\nneither: its widgets are cells. What is left of a toolkit is the window and\nevent loop, which `winit` gives on its own.\n\n## Lean\n\nwgpu directly. A toolkit would sit between the grid and the screen and fight\nit for alignment, and the thing it adds is the thing the design forbids.\n\n## Cost\n\n- The host owns font loading, atlas management and cell metrics. These are\n  solved problems with reference code in every terminal emulator, but they\n  are ours to maintain.\n- No toolkit means no free input widgets: a text field for the chat pane is\n  written against the grid.\n\n## Open\n\n- Whether `libghostty`'s renderer is usable on its own, which would make the\n  grid renderer a dependency rather than a module. Its public surface as of\n  this writing is the VT parser, `libghostty-vt`; this needs checking before\n  any renderer code is written.\n- Which shaping crate. `cosmic-text` does shaping and fallback together;\n  `swash` is lower level.",
+  "type": "decision",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-71e626",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-06T02:23:01.657356117Z",
+  "updated_at": "2026-11-06T02:23:01.657356117Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "none",
+      "branch": "main"
+    },
+    "closed": null
+  }
+}
