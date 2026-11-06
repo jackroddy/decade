@@ -1,0 +1,16 @@
+[package]
+name = "decade"
+version = "0.1.0"
+description = "dynamic extensible collaborative agent development environment"
+readme = "README.md"
+exclude = ["CLAUDE.md", ".claude", "tmp-claude"]
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+authors = ["Jack Roddy <jack.w.roddy@gmail.com>"]
+repository = "https://github.com/jackroddy/decade"
+
+[dependencies]
+pollster = "1"
+wgpu = "30"
+winit = "0.30"
