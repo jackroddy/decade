@@ -1,13 +1,11 @@
 mod clipboard;
 
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use rustix::fs::MemfdFlags;
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
@@ -58,7 +56,7 @@ use wayland_protocols::wp::viewporter::client::{
     wp_viewport::WpViewport, wp_viewporter::WpViewporter,
 };
 
-use crate::compositor::{ANOTHER_SERVER, viewer_socket_path};
+use crate::control::connect_or_start;
 use crate::hypr::{self, Hyprland};
 use crate::inhibit::Shortcuts;
 use crate::palette::BACKGROUND;
@@ -68,7 +66,6 @@ use clipboard::Clipboard;
 const PROTOCOL_VERSION: u32 = 1;
 const LOCAL: u32 = 0;
 const DEFAULT_SIZE: (u32, u32) = (1280, 800);
-const START_TIMEOUT: Duration = Duration::from_secs(10);
 
 // xkb's eight real modifiers have fixed indices, Shift
 // first; Caps Lock is Lock, and the standard keymaps
@@ -182,51 +179,6 @@ fn fail(message: &str) -> ! {
 
 fn missing(name: &str) -> ! {
     fail(&format!("the host has no {name}"))
-}
-
-fn connect_or_start() -> Result<UnixStream, String> {
-    let path = viewer_socket_path();
-    if let Ok(stream) = UnixStream::connect(&path) {
-        return Ok(stream);
-    }
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let log_path = path.with_file_name("server.log");
-    let log = log_path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| OpenOptions::new().create(true).append(true).open(&log_path))
-        .map_err(|error| format!("{}: {error}", log_path.display()))?;
-    let log_out = log.try_clone().map_err(|error| error.to_string())?;
-    let mut child = Command::new(exe)
-        .arg("server")
-        .process_group(0)
-        .stdin(Stdio::null())
-        .stdout(log_out)
-        .stderr(log)
-        .spawn()
-        .map_err(|error| format!("decade server did not start: {error}"))?;
-    let start = Instant::now();
-    let mut lost = false;
-    loop {
-        std::thread::sleep(Duration::from_millis(50));
-        if let Ok(stream) = UnixStream::connect(&path) {
-            std::thread::spawn(move || child.wait());
-            return Ok(stream);
-        }
-        if !lost && let Ok(Some(status)) = child.try_wait() {
-            if status.code() != Some(ANOTHER_SERVER) {
-                return Err(format!("decade server exited before it answered: {status}"));
-            }
-            // the server holding the lock answers at the same path
-            lost = true;
-        }
-        if start.elapsed() > START_TIMEOUT {
-            return Err(format!(
-                "decade server did not answer at {}",
-                path.display()
-            ));
-        }
-    }
 }
 
 /// A 1×1 buffer of the background colour, for the window behind the frame.

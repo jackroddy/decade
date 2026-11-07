@@ -46,6 +46,10 @@ command line and what the tool writes.
   a hello that claims a pane, messages addressed to a pane and forwarded to
   its occupant, `focus` and `panes` for decade itself, and an error line for
   anything else. `docs/protocol.md` has the details.
+- `decade start`, `decade stop`, `decade restart` and `decade status`
+  control the server. `start` runs a server in the background and opens no
+  window. `stop` ends the server and every program in its panes. `status`
+  prints the server's pid, and exits with 1 when no server is running.
 - `--class <app id>` sets the window's app id, for window rules. The default
   is `decade`.
 - Super with h, j, k or l moves focus between panes by direction,

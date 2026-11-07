@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::io::OwnedFd;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -10,7 +9,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags};
-use rustix::fs::FlockOperation;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::{Buffer as _, Fourcc, Modifier};
 use smithay::backend::input::{
@@ -88,6 +86,7 @@ use smithay::{
 
 use crate::apps;
 use crate::channel::{Host, Out, Router};
+use crate::control::{self, viewer_socket_path};
 use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::gpu::Gpu;
 use crate::hypr::Hyprland;
@@ -289,7 +288,7 @@ pub fn run() {
     if let Some(dir) = viewer_path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _lock = lock_server(&viewer_path.with_file_name("server.lock"));
+    let _lock = control::lock_server();
 
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new().unwrap();
     let display: Display<State> = Display::new().unwrap();
@@ -557,45 +556,6 @@ pub fn run() {
     }
     let _ = std::fs::remove_file(&state.env.channel);
     let _ = std::fs::remove_file(&viewer_path);
-}
-
-/// The exit status of a server that found another server running.
-pub const ANOTHER_SERVER: i32 = 3;
-
-fn lock_server(path: &Path) -> File {
-    let lock = match OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(path)
-    {
-        Ok(lock) => lock,
-        Err(error) => {
-            eprintln!("decade: {}: {error}", path.display());
-            std::process::exit(1);
-        }
-    };
-    match rustix::fs::flock(&lock, FlockOperation::NonBlockingLockExclusive) {
-        Ok(()) => lock,
-        Err(rustix::io::Errno::WOULDBLOCK) => {
-            eprintln!(
-                "decade: another server holds {}, so this one is exiting",
-                path.display()
-            );
-            std::process::exit(ANOTHER_SERVER);
-        }
-        Err(error) => {
-            eprintln!("decade: {} would not lock: {error}", path.display());
-            std::process::exit(1);
-        }
-    }
-}
-
-pub fn viewer_socket_path() -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    dir.join("decade").join("viewer.sock")
 }
 
 fn channel_path() -> PathBuf {
