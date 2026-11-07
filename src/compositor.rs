@@ -560,6 +560,7 @@ impl State {
         let id = self.layout.add_transient(name.clone());
         self.router.add_pane(name.clone());
         self.spawn_terminal(&name, &[]);
+        self.relayout();
         self.focus(id);
     }
 
@@ -570,6 +571,7 @@ impl State {
         let name = pane.name.clone();
         self.layout.remove(id);
         self.router.remove_pane(&name);
+        self.relayout();
         let focused = self.layout.focused;
         self.focus(focused);
     }
@@ -1083,6 +1085,7 @@ impl CompositorHandler for State {
                         .unique_name(app_id.as_deref().unwrap_or("window"));
                     let id = self.layout.add_transient(name.clone());
                     self.router.add_pane(name);
+                    self.relayout();
                     id
                 }
             };
