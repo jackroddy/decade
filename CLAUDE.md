@@ -45,6 +45,13 @@ says whether the interface moved.
 The reader keeps an arm for the old layout by default. A breaking release may
 drop that arm, listed under `### Removed`.
 
+**Windows during development.** A decade window opens on a headless Hyprland
+output named `headless-dev`, kept off the real monitors by rules in Jack's
+Hyprland config. Run `scripts/devscreen` before starting decade so the output
+exists, and take screenshots with `scripts/devscreen shot FILE`. Keys cannot
+be sent to that window from a script, so anything that needs typing is checked
+by Jack.
+
 ## checks
 
 ```console

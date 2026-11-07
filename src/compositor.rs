@@ -33,6 +33,7 @@ use smithay::reexports::wayland_server::backend::{ClientData, ClientId, Disconne
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_seat};
 use smithay::reexports::wayland_server::{Client, Display, DisplayHandle};
+use smithay::reexports::winit::platform::wayland::WindowAttributesExtWayland;
 use smithay::reexports::winit::window::Window;
 use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Transform};
 use smithay::wayland::buffer::BufferHandler;
@@ -94,7 +95,9 @@ pub fn run() {
     let display: Display<State> = Display::new().unwrap();
     let dh = display.handle();
 
-    let attributes = Window::default_attributes().with_title("decade");
+    let attributes = Window::default_attributes()
+        .with_title("decade")
+        .with_name("decade", "decade");
     let (mut backend, winit) = winit::init_from_attributes::<GlesRenderer>(attributes).unwrap();
 
     let mut dmabuf_state = DmabufState::new();

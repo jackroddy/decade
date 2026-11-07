@@ -1,0 +1,32 @@
+#!/bin/sh
+# Create or remove the headless Hyprland output that decade opens on during
+# development. The monitor, workspace and window rules for it live in
+# ~/.config/hypr; this only makes the output exist.
+#
+#   scripts/devscreen        create headless-dev if it is missing
+#   scripts/devscreen off    remove it
+#   scripts/devscreen shot FILE   screenshot it to FILE
+
+set -eu
+
+name=headless-dev
+
+exists() {
+    hyprctl -j monitors | grep -q "\"name\": \"$name\""
+}
+
+case ${1:-on} in
+on)
+    exists || hyprctl output create headless "$name"
+    ;;
+off)
+    exists && hyprctl output remove "$name"
+    ;;
+shot)
+    grim -o "$name" "$2"
+    ;;
+*)
+    echo "usage: scripts/devscreen [on|off|shot FILE]" >&2
+    exit 2
+    ;;
+esac
