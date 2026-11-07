@@ -20,18 +20,17 @@ repository = "https://github.com/jackroddy/decade"
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 fontdb = "0.24.0"
-raw-window-handle = "0.6"
 rmcp = { version = "3", default-features = false, features = ["server", "transport-streamable-http-server"] }
-rustix = { version = "0.38", features = ["net"] }
+rustix = { version = "0.38", features = ["event", "net"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "renderer_gl", "wayland_frontend", "desktop"] }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
+smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "backend_gbm", "renderer_gl", "wayland_frontend", "desktop"] }
 swash = "0.2.10"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "rt"] }
 toml = "0.9"
-wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 
 [dev-dependencies]
 rmcp = { version = "3", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }

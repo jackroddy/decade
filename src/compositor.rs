@@ -9,10 +9,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use smithay::backend::allocator::dmabuf::Dmabuf;
-use smithay::backend::egl::EGLDevice;
+use smithay::backend::allocator::{Buffer as _, Fourcc, Modifier};
 use smithay::backend::input::{
-    AbsolutePositionEvent, Axis as InputAxis, AxisSource, ButtonState, Event, InputEvent, KeyState,
-    KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+    Axis as InputAxis, AxisRelativeDirection, AxisSource, ButtonState, KeyState,
 };
 use smithay::backend::renderer::element::solid::SolidColorRenderElement;
 use smithay::backend::renderer::element::surface::{
@@ -28,9 +27,8 @@ use smithay::backend::renderer::gles::{
 use smithay::backend::renderer::utils::{
     CommitCounter, draw_render_elements, on_commit_buffer_handler,
 };
-use smithay::backend::renderer::{Color32F, Frame, ImportDma, Renderer};
-use smithay::backend::winit::{self, WinitEvent, WinitGraphicsBackend, WinitInput};
-use smithay::input::keyboard::{FilterResult, Keysym, ModifiersState, keysyms};
+use smithay::backend::renderer::{Bind, Color32F, Frame, ImportDma, Renderer};
+use smithay::input::keyboard::{FilterResult, Keycode, Keysym, ModifiersState, keysyms};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, CursorImageStatus, MotionEvent};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
@@ -38,15 +36,13 @@ use smithay::reexports::calloop::channel::{self as calloop_channel, Event as Cha
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{
-    EventLoop, Interest, LoopHandle, LoopSignal, Mode as CalloopMode, PostAction, RegistrationToken,
+    EventLoop, Interest, LoopHandle, Mode as CalloopMode, PostAction, RegistrationToken,
 };
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_seat};
 use smithay::reexports::wayland_server::{Client, Display, DisplayHandle};
-use smithay::reexports::winit::platform::wayland::WindowAttributesExtWayland;
-use smithay::reexports::winit::window::Window;
 use smithay::utils::{
     Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Serial, Size, Transform,
 };
@@ -82,8 +78,8 @@ use smithay::{
 use crate::apps;
 use crate::channel::{Host, Out, Router};
 use crate::draw::{Face, Scene, Shape, TextCache};
-use crate::hypr::{self, Hyprland};
-use crate::inhibit::{self, Shortcuts};
+use crate::gpu::Gpu;
+use crate::hypr::Hyprland;
 use crate::mcp;
 use crate::menu::{Action, Menu, MenuKey, Outcome};
 use crate::palette::ACCENT;
@@ -93,10 +89,12 @@ use crate::panes::{
 };
 use crate::settings::{self, Settings};
 use crate::text::Font;
+use crate::wire::{Decoder, Outbox, Plane, ServerMessage, ViewerMessage, Workspace};
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
 const BTN_LEFT: u32 = 0x110;
+const POOL_SIZE: usize = 3;
 const RESIZE_STEP: u32 = 2;
 
 enum Drag {
@@ -137,8 +135,6 @@ struct ChildEnv {
 }
 
 pub struct State {
-    shortcuts: Option<Shortcuts>,
-    hyprland: Option<Hyprland>,
     repeat: Repeat,
     repeating: Option<(u32, RegistrationToken)>,
     compositor_state: CompositorState,
@@ -151,9 +147,14 @@ pub struct State {
     _viewporter_state: ViewporterState,
     seat: Seat<State>,
     output: Output,
-    backend: WinitGraphicsBackend<GlesRenderer>,
+    gpu: Gpu,
+    size: Size<i32, Physical>,
+    viewers: HashMap<usize, Viewer>,
+    next_viewer: usize,
+    active: Option<usize>,
+    wants_redraw: bool,
+    cursor: CursorImageStatus,
     display_handle: DisplayHandle,
-    loop_signal: LoopSignal,
     loop_handle: LoopHandle<'static, State>,
     router: Router,
     sockets: HashMap<usize, UnixStream>,
@@ -177,6 +178,39 @@ pub struct State {
     start: Instant,
 }
 
+struct Viewer {
+    stream: UnixStream,
+    outbox: Outbox,
+    welcomed: bool,
+    logical: (u32, u32),
+    scale: u32,
+    formats: Vec<(Fourcc, Modifier)>,
+    linear: bool,
+    pool: Vec<Slot>,
+    next_buffer: u32,
+    ready: bool,
+    wants_frame: bool,
+    keys: Vec<u32>,
+    buttons: Vec<u32>,
+}
+
+struct Slot {
+    id: u32,
+    dmabuf: Dmabuf,
+    size: Size<i32, Physical>,
+    lent: bool,
+}
+
+struct Scroll {
+    time: u32,
+    source: u32,
+    axis: u32,
+    amount: f64,
+    steps: i32,
+    stop: bool,
+    inverted: bool,
+}
+
 #[derive(Clone, Copy)]
 struct Repeat {
     delay: i32,
@@ -186,7 +220,6 @@ struct Repeat {
 pub struct Commands {
     pub chat: Option<Vec<String>>,
     pub code: Option<Vec<String>>,
-    pub class: String,
 }
 
 pub fn run(commands: Commands) {
@@ -194,15 +227,18 @@ pub fn run(commands: Commands) {
     let display: Display<State> = Display::new().unwrap();
     let dh = display.handle();
 
-    let attributes = Window::default_attributes()
-        .with_title("decade")
-        .with_name(&commands.class, &commands.class);
-    let (mut backend, winit) = winit::init_from_attributes::<GlesRenderer>(attributes).unwrap();
+    let mut gpu = match Gpu::open() {
+        Ok(gpu) => gpu,
+        Err(error) => {
+            eprintln!("decade: no GPU to render on: {error}");
+            std::process::exit(1);
+        }
+    };
 
     let mut dmabuf_state = DmabufState::new();
-    let formats = backend.renderer().dmabuf_formats();
-    let rounded = backend
-        .renderer()
+    let formats = gpu.renderer.dmabuf_formats();
+    let rounded = gpu
+        .renderer
         .compile_custom_pixel_shader(
             include_str!("rounded.frag"),
             &[
@@ -213,11 +249,9 @@ pub fn run(commands: Commands) {
             ],
         )
         .expect("the rounded rect shader compiles");
-    let feedback = render_node(backend.renderer()).and_then(|node| {
-        DmabufFeedbackBuilder::new(node, formats.clone())
-            .build()
-            .map_err(|error| error.to_string())
-    });
+    let feedback = DmabufFeedbackBuilder::new(gpu.node.dev_id(), formats.clone())
+        .build()
+        .map_err(|error| error.to_string());
     let _dmabuf_global = match feedback {
         Ok(feedback) => dmabuf_state.create_global_with_default_feedback::<State>(&dh, &feedback),
         Err(error) => {
@@ -228,8 +262,8 @@ pub fn run(commands: Commands) {
         }
     };
 
-    let size = backend.window_size();
-    let scale = backend.window().scale_factor();
+    let size: Size<i32, Physical> = (1920, 1080).into();
+    let scale = 1.0;
     let mode = Mode {
         size,
         refresh: REFRESH_MILLIHERTZ,
@@ -303,22 +337,37 @@ pub fn run(commands: Commands) {
             },
         )
         .unwrap();
+    let viewer_path = viewer_socket_path();
+    if let Some(dir) = viewer_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if UnixStream::connect(&viewer_path).is_ok() {
+        eprintln!(
+            "decade: a server is already running at {}",
+            viewer_path.display()
+        );
+        std::process::exit(1);
+    }
+    let _ = std::fs::remove_file(&viewer_path);
+    let viewer_listener = UnixListener::bind(&viewer_path).unwrap();
+    viewer_listener.set_nonblocking(true).unwrap();
     handle
-        .insert_source(winit, |event, _, state| match event {
-            WinitEvent::Resized { size, scale_factor } => {
-                state.resized(size.w as u32, size.h as u32, scale_factor)
-            }
-            WinitEvent::Input(event) => state.input(event),
-            WinitEvent::Redraw => {
-                if let Some(shortcuts) = &mut state.shortcuts {
-                    shortcuts.dispatch();
+        .insert_source(
+            Generic::new(viewer_listener, Interest::READ, CalloopMode::Level),
+            |_, listener, state| {
+                loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => state.viewer_connected(stream),
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(error) => {
+                            eprintln!("decade: accepting a viewer failed: {error}");
+                            break;
+                        }
+                    }
                 }
-                state.redraw();
-            }
-            WinitEvent::CloseRequested => state.loop_signal.stop(),
-            WinitEvent::Focus(false) => state.stop_repeat(),
-            WinitEvent::Focus(true) => {}
-        })
+                Ok(PostAction::Continue)
+            },
+        )
         .unwrap();
 
     let channel_path = channel_path();
@@ -362,16 +411,7 @@ pub fn run(commands: Commands) {
             None
         }
     };
-    let shortcuts = match inhibit::inhibit(backend.window()) {
-        Ok(shortcuts) => Some(shortcuts),
-        Err(error) => {
-            eprintln!("decade: Hyprland keeps its shortcuts while decade has focus: {error}");
-            None
-        }
-    };
     let mut state = State {
-        shortcuts,
-        hyprland,
         repeat,
         repeating: None,
         compositor_state: CompositorState::new::<State>(&dh),
@@ -384,9 +424,14 @@ pub fn run(commands: Commands) {
         _viewporter_state: ViewporterState::new::<State>(&dh),
         seat,
         output,
-        backend,
+        gpu,
+        size,
+        viewers: HashMap::new(),
+        next_viewer: 0,
+        active: None,
+        wants_redraw: true,
+        cursor: CursorImageStatus::default_named(),
         display_handle: dh,
-        loop_signal: event_loop.get_signal(),
         loop_handle: handle.clone(),
         router,
         sockets: HashMap::new(),
@@ -414,7 +459,6 @@ pub fn run(commands: Commands) {
         start: Instant::now(),
     };
 
-    state.watch_hyprland();
     state.spawn_terminal("terminal", &[]);
     if let Some(chat) = &commands.chat {
         state.spawn_terminal("chat", chat);
@@ -422,9 +466,10 @@ pub fn run(commands: Commands) {
     if let Some(code) = &commands.code {
         state.spawn_terminal("code", code);
     }
-    state.backend.window().request_redraw();
     event_loop
         .run(None, &mut state, |state| {
+            state.render_viewers();
+            state.flush_viewers();
             state.display_handle.flush_clients().unwrap();
         })
         .unwrap();
@@ -433,6 +478,14 @@ pub fn run(commands: Commands) {
         let _ = child.kill();
     }
     let _ = std::fs::remove_file(&state.env.channel);
+    let _ = std::fs::remove_file(&viewer_path);
+}
+
+pub fn viewer_socket_path() -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    dir.join("decade").join("viewer.sock")
 }
 
 fn channel_path() -> PathBuf {
@@ -501,54 +554,417 @@ impl State {
         }
     }
 
-    fn watch_hyprland(&mut self) {
-        let Some(hyprland) = &self.hyprland else {
+    fn request_redraw(&mut self) {
+        self.wants_redraw = true;
+    }
+
+    fn viewer_connected(&mut self, stream: UnixStream) {
+        if stream.set_nonblocking(true).is_err() {
+            return;
+        }
+        let Ok(reader) = stream.try_clone() else {
             return;
         };
-        let stream = match hyprland.events() {
-            Ok(stream) => stream,
-            Err(error) => {
-                eprintln!("decade: Hyprland's event socket did not open: {error}");
-                return;
-            }
-        };
-        let mut buffer: Vec<u8> = Vec::new();
-        let inserted = self.loop_handle.insert_source(
-            Generic::new(stream, Interest::READ, CalloopMode::Level),
-            move |_, stream, state| {
-                let mut chunk = [0u8; 4096];
-                loop {
-                    match (&**stream).read(&mut chunk) {
-                        Ok(0) => return Ok(PostAction::Remove),
-                        Ok(n) => {
-                            buffer.extend_from_slice(&chunk[..n]);
-                            let mut recount = false;
-                            while let Some(end) = buffer.iter().position(|&b| b == b'\n') {
-                                let line: Vec<u8> = buffer.drain(..=end).collect();
-                                recount |= hypr::wants_recount(&String::from_utf8_lossy(&line));
-                            }
-                            if recount {
-                                state.recount_alone();
-                            }
-                        }
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            return Ok(PostAction::Continue);
-                        }
-                        Err(_) => return Ok(PostAction::Remove),
-                    }
-                }
+        let id = self.next_viewer;
+        self.next_viewer += 1;
+        self.viewers.insert(
+            id,
+            Viewer {
+                stream,
+                outbox: Outbox::new(),
+                welcomed: false,
+                logical: (0, 0),
+                scale: 120,
+                formats: Vec::new(),
+                linear: false,
+                pool: Vec::new(),
+                next_buffer: 0,
+                ready: false,
+                wants_frame: true,
+                keys: Vec::new(),
+                buttons: Vec::new(),
             },
         );
-        if inserted.is_ok() {
-            self.recount_alone();
+        let mut decoder = Decoder::new();
+        let inserted = self.loop_handle.insert_source(
+            Generic::new(reader, Interest::READ, CalloopMode::Level),
+            move |_, reader, state| {
+                let open = match decoder.receive(reader) {
+                    Ok(open) => open,
+                    Err(error) => {
+                        state.viewer_failed(id, &error.to_string());
+                        return Ok(PostAction::Remove);
+                    }
+                };
+                loop {
+                    match decoder.next_viewer_message() {
+                        Ok(Some(message)) => state.viewer_message(id, message),
+                        Ok(None) => break,
+                        Err(error) => {
+                            state.viewer_failed(id, &error.to_string());
+                            return Ok(PostAction::Remove);
+                        }
+                    }
+                }
+                if !open || !state.viewers.contains_key(&id) {
+                    state.viewer_gone(id);
+                    return Ok(PostAction::Remove);
+                }
+                Ok(PostAction::Continue)
+            },
+        );
+        if inserted.is_err() {
+            self.viewers.remove(&id);
         }
     }
 
-    fn recount_alone(&mut self) {
-        let alone = self.hyprland.as_ref().and_then(Hyprland::alone);
-        if let (Some(alone), Some(shortcuts)) = (alone, &mut self.shortcuts) {
-            shortcuts.set(alone);
+    fn viewer_failed(&mut self, id: usize, message: &str) {
+        self.send(
+            id,
+            ServerMessage::Error {
+                code: 1,
+                message: message.to_string(),
+            },
+        );
+        self.flush_viewers();
+        self.viewer_gone(id);
+    }
+
+    fn viewer_gone(&mut self, id: usize) {
+        let Some(viewer) = self.viewers.remove(&id) else {
+            return;
+        };
+        for keycode in viewer.keys {
+            self.keyboard(keycode, false, self.start.elapsed().as_millis() as u32);
         }
+        if self.active == Some(id) {
+            self.active = self.viewers.keys().next().copied();
+            self.apply_active_size();
+        }
+    }
+
+    fn send(&mut self, id: usize, message: ServerMessage) {
+        if let Some(viewer) = self.viewers.get_mut(&id)
+            && viewer.outbox.push_server_message(message).is_err()
+        {
+            eprintln!("decade: a message to a viewer could not be encoded");
+        }
+    }
+
+    fn flush_viewers(&mut self) {
+        let mut failed = Vec::new();
+        for (&id, viewer) in &mut self.viewers {
+            if !viewer.outbox.is_empty() && viewer.outbox.send(&viewer.stream).is_err() {
+                failed.push(id);
+            }
+        }
+        for id in failed {
+            self.viewer_gone(id);
+        }
+    }
+
+    fn make_active(&mut self, id: usize) {
+        if self.active != Some(id) {
+            self.active = Some(id);
+            self.apply_active_size();
+        }
+    }
+
+    fn apply_active_size(&mut self) {
+        let Some(viewer) = self.active.and_then(|id| self.viewers.get(&id)) else {
+            return;
+        };
+        let (width, height) = viewer.logical;
+        let scale = viewer.scale;
+        if width == 0 || height == 0 {
+            return;
+        }
+        let physical = |logical: u32| (logical as f64 * scale as f64 / 120.0).round() as u32;
+        self.resized(physical(width), physical(height), scale as f64 / 120.0);
+        let ids: Vec<usize> = self.viewers.keys().copied().collect();
+        for id in ids {
+            self.send(
+                id,
+                ServerMessage::Output {
+                    width,
+                    height,
+                    scale,
+                },
+            );
+        }
+    }
+
+    fn viewer_message(&mut self, id: usize, message: ViewerMessage) {
+        let now = self.start.elapsed().as_millis() as u32;
+        match message {
+            ViewerMessage::Hello {
+                version,
+                width,
+                height,
+                scale,
+                ..
+            } => {
+                if version < 1 {
+                    self.viewer_failed(id, "decade speaks protocol version 1");
+                    return;
+                }
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.welcomed = true;
+                    viewer.logical = (width, height);
+                    viewer.scale = scale;
+                    viewer.ready = true;
+                }
+                self.send(id, ServerMessage::Welcome { version: 1 });
+                self.send(
+                    id,
+                    ServerMessage::Workspaces {
+                        workspaces: vec![Workspace {
+                            id: 0,
+                            name: "decade".to_string(),
+                        }],
+                    },
+                );
+                self.send(id, ServerMessage::Showing { id: 0 });
+                self.active = Some(id);
+                self.apply_active_size();
+                self.send_cursor(id);
+                self.request_redraw();
+            }
+            ViewerMessage::Formats { formats, .. } => {
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.formats = formats
+                        .iter()
+                        .filter_map(|format| {
+                            let code = Fourcc::try_from(format.format).ok()?;
+                            Some((code, Modifier::from(format.modifier)))
+                        })
+                        .collect();
+                }
+            }
+            ViewerMessage::Resize {
+                width,
+                height,
+                scale,
+            } => {
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.logical = (width, height);
+                    viewer.scale = scale;
+                }
+                self.active = None;
+                self.make_active(id);
+            }
+            ViewerMessage::BufferFailed { id: buffer } => {
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.linear = true;
+                    viewer.pool.retain(|slot| slot.id != buffer);
+                    viewer.ready = true;
+                }
+                self.send(id, ServerMessage::Forget { id: buffer });
+            }
+            ViewerMessage::Release { id: buffer, .. } => {
+                let size = self.size;
+                let mut forget = None;
+                if let Some(viewer) = self.viewers.get_mut(&id)
+                    && let Some(index) = viewer.pool.iter().position(|slot| slot.id == buffer)
+                {
+                    viewer.pool[index].lent = false;
+                    if viewer.pool[index].size != size {
+                        viewer.pool.remove(index);
+                        forget = Some(buffer);
+                    }
+                }
+                if let Some(buffer) = forget {
+                    self.send(id, ServerMessage::Forget { id: buffer });
+                }
+            }
+            ViewerMessage::Ready => {
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.ready = true;
+                }
+            }
+            ViewerMessage::Key {
+                time,
+                keycode,
+                pressed,
+            } => {
+                self.make_active(id);
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.keys.retain(|&held| held != keycode);
+                    if pressed {
+                        viewer.keys.push(keycode);
+                    }
+                }
+                self.keyboard(keycode, pressed, time);
+            }
+            ViewerMessage::Keys { .. } => {}
+            ViewerMessage::KeysReleased => {
+                let keys = self
+                    .viewers
+                    .get_mut(&id)
+                    .map(|viewer| std::mem::take(&mut viewer.keys))
+                    .unwrap_or_default();
+                for keycode in keys {
+                    self.keyboard(keycode, false, now);
+                }
+                self.stop_repeat();
+            }
+            ViewerMessage::Pointer { time, x, y } => {
+                let location = Point::<f64, Physical>::from((x, y)).to_logical(self.scale);
+                self.pointer_moved(location, time);
+            }
+            ViewerMessage::PointerLeft => {}
+            ViewerMessage::Button {
+                time,
+                button,
+                pressed,
+            } => {
+                self.make_active(id);
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.buttons.retain(|&held| held != button);
+                    if pressed {
+                        viewer.buttons.push(button);
+                    }
+                }
+                self.pointer_button(button, pressed, time);
+            }
+            ViewerMessage::Scroll {
+                time,
+                source,
+                axis,
+                amount,
+                steps,
+                stop,
+                inverted,
+            } => self.pointer_scroll(Scroll {
+                time,
+                source,
+                axis,
+                amount,
+                steps,
+                stop,
+                inverted,
+            }),
+            ViewerMessage::Offer { .. }
+            | ViewerMessage::Cleared { .. }
+            | ViewerMessage::Request { .. } => {}
+            ViewerMessage::Show { .. } => self.send(id, ServerMessage::Showing { id: 0 }),
+            ViewerMessage::Error { message, .. } => {
+                eprintln!("decade: a viewer reported an error: {message}");
+                self.viewer_gone(id);
+            }
+        }
+    }
+
+    fn render_viewers(&mut self) {
+        if self.wants_redraw {
+            self.wants_redraw = false;
+            for viewer in self.viewers.values_mut() {
+                viewer.wants_frame = true;
+            }
+        }
+        let ids: Vec<usize> = self
+            .viewers
+            .iter()
+            .filter(|(_, viewer)| viewer.welcomed && viewer.ready && viewer.wants_frame)
+            .map(|(&id, _)| id)
+            .collect();
+        for id in ids {
+            self.render_to(id);
+        }
+    }
+
+    fn render_to(&mut self, id: usize) {
+        let size = self.size;
+        let Some(viewer) = self.viewers.get_mut(&id) else {
+            return;
+        };
+        let free = viewer
+            .pool
+            .iter()
+            .position(|slot| !slot.lent && slot.size == size);
+        let index = match free {
+            Some(index) => index,
+            None => {
+                let current = viewer.pool.iter().filter(|slot| slot.size == size).count();
+                if current >= POOL_SIZE {
+                    return;
+                }
+                let (width, height) = (size.w as u32, size.h as u32);
+                let allocated = if viewer.linear || viewer.formats.is_empty() {
+                    self.gpu.allocate_linear(width, height)
+                } else {
+                    self.gpu.allocate(width, height, &viewer.formats)
+                };
+                let dmabuf = match allocated {
+                    Ok(dmabuf) => dmabuf,
+                    Err(error) => {
+                        eprintln!("decade: allocating a frame buffer failed: {error}");
+                        return;
+                    }
+                };
+                let buffer = viewer.next_buffer;
+                viewer.next_buffer += 1;
+                let planes = dmabuf
+                    .handles()
+                    .zip(dmabuf.offsets())
+                    .zip(dmabuf.strides())
+                    .filter_map(|((fd, offset), stride)| {
+                        Some(Plane {
+                            fd: fd.try_clone_to_owned().ok()?,
+                            offset,
+                            stride,
+                        })
+                    })
+                    .collect();
+                let format = dmabuf.format();
+                let message = ServerMessage::Buffer {
+                    id: buffer,
+                    width,
+                    height,
+                    format: format.code as u32,
+                    modifier: format.modifier.into(),
+                    opaque: true,
+                    planes,
+                };
+                if viewer.outbox.push_server_message(message).is_err() {
+                    return;
+                }
+                viewer.pool.push(Slot {
+                    id: buffer,
+                    dmabuf,
+                    size,
+                    lent: false,
+                });
+                viewer.pool.len() - 1
+            }
+        };
+        let mut dmabuf = viewer.pool[index].dmabuf.clone();
+        let buffer = viewer.pool[index].id;
+        let fence = self.render(&mut dmabuf);
+        let Some(viewer) = self.viewers.get_mut(&id) else {
+            return;
+        };
+        viewer.pool[index].lent = true;
+        viewer.ready = false;
+        viewer.wants_frame = false;
+        let _ = viewer.outbox.push_server_message(ServerMessage::Frame {
+            id: buffer,
+            damage: Vec::new(),
+            fence,
+        });
+    }
+
+    fn send_cursor(&mut self, id: usize) {
+        let message = match &self.cursor {
+            CursorImageStatus::Hidden => ServerMessage::CursorHidden,
+            CursorImageStatus::Named(icon) => ServerMessage::CursorShape {
+                shape: icon.name().to_string(),
+            },
+            CursorImageStatus::Surface(_) => ServerMessage::CursorShape {
+                shape: "default".to_string(),
+            },
+        };
+        self.send(id, message);
     }
 
     fn channel_connected(&mut self, stream: UnixStream) {
@@ -640,6 +1056,7 @@ impl State {
     }
 
     fn resized(&mut self, width: u32, height: u32, scale: f64) {
+        self.size = (width as i32, height as i32).into();
         let rescaled = scale != self.scale;
         if rescaled {
             self.scale = scale;
@@ -671,7 +1088,7 @@ impl State {
         for id in ids {
             self.configure(id);
         }
-        self.backend.window().request_redraw();
+        self.request_redraw();
     }
 
     fn configure(&mut self, id: usize) {
@@ -720,7 +1137,7 @@ impl State {
     }
 
     fn chrome_changed(&mut self) {
-        self.backend.window().request_redraw();
+        self.request_redraw();
     }
 
     fn focus_named(&mut self, name: &str) {
@@ -765,7 +1182,7 @@ impl State {
         if self.layout.bar != show {
             self.layout.bar = show;
             self.layout.hover = None;
-            self.backend.window().request_redraw();
+            self.request_redraw();
         }
     }
 
@@ -793,119 +1210,129 @@ impl State {
         self.show_bar(false);
     }
 
-    fn input(&mut self, event: InputEvent<WinitInput>) {
-        match event {
-            InputEvent::Keyboard { event } => self.keyboard(event),
-            InputEvent::PointerMotionAbsolute { event } => {
-                let size = self.backend.window_size().to_f64().to_logical(self.scale);
-                self.pointer = event.position_transformed(size.to_i32_round());
-                match self.drag.take() {
-                    Some(Drag::Boundary(boundary)) => {
-                        let (column, row) = self.pointer_cell();
-                        self.layout.drag_boundary(&boundary, column, row);
-                        self.drag = Some(Drag::Boundary(boundary));
-                        self.relayout();
-                        return;
-                    }
-                    Some(Drag::Pane { id, grab, start }) => {
-                        let (column, row) = self.pointer_cell();
-                        self.layout.drag_cell = Some((column, row));
-                        self.drag = Some(Drag::Pane { id, grab, start });
-                        self.backend.window().request_redraw();
-                        return;
-                    }
-                    None => {}
-                }
-                if self.layout.bar {
-                    let (column, row) = self.pointer_cell();
-                    let hover = self
-                        .layout
-                        .bar_hit(column, row)
-                        .filter(|&(_, button)| button != BarButton::Name);
-                    if hover != self.layout.hover {
-                        self.layout.hover = hover;
-                        self.chrome_changed();
-                    }
-                }
-                let pointer = self.seat.get_pointer().unwrap();
-                let focus = self.pane_under_pointer().and_then(|id| {
-                    let pane = self.layout.pane(id)?;
-                    let (origin, _) = self.client_geometry(pane);
-                    pane.toplevel
-                        .as_ref()
-                        .map(|toplevel| (toplevel.wl_surface().clone(), origin.to_f64()))
-                });
-                pointer.motion(
-                    self,
-                    focus,
-                    &MotionEvent {
-                        location: self.pointer,
-                        serial: SERIAL_COUNTER.next_serial(),
-                        time: event.time_msec(),
-                    },
-                );
-                pointer.frame(self);
+    fn pointer_moved(&mut self, location: Point<f64, Logical>, time: u32) {
+        self.pointer = location;
+        match self.drag.take() {
+            Some(Drag::Boundary(boundary)) => {
+                let (column, row) = self.pointer_cell();
+                self.layout.drag_boundary(&boundary, column, row);
+                self.drag = Some(Drag::Boundary(boundary));
+                self.relayout();
+                return;
             }
-            InputEvent::PointerButton { event } => {
-                let pressed = event.state() == ButtonState::Pressed;
-                if event.button_code() == BTN_LEFT {
-                    if pressed && self.press_on_chrome() {
-                        return;
-                    }
-                    if !pressed && let Some(drag) = self.drag.take() {
-                        self.drop(drag);
-                        return;
-                    }
-                }
-                let pointer = self.seat.get_pointer().unwrap();
-                pointer.button(
-                    self,
-                    &ButtonEvent {
-                        serial: SERIAL_COUNTER.next_serial(),
-                        time: event.time_msec(),
-                        button: event.button_code(),
-                        state: event.state(),
-                    },
-                );
-                pointer.frame(self);
+            Some(Drag::Pane { id, grab, start }) => {
+                let (column, row) = self.pointer_cell();
+                self.layout.drag_cell = Some((column, row));
+                self.drag = Some(Drag::Pane { id, grab, start });
+                self.request_redraw();
+                return;
             }
-            InputEvent::PointerAxis { event } => {
-                let pointer = self.seat.get_pointer().unwrap();
-                let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
-                for axis in [InputAxis::Horizontal, InputAxis::Vertical] {
-                    let amount = event
-                        .amount(axis)
-                        .unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0);
-                    if amount != 0.0 {
-                        frame = frame.value(axis, amount);
-                        if let Some(v120) = event.amount_v120(axis) {
-                            frame = frame.v120(axis, v120 as i32);
-                        }
-                    } else if event.source() == AxisSource::Finger {
-                        frame = frame.stop(axis);
-                    }
-                }
-                pointer.axis(self, frame);
-                pointer.frame(self);
-            }
-            _ => {}
+            None => {}
         }
+        if self.layout.bar {
+            let (column, row) = self.pointer_cell();
+            let hover = self
+                .layout
+                .bar_hit(column, row)
+                .filter(|&(_, button)| button != BarButton::Name);
+            if hover != self.layout.hover {
+                self.layout.hover = hover;
+                self.chrome_changed();
+            }
+        }
+        let pointer = self.seat.get_pointer().unwrap();
+        let focus = self.pane_under_pointer().and_then(|id| {
+            let pane = self.layout.pane(id)?;
+            let (origin, _) = self.client_geometry(pane);
+            pane.toplevel
+                .as_ref()
+                .map(|toplevel| (toplevel.wl_surface().clone(), origin.to_f64()))
+        });
+        pointer.motion(
+            self,
+            focus,
+            &MotionEvent {
+                location: self.pointer,
+                serial: SERIAL_COUNTER.next_serial(),
+                time,
+            },
+        );
+        pointer.frame(self);
     }
 
-    fn keyboard(
-        &mut self,
-        event: <WinitInput as smithay::backend::input::InputBackend>::KeyboardKeyEvent,
-    ) {
+    fn pointer_button(&mut self, button: u32, pressed: bool, time: u32) {
+        if button == BTN_LEFT {
+            if pressed && self.press_on_chrome() {
+                return;
+            }
+            if !pressed && let Some(drag) = self.drag.take() {
+                self.drop(drag);
+                return;
+            }
+        }
+        let pointer = self.seat.get_pointer().unwrap();
+        let state = if pressed {
+            ButtonState::Pressed
+        } else {
+            ButtonState::Released
+        };
+        pointer.button(
+            self,
+            &ButtonEvent {
+                serial: SERIAL_COUNTER.next_serial(),
+                time,
+                button,
+                state,
+            },
+        );
+        pointer.frame(self);
+    }
+
+    fn pointer_scroll(&mut self, scroll: Scroll) {
+        let source = match scroll.source {
+            1 => AxisSource::Finger,
+            2 => AxisSource::Continuous,
+            3 => AxisSource::WheelTilt,
+            _ => AxisSource::Wheel,
+        };
+        let axis = if scroll.axis == 1 {
+            InputAxis::Horizontal
+        } else {
+            InputAxis::Vertical
+        };
+        let mut frame = AxisFrame::new(scroll.time).source(source);
+        if scroll.stop {
+            frame = frame.stop(axis);
+        } else {
+            frame = frame.value(axis, scroll.amount / self.scale);
+            if scroll.steps != 0 {
+                frame = frame.v120(axis, scroll.steps);
+            }
+        }
+        if scroll.inverted {
+            frame = frame.relative_direction(axis, AxisRelativeDirection::Inverted);
+        }
+        let pointer = self.seat.get_pointer().unwrap();
+        pointer.axis(self, frame);
+        pointer.frame(self);
+    }
+
+    fn keyboard(&mut self, evdev: u32, pressed: bool, time: u32) {
         let keyboard = self.seat.get_keyboard().unwrap();
-        let pressed = event.state() == KeyState::Pressed;
+        let code = Keycode::new(evdev + 8);
+        let state = if pressed {
+            KeyState::Pressed
+        } else {
+            KeyState::Released
+        };
         let palette = self.menu.is_some() || self.panel.is_some();
         let mut control_key = false;
         let key = keyboard.input::<Key, _>(
             self,
-            event.key_code(),
-            event.state(),
+            code,
+            state,
             SERIAL_COUNTER.next_serial(),
-            event.time_msec(),
+            time,
             |_, modifiers, handle| {
                 let sym = handle.modified_sym().raw();
                 control_key = sym == keysyms::KEY_Control_L || sym == keysyms::KEY_Control_R;
@@ -932,7 +1359,7 @@ impl State {
             (false, true) => self.cancel_ctrl_timer(),
             (false, false) => {}
         }
-        let code = event.key_code().raw();
+        let code = code.raw();
         if !pressed && self.repeating.is_some_and(|(held, _)| held == code) {
             self.stop_repeat();
         }
@@ -990,7 +1417,7 @@ impl State {
             Key::NewPane => self.new_terminal_pane(),
             Key::Palette => {
                 self.menu = Some(Menu::new(apps::installed()));
-                self.backend.window().request_redraw();
+                self.request_redraw();
             }
             Key::Menu(key) => {
                 if let Some(panel) = &mut self.panel {
@@ -1015,7 +1442,7 @@ impl State {
                         }
                     }
                 }
-                self.backend.window().request_redraw();
+                self.request_redraw();
             }
             Key::Swallow => {}
         }
@@ -1032,7 +1459,7 @@ impl State {
             self.font = Font::load(self.settings.font_size * self.scale as f32);
             self.menu_font = Font::load(self.settings.palette_size * self.scale as f32);
             self.texts.clear();
-            let size = self.backend.window_size();
+            let size = self.size;
             self.layout.resize(
                 size.w as u32 / self.font.cell_width,
                 size.h as u32 / self.font.cell_height,
@@ -1113,7 +1540,7 @@ impl State {
             start: Instant::now(),
         });
         self.layout.dragging = Some(id);
-        self.backend.window().request_redraw();
+        self.request_redraw();
     }
 
     fn drop(&mut self, drag: Drag) {
@@ -1130,7 +1557,7 @@ impl State {
             self.layout.apply_drop(id, drop);
             self.relayout();
         } else {
-            self.backend.window().request_redraw();
+            self.request_redraw();
         }
     }
 
@@ -1185,18 +1612,11 @@ impl State {
         });
     }
 
-    fn redraw(&mut self) {
-        self.render();
-        self.display_handle.flush_clients().unwrap();
-        let size = self.backend.window_size();
-        self.backend
-            .submit(Some(&[Rectangle::from_size(size)]))
-            .unwrap();
-    }
-
-    fn render(&mut self) {
+    fn render(&mut self, target: &mut Dmabuf) -> Option<OwnedFd> {
         let State {
-            backend,
+            gpu,
+            size,
+            wants_redraw,
             layout,
             font,
             menu_font,
@@ -1212,11 +1632,11 @@ impl State {
             ..
         } = self;
         let scale = *scale;
-        let size = backend.window_size();
+        let size = *size;
         let damage = Rectangle::from_size(size);
-        let (renderer, mut framebuffer) = backend.bind().unwrap();
+        let mut framebuffer = gpu.renderer.bind(target).ok()?;
         let mut paint = Paint {
-            renderer,
+            renderer: &mut gpu.renderer,
             texts,
             font,
             menu_font,
@@ -1346,8 +1766,8 @@ impl State {
 
         let mut frame = paint
             .renderer
-            .render(&mut framebuffer, size, Transform::Flipped180)
-            .unwrap();
+            .render(&mut framebuffer, size, Transform::Normal)
+            .ok()?;
         frame
             .clear(
                 Color32F::new(BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 1.0),
@@ -1356,11 +1776,11 @@ impl State {
             .unwrap();
         draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &elements, &[damage])
             .unwrap();
-        let _ = frame.finish().unwrap();
+        let sync = frame.finish().ok()?;
         drop(framebuffer);
         texts.end_frame();
         if animating {
-            backend.window().request_redraw();
+            *wants_redraw = true;
         }
 
         let time = start.elapsed().as_millis() as u32;
@@ -1369,6 +1789,7 @@ impl State {
                 send_frames_surface_tree(toplevel.wl_surface(), time);
             }
         }
+        sync.export()
     }
 }
 
@@ -1493,17 +1914,6 @@ impl Paint<'_> {
     }
 }
 
-fn render_node(renderer: &GlesRenderer) -> Result<u64, String> {
-    use std::os::unix::fs::MetadataExt as _;
-    let device = EGLDevice::device_for_display(renderer.egl_context().display())
-        .map_err(|error| error.to_string())?;
-    let path = device
-        .render_device_path()
-        .map_err(|error| error.to_string())?;
-    let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
-    Ok(metadata.rdev())
-}
-
 fn repeats(key: Key) -> bool {
     match key {
         Key::Focus(_) | Key::Move(_) | Key::Resize(_) => true,
@@ -1616,7 +2026,7 @@ impl CompositorHandler for State {
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<State>(surface);
-        self.backend.window().request_redraw();
+        self.request_redraw();
         if let Some(i) = self
             .unplaced
             .iter()
@@ -1705,7 +2115,7 @@ impl DmabufHandler for State {
     }
 
     fn dmabuf_imported(&mut self, _: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        if self.backend.renderer().import_dmabuf(&dmabuf, None).is_ok() {
+        if self.gpu.renderer.import_dmabuf(&dmabuf, None).is_ok() {
             let _ = notifier.successful::<State>();
         } else {
             notifier.failed();
@@ -1723,7 +2133,13 @@ impl SeatHandler for State {
     }
 
     fn focus_changed(&mut self, _: &Seat<State>, _: Option<&WlSurface>) {}
-    fn cursor_image(&mut self, _: &Seat<State>, _: CursorImageStatus) {}
+    fn cursor_image(&mut self, _: &Seat<State>, image: CursorImageStatus) {
+        self.cursor = image;
+        let ids: Vec<usize> = self.viewers.keys().copied().collect();
+        for id in ids {
+            self.send_cursor(id);
+        }
+    }
 }
 
 impl SelectionHandler for State {

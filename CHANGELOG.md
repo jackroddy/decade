@@ -59,6 +59,12 @@ command line and what the tool writes.
 
 ### Changed
 
+- decade runs as two parts. `decade server` owns the panes and their
+  programs and has no window. `decade` opens a window that shows the server
+  and sends it input, and starts a server first if none is running. Closing
+  the window leaves the server and its programs running, and running
+  `decade` again shows them again. The two talk over the protocol in
+  `docs/viewer.md`.
 - A pane is drawn as a box-drawing outline, one stroke wide, in the accent
   colour on the focused pane and a muted one elsewhere; the title strips are
   gone. Colours come from a palette copied from the Omarchy theme.
