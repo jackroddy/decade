@@ -10,12 +10,21 @@ const OUTLINE: Rgba = palette::SELECTION;
 const FOCUS: Rgba = palette::ACCENT;
 const DROP: Rgba = palette::CYAN;
 const BAR: Rgba = palette::LIGHTER_BACKGROUND;
+const BAR_FOCUSED: Rgba = palette::ACCENT;
+const BAR_FOCUSED_TEXT: Rgba = palette::DARK_BACKGROUND;
+const HOVER: Rgba = palette::SELECTION;
+const CLOSE_HOVER: Rgba = palette::RED;
+const UNPINNED: Rgba = palette::MUTED;
 const STATUS: Rgba = palette::LIGHTER_BACKGROUND;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 
 const MIN_PANE: u32 = 4;
-const BAR_ZOOM: &str = " zoom ";
-const BAR_CLOSE: &str = " x ";
+const BUTTON_WIDTH: u32 = 4;
+const PIN_ICON: char = '\u{f0403}';
+const UNPINNED_ICON: char = '\u{f0930}';
+const ZOOM_ICON: char = '\u{f0293}';
+const UNZOOM_ICON: char = '\u{f0294}';
+const CLOSE_ICON: char = '\u{f0156}';
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CellRect {
@@ -102,6 +111,7 @@ enum Node {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BarButton {
+    Pin,
     Zoom,
     Close,
     Name,
@@ -122,6 +132,7 @@ pub struct Layout {
     pub palette: bool,
     pub drop_target: Option<usize>,
     pub dragging: Option<usize>,
+    pub hover: Option<(usize, BarButton)>,
     root: Node,
     next_id: usize,
 }
@@ -147,6 +158,7 @@ impl Layout {
             palette: false,
             drop_target: None,
             dragging: None,
+            hover: None,
             root: Node::Split {
                 axis: Axis::Horizontal,
                 ratio: 0.5,
@@ -407,16 +419,10 @@ impl Layout {
             if row != bar_row || column < start || column >= start + width {
                 continue;
             }
-            let end = start + width;
-            let close = end.saturating_sub(BAR_CLOSE.len() as u32);
-            let zoom = close.saturating_sub(BAR_ZOOM.len() as u32);
-            let button = if column >= close {
-                BarButton::Close
-            } else if column >= zoom {
-                BarButton::Zoom
-            } else {
-                BarButton::Name
-            };
+            let button = bar_buttons(start, width)
+                .into_iter()
+                .find(|&(_, x)| column >= x && column < x + BUTTON_WIDTH)
+                .map_or(BarButton::Name, |(button, _)| button);
             return Some((pane.id, button));
         }
         None
@@ -456,7 +462,7 @@ impl Layout {
         }
         for pane in self.visible() {
             if self.dragging != Some(pane.id) {
-                draw_bar(grid, &pane.name, pane.rect);
+                self.draw_bar(grid, pane, pane.rect);
             }
         }
     }
@@ -471,9 +477,62 @@ impl Layout {
         let mut grid = Grid::new(rect.columns, rect.rows, FOREGROUND, CLEAR);
         draw_pane(&mut grid, pane, rect, FOCUS);
         if self.bar {
-            draw_bar(&mut grid, &pane.name, rect);
+            self.draw_bar(&mut grid, pane, rect);
         }
         Some(grid)
+    }
+
+    fn draw_bar(&self, grid: &mut Grid, pane: &Pane, rect: CellRect) {
+        let inner = rect.inner();
+        if inner.is_empty() {
+            return;
+        }
+        let (start, row, width) = (inner.column, inner.row, inner.columns);
+        let focused = pane.id == self.focused;
+        let (bg, fg) = if focused {
+            (BAR_FOCUSED, BAR_FOCUSED_TEXT)
+        } else {
+            (BAR, DIM)
+        };
+        grid.fill(start, row, width, 1, bg);
+        grid.text(start + 1, row, &pane.name, fg, bg);
+        let pinned = matches!(pane.kind, Kind::Anchor { .. });
+        let zoomed = self.zoom == Some(pane.id);
+        for (button, x) in bar_buttons(start, width) {
+            let (icon, color) = match button {
+                BarButton::Pin if pinned => (PIN_ICON, if focused { fg } else { FOREGROUND }),
+                BarButton::Pin => (UNPINNED_ICON, UNPINNED),
+                BarButton::Zoom if zoomed => (UNZOOM_ICON, fg),
+                BarButton::Zoom => (ZOOM_ICON, fg),
+                BarButton::Close => (CLOSE_ICON, fg),
+                BarButton::Name => continue,
+            };
+            let (color, bg) = match self.hover {
+                Some((id, hovered)) if id == pane.id && hovered == button => {
+                    let hover = if button == BarButton::Close {
+                        CLOSE_HOVER
+                    } else {
+                        HOVER
+                    };
+                    (FOREGROUND, hover)
+                }
+                _ => (color, bg),
+            };
+            grid.fill(x, row, BUTTON_WIDTH, 1, bg);
+            grid.icon(x + 1, row, icon, color, bg);
+        }
+    }
+
+    pub fn pin(&mut self, id: usize, app_id: String) {
+        if let Some(pane) = self.pane_mut(id) {
+            pane.kind = Kind::Anchor { app_id };
+        }
+    }
+
+    pub fn unpin(&mut self, id: usize) {
+        if let Some(pane) = self.pane_mut(id) {
+            pane.kind = Kind::Transient;
+        }
     }
 
     pub fn draw_overlay(&self, grid: &mut Grid) {
@@ -525,18 +584,15 @@ fn draw_pane(grid: &mut Grid, pane: &Pane, rect: CellRect, outline: Rgba) {
     grid.text(column, inner.row + inner.rows / 2, &text, DIM, PANE);
 }
 
-fn draw_bar(grid: &mut Grid, name: &str, rect: CellRect) {
-    let inner = rect.inner();
-    if inner.is_empty() {
-        return;
-    }
-    let (start, row, width) = (inner.column, inner.row, inner.columns);
-    grid.fill(start, row, width, 1, BAR);
-    grid.text(start + 1, row, name, FOREGROUND, BAR);
-    let close = (start + width).saturating_sub(BAR_CLOSE.len() as u32);
-    let zoom = close.saturating_sub(BAR_ZOOM.len() as u32);
-    grid.text(zoom, row, BAR_ZOOM, FOREGROUND, BAR);
-    grid.text(close, row, BAR_CLOSE, FOREGROUND, BAR);
+fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 3] {
+    let close = (start + width).saturating_sub(BUTTON_WIDTH);
+    let zoom = close.saturating_sub(BUTTON_WIDTH);
+    let pin = zoom.saturating_sub(BUTTON_WIDTH);
+    [
+        (BarButton::Pin, pin),
+        (BarButton::Zoom, zoom),
+        (BarButton::Close, close),
+    ]
 }
 
 fn outline_box(grid: &mut Grid, rect: CellRect, color: Rgba) {
@@ -883,6 +939,7 @@ mod tests {
         let pane = layout.pane(0).unwrap();
         assert_eq!(layout.client_rect(pane), before);
         assert_eq!(layout.bar_hit(48, before.row), Some((0, BarButton::Close)));
+        assert_eq!(layout.bar_hit(38, before.row), Some((0, BarButton::Pin)));
         assert_eq!(layout.bar_hit(48, 1), Some((0, BarButton::Close)));
         assert_eq!(layout.bar_hit(42, 1), Some((0, BarButton::Zoom)));
         assert_eq!(layout.bar_hit(2, 1), Some((0, BarButton::Name)));
@@ -934,6 +991,37 @@ mod tests {
         assert_eq!((ghost.columns, ghost.rows), (rect.columns, rect.rows));
         assert_eq!(ghost.cells[0].ch, '┌');
         assert_eq!(ghost.cells[ghost.columns as usize + 2].ch, 'c');
+    }
+
+    #[test]
+    fn a_pinned_transient_pane_waits_for_its_clients_app_id() {
+        let mut layout = Layout::new(100, 41);
+        let id = layout.add_transient("nautilus".to_string());
+        layout.pin(id, "org.gnome.Nautilus".to_string());
+        assert_eq!(layout.place(Some("org.gnome.Nautilus")), Some(id));
+        assert_eq!(layout.pane(id).unwrap().name, "nautilus");
+    }
+
+    #[test]
+    fn an_unpinned_anchor_is_transient() {
+        let mut layout = Layout::new(100, 41);
+        layout.unpin(0);
+        assert!(matches!(layout.pane(0).unwrap().kind, Kind::Transient));
+    }
+
+    #[test]
+    fn a_bar_icon_takes_two_cells() {
+        let mut layout = Layout::new(100, 41);
+        layout.bar = true;
+        let rect = layout.pane(0).unwrap().rect;
+        let mut grid = Grid::new(100, 41, FOREGROUND, CLEAR);
+        layout.draw_bars(&mut grid);
+        let row = rect.inner().row;
+        let close = (row * 100 + 46) as usize;
+        assert_eq!(grid.cells[close].ch, CLOSE_ICON);
+        assert!(!grid.cells[close].right_half);
+        assert_eq!(grid.cells[close + 1].ch, CLOSE_ICON);
+        assert!(grid.cells[close + 1].right_half);
     }
 
     #[test]

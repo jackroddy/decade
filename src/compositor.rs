@@ -607,6 +607,7 @@ impl State {
     fn show_bar(&mut self, show: bool) {
         if self.layout.bar != show {
             self.layout.bar = show;
+            self.layout.hover = None;
             self.backend.window().request_redraw();
         }
     }
@@ -657,6 +658,17 @@ impl State {
                         return;
                     }
                     None => {}
+                }
+                if self.layout.bar {
+                    let (column, row) = self.pointer_cell();
+                    let hover = self
+                        .layout
+                        .bar_hit(column, row)
+                        .filter(|&(_, button)| button != BarButton::Name);
+                    if hover != self.layout.hover {
+                        self.layout.hover = hover;
+                        self.chrome_changed();
+                    }
                 }
                 let pointer = self.seat.get_pointer().unwrap();
                 let focus = self.pane_under_pointer().and_then(|id| {
@@ -801,6 +813,10 @@ impl State {
                 self.relayout();
                 return true;
             }
+            Some((id, BarButton::Pin)) => {
+                self.toggle_pin(id);
+                return true;
+            }
             _ => {}
         }
         if let Some(boundary) = self.layout.boundary_at(column, row) {
@@ -821,7 +837,32 @@ impl State {
         false
     }
 
+    fn toggle_pin(&mut self, id: usize) {
+        let Some(pane) = self.layout.pane(id) else {
+            return;
+        };
+        let client = pane
+            .toplevel
+            .as_ref()
+            .map(|toplevel| toplevel.wl_surface().clone());
+        match &pane.kind {
+            PaneKind::Anchor { .. } => {
+                self.layout.unpin(id);
+                if client.is_none() {
+                    self.remove_pane(id);
+                }
+            }
+            PaneKind::Transient => {
+                if let Some(app_id) = client.as_ref().and_then(app_id) {
+                    self.layout.pin(id, app_id);
+                }
+            }
+        }
+        self.chrome_changed();
+    }
+
     fn start_pane_drag(&mut self, id: usize) {
+        self.layout.hover = None;
         self.focus(id);
         let pointer = self.pointer.to_physical(self.scale).to_i32_round();
         let grab = pointer - self.pane_origin(id);
@@ -1129,6 +1170,15 @@ impl State {
     }
 }
 
+fn app_id(surface: &WlSurface) -> Option<String> {
+    with_states(surface, |states| {
+        states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .and_then(|data| data.lock().unwrap().app_id.clone())
+    })
+}
+
 fn patch_chrome(
     renderer: &mut GlesRenderer,
     texture: &GlesTexture,
@@ -1228,12 +1278,7 @@ impl CompositorHandler for State {
             .iter()
             .position(|toplevel| toplevel.wl_surface() == surface)
         {
-            let app_id = with_states(surface, |states| {
-                states
-                    .data_map
-                    .get::<XdgToplevelSurfaceData>()
-                    .and_then(|data| data.lock().unwrap().app_id.clone())
-            });
+            let app_id = app_id(surface);
             let toplevel = self.unplaced.remove(i);
             let id = match self.layout.place(app_id.as_deref()) {
                 Some(id) => id,

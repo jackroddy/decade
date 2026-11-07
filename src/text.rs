@@ -60,7 +60,7 @@ impl Font {
 }
 
 pub struct Glyphs {
-    cache: HashMap<char, Vec<u8>>,
+    cache: HashMap<(char, bool), Vec<u8>>,
     context: ScaleContext,
 }
 
@@ -72,16 +72,17 @@ impl Glyphs {
         }
     }
 
-    pub fn coverage(&mut self, font: &Font, ch: char) -> &[u8] {
-        if !self.cache.contains_key(&ch) {
-            let pixels = rasterize(&mut self.context, font, ch);
-            self.cache.insert(ch, pixels);
+    pub fn coverage(&mut self, font: &Font, ch: char, right_half: bool) -> &[u8] {
+        let key = (ch, right_half);
+        if !self.cache.contains_key(&key) {
+            let pixels = rasterize(&mut self.context, font, ch, right_half);
+            self.cache.insert(key, pixels);
         }
-        &self.cache[&ch]
+        &self.cache[&key]
     }
 }
 
-fn rasterize(context: &mut ScaleContext, font: &Font, ch: char) -> Vec<u8> {
+fn rasterize(context: &mut ScaleContext, font: &Font, ch: char, right_half: bool) -> Vec<u8> {
     let width = font.cell_width as i32;
     let height = font.cell_height as i32;
     let mut pixels = vec![0; (width * height) as usize];
@@ -92,13 +93,14 @@ fn rasterize(context: &mut ScaleContext, font: &Font, ch: char) -> Vec<u8> {
         return pixels;
     };
     let image_width = image.placement.width as i32;
+    let shift = if right_half { width } else { 0 };
     for y in 0..image.placement.height as i32 {
         let cy = font.baseline - image.placement.top + y;
         if cy < 0 || cy >= height {
             continue;
         }
         for x in 0..image_width {
-            let cx = image.placement.left + x;
+            let cx = image.placement.left + x - shift;
             if cx < 0 || cx >= width {
                 continue;
             }

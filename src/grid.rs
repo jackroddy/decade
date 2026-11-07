@@ -7,6 +7,7 @@ pub struct Cell {
     pub ch: char,
     pub fg: Rgba,
     pub bg: Rgba,
+    pub right_half: bool,
 }
 
 pub struct Grid {
@@ -20,7 +21,15 @@ impl Grid {
         Grid {
             columns,
             rows,
-            cells: vec![Cell { ch: ' ', fg, bg }; (columns * rows) as usize],
+            cells: vec![
+                Cell {
+                    ch: ' ',
+                    fg,
+                    bg,
+                    right_half: false,
+                };
+                (columns * rows) as usize
+            ],
         }
     }
 
@@ -30,6 +39,7 @@ impl Grid {
                 let cell = &mut self.cells[(r * self.columns + c) as usize];
                 cell.ch = ' ';
                 cell.bg = bg;
+                cell.right_half = false;
             }
         }
     }
@@ -43,7 +53,27 @@ impl Grid {
             if c >= self.columns {
                 return;
             }
-            self.cells[(row * self.columns + c) as usize] = Cell { ch, fg, bg };
+            self.cells[(row * self.columns + c) as usize] = Cell {
+                ch,
+                fg,
+                bg,
+                right_half: false,
+            };
+        }
+    }
+
+    pub fn icon(&mut self, column: u32, row: u32, ch: char, fg: Rgba, bg: Rgba) {
+        if row >= self.rows || column + 1 >= self.columns {
+            return;
+        }
+        let at = (row * self.columns + column) as usize;
+        for (i, right_half) in [false, true].into_iter().enumerate() {
+            self.cells[at + i] = Cell {
+                ch,
+                fg,
+                bg,
+                right_half,
+            };
         }
     }
 }

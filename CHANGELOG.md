@@ -18,8 +18,10 @@ command line and what the tool writes.
   anchors: they stay as empty slots, saying what they wait for, when their
   client goes, and take it back when it returns.
 - Holding Ctrl alone for 50 ms shows a bar over the top row of each pane
-  with its name, a zoom toggle and an x that asks the client to close.
-  Dragging the outline between two panes resizes them.
+  with its name and buttons to pin, zoom and close it. Dragging the outline
+  between two panes resizes them.
+- Pinning a pane makes it an anchor for its program's app id. Unpinning an
+  anchor makes it a pane that closes with its program.
 - Ctrl+dragging a pane, or dragging it by the name on its bar, carries a
   small copy of it under the pointer. Dropping it on another pane swaps the
   two.

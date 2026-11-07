@@ -16,7 +16,7 @@ pub fn raster_run(cells: &[Cell], font: &Font, glyphs: &mut Glyphs) -> Vec<u8> {
     let width = cells.len() * cell_width;
     let mut pixels = vec![0u8; width * cell_height * 4];
     for (column, cell) in cells.iter().enumerate() {
-        let coverage = glyphs.coverage(font, cell.ch);
+        let coverage = glyphs.coverage(font, cell.ch, cell.right_half);
         let bg_alpha = cell.bg[3];
         let bg: [u8; 3] = std::array::from_fn(|c| (cell.bg[c] * bg_alpha * 255.0).round() as u8);
         for y in 0..cell_height {
