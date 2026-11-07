@@ -3,7 +3,7 @@
   "title": "The nested output reports the host's scale",
   "body": "The nested output that decade advertises to its clients reports a scale of\n1, set in `compositor::run` through `Output::change_current_state`. The\nwindow decade itself lives in sits on a monitor Hyprland runs at 1.25, so\nghostty picks a scale of 1 and renders small, and its text is not crisp\nwhere the host upscales it. The chrome has the same problem from the other\nside: `Font::load` takes `FONT_PX` times the winit window's scale factor,\nand that factor came back as 1 on the first frame, so the chrome drew 238\ncolumns where 173 were expected.\n\n## Proposal\n\nReport the host's scale to clients and use it for the chrome.\n\n- Read the scale from the winit window at start and on every\n  `WinitEvent::Resized`, which carries `scale_factor`.\n- Advertise it on the output. An integer scale goes through `wl_output`\n  as `Scale::Integer`. A fractional one needs the fractional-scale and\n  viewporter globals, which smithay has under `wayland::fractional_scale`\n  and `wayland::viewporter`, with the output at `Scale::Fractional`.\n- Size the pane in logical pixels when configuring a toplevel, and place\n  client elements with the scale in `render_elements_from_surface_tree`.\n- Rebuild the font, glyph cache and chrome texture when the scale changes.\n\n## Open\n\n- Whether to support only integer scales first. 1.25 is the monitor this is\n  developed on, so fractional is the one that matters.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-71e626",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T01:19:56.16439452Z",
-  "updated_at": "2026-11-07T01:19:56.16439452Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T01:30:50.797089716Z",
+  "closed_at": "2026-11-07T01:30:50.797089716Z",
+  "close_reason": "Done at the commit titled 'Report the host's scale to clients' on dev, 2026-11-06. The output reports Scale::Fractional from the winit window's scale factor, fractional-scale and viewporter globals are offered, and ghostty renders at 1.25 in its pane with the chrome back at 173 columns on the 1920-wide dev output. Integer-only was not needed: fractional worked first.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "200bb66",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "7932094",
+      "branch": "dev"
+    }
   }
 }
