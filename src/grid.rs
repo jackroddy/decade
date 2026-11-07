@@ -2,7 +2,7 @@ pub type Rgba = [f32; 4];
 
 pub const CLEAR: Rgba = [0.0, 0.0, 0.0, 0.0];
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Cell {
     pub ch: char,
     pub fg: Rgba,

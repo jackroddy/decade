@@ -41,8 +41,9 @@ command line and what the tool writes.
 
 ### Changed
 
-- A pane is drawn as a rectangle with a one-cell outline, coloured only on the
-  focused pane; the title strips are gone.
+- A pane is drawn as a box-drawing outline, one stroke wide, in the accent
+  colour on the focused pane and a muted one elsewhere; the title strips are
+  gone. Colours come from a palette copied from the Omarchy theme.
 - decade is a Wayland compositor nested in a window, on smithay. Any Wayland
   client is a pane; the terminal pane runs ghostty. Clients are told the
   host's scale and render at it. The window chrome is a grid of character

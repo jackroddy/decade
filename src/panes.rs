@@ -1,15 +1,16 @@
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
 use crate::grid::{CLEAR, Grid, Rgba};
+use crate::palette;
 
-pub const BACKGROUND: Rgba = [0.07, 0.07, 0.09, 1.0];
-pub const FOREGROUND: Rgba = [0.80, 0.80, 0.84, 1.0];
-const PANE: Rgba = [0.11, 0.11, 0.14, 1.0];
-const OUTLINE: Rgba = [0.16, 0.16, 0.20, 1.0];
-const FOCUS: Rgba = [0.36, 0.46, 0.72, 1.0];
-const BAR: Rgba = [0.20, 0.22, 0.30, 1.0];
-const STATUS: Rgba = [0.16, 0.18, 0.24, 1.0];
-const DIM: Rgba = [0.45, 0.45, 0.50, 1.0];
+pub const BACKGROUND: Rgba = palette::BACKGROUND;
+pub const FOREGROUND: Rgba = palette::FOREGROUND;
+const PANE: Rgba = palette::DARK_BACKGROUND;
+const OUTLINE: Rgba = palette::SELECTION;
+const FOCUS: Rgba = palette::ACCENT;
+const BAR: Rgba = palette::LIGHTER_BACKGROUND;
+const STATUS: Rgba = palette::LIGHTER_BACKGROUND;
+const DIM: Rgba = palette::LIGHT_FOREGROUND;
 
 const MIN_PANE: u32 = 4;
 const BAR_ZOOM: &str = " zoom ";
@@ -420,22 +421,7 @@ impl Layout {
             } else {
                 OUTLINE
             };
-            grid.fill(rect.column, rect.row, rect.columns, 1, outline);
-            grid.fill(
-                rect.column,
-                rect.row + rect.rows - 1,
-                rect.columns,
-                1,
-                outline,
-            );
-            grid.fill(rect.column, rect.row, 1, rect.rows, outline);
-            grid.fill(
-                rect.column + rect.columns - 1,
-                rect.row,
-                1,
-                rect.rows,
-                outline,
-            );
+            outline_box(grid, rect, outline);
             let inner = rect.inner();
             if inner.is_empty() {
                 continue;
@@ -485,8 +471,17 @@ impl Layout {
         }
         let column = (body.columns - width) / 2;
         let row = (body.rows - height) / 2;
-        grid.fill(column, row, width, height, FOCUS);
-        grid.fill(column + 1, row + 1, width - 2, height - 2, PANE);
+        grid.fill(column, row, width, height, PANE);
+        outline_box(
+            grid,
+            CellRect {
+                column,
+                row,
+                columns: width,
+                rows: height,
+            },
+            FOCUS,
+        );
         grid.text(column + 2, row + 1, "command palette", FOREGROUND, PANE);
         grid.text(
             column + 2,
@@ -495,6 +490,33 @@ impl Layout {
             DIM,
             PANE,
         );
+    }
+}
+
+fn outline_box(grid: &mut Grid, rect: CellRect, color: Rgba) {
+    if rect.columns < 2 || rect.rows < 2 {
+        return;
+    }
+    let right = rect.column + rect.columns - 1;
+    let bottom = rect.row + rect.rows - 1;
+    let horizontal: String = "─".repeat(rect.columns as usize - 2);
+    grid.text(
+        rect.column,
+        rect.row,
+        &format!("┌{horizontal}┐"),
+        color,
+        BACKGROUND,
+    );
+    grid.text(
+        rect.column,
+        bottom,
+        &format!("└{horizontal}┘"),
+        color,
+        BACKGROUND,
+    );
+    for row in rect.row + 1..bottom {
+        grid.text(rect.column, row, "│", color, BACKGROUND);
+        grid.text(right, row, "│", color, BACKGROUND);
     }
 }
 

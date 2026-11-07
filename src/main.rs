@@ -3,6 +3,7 @@ mod chrome;
 mod compositor;
 mod grid;
 mod mcp;
+mod palette;
 mod panes;
 mod text;
 

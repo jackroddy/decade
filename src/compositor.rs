@@ -130,7 +130,7 @@ pub struct State {
     glyphs: Glyphs,
     layout: Layout,
     unplaced: Vec<ToplevelSurface>,
-    chrome: Option<GlesTexture>,
+    chrome: Option<(GlesTexture, Grid, Vec<u8>)>,
     overlay: Option<GlesTexture>,
     pointer: Point<f64, Logical>,
     drag: Option<Boundary>,
@@ -490,7 +490,6 @@ impl State {
     }
 
     fn relayout(&mut self) {
-        self.chrome = None;
         self.overlay = None;
         let ids: Vec<usize> = self.layout.panes.iter().map(|pane| pane.id).collect();
         for id in ids {
@@ -530,6 +529,7 @@ impl State {
         if self.layout.pane(id).is_none() {
             return;
         }
+        let previous = self.layout.focused;
         self.layout.focused = id;
         let surface = self
             .layout
@@ -538,7 +538,13 @@ impl State {
             .map(|toplevel| toplevel.wl_surface().clone());
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
-        self.relayout();
+        self.configure(previous);
+        self.configure(id);
+        self.chrome_changed();
+    }
+
+    fn chrome_changed(&mut self) {
+        self.backend.window().request_redraw();
     }
 
     fn focus_named(&mut self, name: &str) {
@@ -844,13 +850,22 @@ impl State {
             (layout.columns * font.cell_width) as i32,
             (layout.rows * font.cell_height) as i32,
         );
-        if chrome.is_none() {
-            let mut grid = Grid::new(layout.columns, layout.rows, FOREGROUND, BACKGROUND);
-            layout.draw(&mut grid);
-            let pixels = chrome::raster(&grid, font, glyphs);
-            *chrome = renderer
-                .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
-                .ok();
+        let mut grid = Grid::new(layout.columns, layout.rows, FOREGROUND, BACKGROUND);
+        layout.draw(&mut grid);
+        match chrome {
+            Some((texture, previous, pixels))
+                if previous.columns == grid.columns && previous.rows == grid.rows =>
+            {
+                patch_chrome(renderer, texture, pixels, previous, &grid, font, glyphs);
+                *previous = grid;
+            }
+            _ => {
+                let pixels = chrome::raster(&grid, font, glyphs);
+                *chrome = renderer
+                    .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
+                    .ok()
+                    .map(|texture| (texture, grid, pixels));
+            }
         }
         if overlay.is_none() && layout.palette {
             let mut grid = crate::panes::overlay_grid(layout.columns, layout.rows);
@@ -905,7 +920,7 @@ impl State {
                 );
             elements.extend(surfaces.into_iter().map(Element::Surface));
         }
-        if let Some(texture) = chrome.as_ref() {
+        if let Some((texture, _, _)) = chrome.as_ref() {
             elements.push(texture_element(renderer, texture));
         }
 
@@ -927,6 +942,58 @@ impl State {
         for pane in layout.visible() {
             if let Some(toplevel) = &pane.toplevel {
                 send_frames_surface_tree(toplevel.wl_surface(), time);
+            }
+        }
+    }
+}
+
+fn patch_chrome(
+    renderer: &mut GlesRenderer,
+    texture: &GlesTexture,
+    pixels: &mut [u8],
+    previous: &Grid,
+    current: &Grid,
+    font: &Font,
+    glyphs: &mut Glyphs,
+) {
+    let columns = current.columns as usize;
+    let cell_width = font.cell_width as usize;
+    let cell_height = font.cell_height as usize;
+    let stride = columns * cell_width * 4;
+    for row in 0..current.rows as usize {
+        let old = &previous.cells[row * columns..(row + 1) * columns];
+        let new = &current.cells[row * columns..(row + 1) * columns];
+        let mut column = 0;
+        while column < columns {
+            if old[column] == new[column] {
+                column += 1;
+                continue;
+            }
+            let start = column;
+            while column < columns && old[column] != new[column] {
+                column += 1;
+            }
+            let run = chrome::raster_run(&new[start..column], font, glyphs);
+            let run_stride = (column - start) * cell_width * 4;
+            for y in 0..cell_height {
+                let from = y * run_stride;
+                let to = (row * cell_height + y) * stride + start * cell_width * 4;
+                pixels[to..to + run_stride].copy_from_slice(&run[from..from + run_stride]);
+            }
+            let region = Rectangle::new(
+                (
+                    (start as u32 * font.cell_width) as i32,
+                    (row as u32 * font.cell_height) as i32,
+                )
+                    .into(),
+                (
+                    ((column - start) as u32 * font.cell_width) as i32,
+                    font.cell_height as i32,
+                )
+                    .into(),
+            );
+            if renderer.update_memory(texture, pixels, region).is_err() {
+                return;
             }
         }
     }
