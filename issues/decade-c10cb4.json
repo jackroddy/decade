@@ -3,7 +3,7 @@
   "title": "How do decade's server and its viewers split?",
   "body": "decade today is one process: a smithay compositor whose output is a winit window on Hyprland (`run` in `src/compositor.rs`). Persistent sessions need the clients to stay connected to a process that outlives the window.\n\n## Options\n\n- Window inside the server. One long-lived decade process per session renders with surfaceless EGL when nothing is shown, and opens or closes its own host window on request. No frames leave the process. It costs dropping smithay's winit helper, which creates one window once. It rules out several viewers and remote viewing unless the second option is built on top later.\n- Separate viewer. A headless server renders each frame into a dmabuf and passes it over a unix socket to a thin viewer, which shows it on Hyprland. The viewer sends input back. A local viewer can hand the dmabuf straight to Hyprland, so frames are not copied. A remote viewer would need the frames encoded and streamed, which is a separate piece of work on the same frame protocol.\n\nJack leans to the separate viewer, because remote viewing would be worth a lot if it works well.\n\n## Open\n\n- Several viewers at different sizes: the panes' clients can have only one size, so one viewer has to decide the layout's size.\n- Frame sync between processes: buffer reuse, fences, and how the viewer paces the server.\n- Where Hyprland-specific code lives, such as the shortcuts inhibitor, once the window belongs to a viewer.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-da02e3",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:23:04.073040109Z",
-  "updated_at": "2026-11-07T08:23:04.073040109Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T08:29:58.36888743Z",
+  "closed_at": "2026-11-07T08:29:58.36888743Z",
+  "close_reason": "Separate viewer. A headless server renders frames and a viewer shows them and sends input back, over decade's own protocol. The viewer is part of the decade binary and also builds for macOS. See the note on decade-da02e3.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "60ddbe2",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "60ddbe2",
+      "branch": "dev"
+    }
   }
 }
