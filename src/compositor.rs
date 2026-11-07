@@ -98,6 +98,7 @@ use crate::panes::{
     BACKGROUND, BarButton, Boundary, Direction, Drop, Kind as PaneKind, Layout, Pane,
 };
 use crate::picker::{self, Grid, Picker};
+use crate::save;
 use crate::settings::{self, Settings};
 use crate::text::Font;
 use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
@@ -123,6 +124,8 @@ const FORMATS_WAIT: Duration = Duration::from_secs(1);
 const OUTBOX_RETRY: Duration = Duration::from_millis(5);
 const CLOSE_TIMEOUT_MS: i32 = 1000;
 const PICKER_TICK: Duration = Duration::from_millis(500);
+const SAVE_DELAY: Duration = Duration::from_secs(1);
+const SAVE_EVERY: Duration = Duration::from_secs(60);
 const CLOSE_ICON: char = '\u{f0156}';
 const CLIPBOARD: u32 = 0;
 const PRIMARY: u32 = 1;
@@ -220,6 +223,10 @@ pub struct State {
     panel: Option<Panel>,
     settings: Settings,
     settings_path: Option<PathBuf>,
+
+    /// Where the workspaces are saved, or `None` when saving is off.
+    save_path: Option<PathBuf>,
+    save_due: Option<RegistrationToken>,
     pointer: Point<f64, Logical>,
     drag: Option<Drag>,
     ctrl_timer: Option<RegistrationToken>,
@@ -386,12 +393,11 @@ pub fn run() {
         None => Settings::default(),
     };
     let font = Font::load(settings.font_size * scale as f32);
-    let workspace = Workspace::new(
-        0,
-        workspace::home(),
+    let (columns, rows) = (
         size.w as u32 / font.cell_width,
         size.h as u32 / font.cell_height,
     );
+    let (workspaces, save_path) = restore(columns, rows);
 
     let handle = event_loop.handle();
     let socket = ListeningSocketSource::new_auto().unwrap();
@@ -499,8 +505,8 @@ pub fn run() {
         texts: TextCache::new(),
         menu_font: Font::load(settings.palette_size * scale as f32),
         rounded,
-        workspaces: vec![workspace],
-        next_workspace: 1,
+        next_workspace: workspaces.len() as u32,
+        workspaces,
         unplaced: Vec::new(),
         menu: None,
         picker: None,
@@ -508,6 +514,8 @@ pub fn run() {
         panel: None,
         settings,
         settings_path,
+        save_path,
+        save_due: None,
         pointer: (0.0, 0.0).into(),
         drag: None,
         ctrl_timer: None,
@@ -515,8 +523,23 @@ pub fn run() {
         start: Instant::now(),
     };
 
-    state.listen(0);
-    state.spawn_terminal(0, "terminal");
+    for workspace in 0..state.workspaces.len() {
+        state.listen(workspace);
+        let terminals: Vec<(String, PathBuf)> = state.workspaces[workspace]
+            .layout
+            .panes
+            .iter()
+            .filter_map(|pane| Some((pane.name.clone(), pane.cwd.clone()?)))
+            .collect();
+        for (pane, cwd) in terminals {
+            state.spawn_terminal(workspace, &pane, &cwd);
+        }
+    }
+    let every = Timer::from_duration(SAVE_EVERY);
+    let _ = handle.insert_source(every, |_, _, state| {
+        state.save();
+        TimeoutAction::ToDuration(SAVE_EVERY)
+    });
     while !state.stopping {
         let backlog = state
             .viewers
@@ -530,6 +553,7 @@ pub fn run() {
         state.display_handle.flush_clients().unwrap();
     }
     state.close_viewers();
+    state.save();
 
     for child in &mut state.children {
         let _ = child.kill();
@@ -538,6 +562,42 @@ pub fn run() {
         let _ = std::fs::remove_file(state.socket_path(workspace.id));
     }
     let _ = std::fs::remove_file(&viewer_path);
+}
+
+fn restore(columns: u32, rows: u32) -> (Vec<Workspace>, Option<PathBuf>) {
+    let home = || vec![Workspace::new(0, workspace::home(), columns, rows)];
+    let Some(path) = save::path() else {
+        return (home(), None);
+    };
+    let restored = save::load(&path).and_then(|saved| {
+        saved
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .map(|(id, saved)| {
+                let id = id as u32;
+                let prefix = format!("decade.w{id}.");
+                let layout = saved.layout(columns, rows, &prefix)?;
+                Ok(Workspace::with_layout(
+                    id,
+                    saved.name.clone(),
+                    saved.cwd.clone(),
+                    layout,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()
+    });
+    match restored {
+        Ok(workspaces) if workspaces.is_empty() => (home(), Some(path)),
+        Ok(workspaces) => (workspaces, Some(path)),
+        Err(error) => {
+            eprintln!(
+                "decade: {} could not be read, so decade starts fresh and will not save over it: {error}",
+                path.display()
+            );
+            (home(), None)
+        }
+    }
 }
 
 fn remove_stale_sockets(dir: &Path) {
@@ -587,15 +647,24 @@ impl State {
         }
     }
 
-    fn spawn_terminal(&mut self, workspace: usize, pane: &str) {
+    fn spawn_terminal(&mut self, workspace: usize, pane: &str, cwd: &Path) {
         let prefix = self.workspaces[workspace].app_id_prefix();
         let mut ghostty = self.command(workspace, "ghostty");
         ghostty
+            .current_dir(cwd)
             .env("DECADE_PANE", pane)
             .args(["--window-decoration=none", "--gtk-titlebar=false"])
             .arg(format!("--class={prefix}{pane}"));
         match ghostty.spawn() {
-            Ok(child) => self.children.push(child),
+            Ok(child) => {
+                let layout = &mut self.workspaces[workspace].layout;
+                if let Some(id) = layout.by_name(pane)
+                    && let Some(pane) = layout.pane_mut(id)
+                {
+                    pane.pid = Some(child.id());
+                }
+                self.children.push(child);
+            }
             Err(error) => eprintln!("decade: could not start ghostty: {error}"),
         }
     }
@@ -849,7 +918,8 @@ impl State {
         self.workspaces.push(created);
         let index = self.workspaces.len() - 1;
         self.listen(index);
-        self.spawn_terminal(index, "terminal");
+        let cwd = self.workspaces[index].cwd.clone();
+        self.spawn_terminal(index, "terminal", &cwd);
         id
     }
 
@@ -858,6 +928,7 @@ impl State {
         for viewer in viewers {
             self.send(viewer, self.workspace_list());
         }
+        self.schedule_save();
     }
 
     fn new_workspace(&mut self, cwd: PathBuf) {
@@ -1722,6 +1793,28 @@ impl State {
         }
     }
 
+    fn schedule_save(&mut self) {
+        if self.save_path.is_none() || self.save_due.is_some() {
+            return;
+        }
+        let timer = Timer::from_duration(SAVE_DELAY);
+        let due = self.loop_handle.insert_source(timer, |_, _, state| {
+            state.save_due = None;
+            state.save();
+            TimeoutAction::Drop
+        });
+        self.save_due = due.ok();
+    }
+
+    fn save(&mut self) {
+        let Some(path) = &self.save_path else {
+            return;
+        };
+        if let Err(error) = save::save(path, &self.workspaces) {
+            eprintln!("decade: could not save to {}: {error}", path.display());
+        }
+    }
+
     fn relayout_workspace(&mut self, workspace: usize) {
         let layout = &self.workspaces[workspace].layout;
         let ids: Vec<usize> = layout.panes.iter().map(|pane| pane.id).collect();
@@ -1729,6 +1822,7 @@ impl State {
             self.configure(workspace, id);
         }
         self.request_redraw();
+        self.schedule_save();
     }
 
     fn configure(&mut self, workspace: usize, id: usize) {
@@ -1776,6 +1870,7 @@ impl State {
         self.configure(current, previous);
         self.configure(current, id);
         self.chrome_changed();
+        self.schedule_save();
     }
 
     fn chrome_changed(&mut self) {
@@ -1796,9 +1891,13 @@ impl State {
     fn new_terminal_pane(&mut self) {
         let name = self.layout().unique_name("terminal");
         let current = self.current();
+        let cwd = self.workspaces[current].cwd.clone();
         let id = self.workspaces[current].layout.add_transient(name.clone());
+        if let Some(pane) = self.workspaces[current].layout.pane_mut(id) {
+            pane.cwd = Some(cwd.clone());
+        }
         self.workspaces[current].router.add_pane(name.clone());
-        self.spawn_terminal(self.current(), &name);
+        self.spawn_terminal(current, &name, &cwd);
         self.relayout();
         self.focus(id);
     }
@@ -2990,6 +3089,7 @@ impl CompositorHandler for State {
             };
             if let Some(pane) = self.workspaces[workspace].layout.pane_mut(id) {
                 pane.toplevel = Some(toplevel);
+                pane.app_id = app_id;
             }
             if workspace == self.current() {
                 self.focus(id);

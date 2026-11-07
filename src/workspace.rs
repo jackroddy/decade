@@ -41,7 +41,12 @@ impl Workspace {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| cwd.display().to_string());
-        let layout = Layout::new(columns, rows);
+        let mut layout = Layout::new(columns, rows);
+        layout.panes[0].cwd = Some(cwd.clone());
+        Workspace::with_layout(id, name, cwd, layout)
+    }
+
+    pub fn with_layout(id: u32, name: String, cwd: PathBuf, layout: Layout) -> Workspace {
         let mut router = Router::new(layout.panes.iter().map(|pane| pane.name.clone()).collect());
         router.connected(AGENT);
         router.handle(AGENT, r#"{"hello":{"name":"agent"}}"#);

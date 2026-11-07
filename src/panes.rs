@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
 use crate::draw::Scene;
@@ -100,9 +102,33 @@ pub struct Pane {
     pub kind: Kind,
     pub rect: CellRect,
     pub toplevel: Option<ToplevelSurface>,
+
+    /// The app id of the last client in the pane.
+    pub app_id: Option<String>,
+
+    /// Where decade starts the pane's shell, for a pane that holds a terminal.
+    pub cwd: Option<PathBuf>,
+
+    /// The ghostty decade started for the pane.
+    pub pid: Option<u32>,
 }
 
-enum Node {
+impl Pane {
+    pub fn new(id: usize, name: String, kind: Kind) -> Pane {
+        Pane {
+            id,
+            name,
+            kind,
+            rect: CellRect::EMPTY,
+            toplevel: None,
+            app_id: None,
+            cwd: None,
+            pid: None,
+        }
+    }
+}
+
+pub enum Node {
     Leaf(usize),
     Split {
         axis: Axis,
@@ -159,13 +185,7 @@ impl Layout {
         let mut layout = Layout {
             columns,
             rows,
-            panes: vec![Pane {
-                id: 0,
-                name: "terminal".to_string(),
-                kind: Kind::Transient,
-                rect: CellRect::EMPTY,
-                toplevel: None,
-            }],
+            panes: vec![Pane::new(0, "terminal".to_string(), Kind::Transient)],
             focused: 0,
             zoom: None,
             bar: false,
@@ -177,6 +197,36 @@ impl Layout {
         };
         layout.arrange();
         layout
+    }
+
+    pub fn restore(
+        columns: u32,
+        rows: u32,
+        panes: Vec<Pane>,
+        root: Node,
+        focused: usize,
+        zoom: Option<usize>,
+    ) -> Layout {
+        let next_id = panes.iter().map(|pane| pane.id + 1).max().unwrap_or(0);
+        let mut layout = Layout {
+            columns,
+            rows,
+            panes,
+            focused,
+            zoom,
+            bar: false,
+            drag_cell: None,
+            dragging: None,
+            hover: None,
+            root,
+            next_id,
+        };
+        layout.arrange();
+        layout
+    }
+
+    pub fn root(&self) -> &Node {
+        &self.root
     }
 
     pub fn resize(&mut self, columns: u32, rows: u32) {
@@ -312,7 +362,10 @@ impl Layout {
                 pane.toplevel.is_none()
                     && match &pane.kind {
                         Kind::Anchor { app_id: wanted } => wanted == app_id,
-                        Kind::Transient => app_id.strip_prefix(prefix) == Some(&pane.name),
+                        Kind::Transient => {
+                            app_id.strip_prefix(prefix) == Some(&pane.name)
+                                || pane.app_id.as_deref() == Some(app_id)
+                        }
                     }
             })
             .map(|pane| pane.id)
@@ -336,13 +389,7 @@ impl Layout {
             Some(pane) if pane.rect.columns >= pane.rect.rows * 2 => Axis::Horizontal,
             _ => Axis::Vertical,
         };
-        self.panes.push(Pane {
-            id,
-            name,
-            kind: Kind::Transient,
-            rect: CellRect::EMPTY,
-            toplevel: None,
-        });
+        self.panes.push(Pane::new(id, name, Kind::Transient));
         if !split_leaf(&mut self.root, at, axis, id) {
             let old = std::mem::replace(&mut self.root, Node::Leaf(id));
             self.root = Node::Split {

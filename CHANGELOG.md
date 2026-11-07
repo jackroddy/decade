@@ -24,6 +24,13 @@ command line and what the tool writes.
   it, and Open creates a workspace there and shows it. The workspace takes
   the directory's name, with a count after it when that name is taken. The
   status line shows the name of the workspace on screen.
+- The server saves its workspaces to `~/.local/state/decade/workspaces.toml`
+  and restores them when it starts. The file holds each workspace's name,
+  directory and split tree, and each pane's name and whether it is pinned.
+  A terminal pane comes back as a shell in the directory its shell was in.
+  A pane that held another app comes back empty, and a window of that app
+  fills it again. decade saves a second after a change, every minute, and
+  when it stops.
 - Super+Tab opens a picker with a cell for each workspace, showing its
   panes scaled down, and a last cell for a new workspace. Super+Tab, Tab,
   the arrow keys or Ctrl+H/J/K/L move between cells. Enter or a click
