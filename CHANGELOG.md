@@ -67,6 +67,7 @@ command line and what the tool writes.
   host's scale and render at it. decade draws its own chrome on the GPU.
 - The window opens on a headless Hyprland output during development; see
   `scripts/devscreen`.
+- Clients in panes render on the same GPU as decade.
 
 ## [0.1.0] - 2026-11-05
 

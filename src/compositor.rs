@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use smithay::backend::allocator::dmabuf::Dmabuf;
+use smithay::backend::egl::EGLDevice;
 use smithay::backend::input::{
     AbsolutePositionEvent, Axis as InputAxis, AxisSource, ButtonState, Event, InputEvent, KeyState,
     KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
@@ -54,7 +55,9 @@ use smithay::wayland::compositor::{
     CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction,
     with_states, with_surface_tree_downward,
 };
-use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
+use smithay::wayland::dmabuf::{
+    DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier,
+};
 use smithay::wayland::fractional_scale::{
     FractionalScaleHandler, FractionalScaleManagerState, with_fractional_scale,
 };
@@ -210,7 +213,20 @@ pub fn run(commands: Commands) {
             ],
         )
         .expect("the rounded rect shader compiles");
-    let _dmabuf_global = dmabuf_state.create_global::<State>(&dh, formats);
+    let feedback = render_node(backend.renderer()).and_then(|node| {
+        DmabufFeedbackBuilder::new(node, formats.clone())
+            .build()
+            .map_err(|error| error.to_string())
+    });
+    let _dmabuf_global = match feedback {
+        Ok(feedback) => dmabuf_state.create_global_with_default_feedback::<State>(&dh, &feedback),
+        Err(error) => {
+            eprintln!(
+                "decade: clients get no GPU to render on and may fall back to software: {error}"
+            );
+            dmabuf_state.create_global::<State>(&dh, formats)
+        }
+    };
 
     let size = backend.window_size();
     let scale = backend.window().scale_factor();
@@ -1475,6 +1491,17 @@ impl Paint<'_> {
             }
         }
     }
+}
+
+fn render_node(renderer: &GlesRenderer) -> Result<u64, String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let device = EGLDevice::device_for_display(renderer.egl_context().display())
+        .map_err(|error| error.to_string())?;
+    let path = device
+        .render_device_path()
+        .map_err(|error| error.to_string())?;
+    let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+    Ok(metadata.rdev())
 }
 
 fn repeats(key: Key) -> bool {
