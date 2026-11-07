@@ -15,7 +15,7 @@
   "lease_expires": "2026-11-07T21:45:20.439208903Z",
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.919739011Z",
-  "updated_at": "2026-11-07T21:30:20.449916718Z",
+  "updated_at": "2026-11-07T21:42:01.90140093Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -34,6 +34,14 @@
       "author": "Jack Roddy/6b9cbed5",
       "text": "Jack's answers to the proposal's open items:\n\n- Step 4: the palette flow for a new workspace is approved as a first version, to refine after.\n- Step 5: when the last workspace closes, a new home workspace takes its place. The server does not exit for lack of workspaces.\n- Step 7 is replaced. A pane program or an agent reaches only the panes in its own workspace, and there is no `workspace/pane` form. On the pane socket, decade resolves a name in the workspace of the sender's pane. Each workspace gets its own MCP URL, passed as `DECADE_MCP` to the programs started in it, and decade answers calls on that URL with that workspace's panes only. A route that crosses workspaces can be added to the same MCP server later if it is wanted.",
       "commit": "d1be0b5",
+      "branch": "sessions"
+    },
+    {
+      "id": "539ec1a5",
+      "at": "2026-11-07T21:42:01.90140025Z",
+      "author": "Jack Roddy/6b9cbed5",
+      "text": "Steps 1 to 3 of the proposal landed in 00e4258, along with the `show` handling from step 6.\n\n- `Workspace` in `src/workspace.rs` holds an id, a name, a cwd and a `Layout`. `State` holds `workspaces: Vec<Workspace>`, and each `Viewer` holds the id it shows.\n- `State::current` is the active viewer's workspace, or the first one. Input acts on it. `render` draws each viewer's own workspace. The palette, panel and drag are drawn only in the current one.\n- Pane ids stay local to each `Layout`. `pane_of_surface` searches every workspace. `configure` and `remove_pane` take a workspace index.\n- ghostty gets `--class=decade.w<id>.<pane>`, and `Layout::place` takes that prefix.\n- Checked on headless-dev: one terminal pane, cwd `/home/jack`, `DECADE_WORKSPACE=jack`.\n\nStill open: the palette flow (step 4), closing (step 5), the scoped router and one MCP URL per workspace (the step 7 replacement), and the status line name (step 8). Until step 7, `Router` keeps one flat set of pane names.",
+      "commit": "ce0862d",
       "branch": "sessions"
     }
   ],
