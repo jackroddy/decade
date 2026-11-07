@@ -3,7 +3,7 @@
   "title": "What replaces anchors and pinning once sessions restore panes?",
   "body": "decade has two kinds of pane (`Kind` in `src/panes.rs`). An anchor waits for a window with a given app id and stays as an empty slot when its client exits. A transient pane is removed when its client exits. The pin on the bar turns one into the other.\n\nPersistent sessions change what a pane needs to remember. herdr's panes are slots that hold a process and know their cwd. On restore it starts a shell there, and resumes agents with their own resume command. If decade restores panes the same way, an app-id rule may be the wrong thing for a pane to hold, and pinning may mean \"keep this pane across restarts\" rather than \"wait for this app id\". decade-7c65be, a pinned terminal that never gets its client back, sits on the same question.\n\nJack decided on 2026-11-07 that this deserves its own discussion before anything changes.\n\n## Open\n\n- What a pane holds: an app-id rule, a command and cwd, or both.\n- Whether pinning survives, and what it means once every pane is saved.\n- Whether the three starting anchors (chat, terminal, code) stay special or become an ordinary default layout.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-1b6bb6",
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:19:57.471358146Z",
-  "updated_at": "2026-11-07T21:59:58.285810535Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T21:59:58.295754408Z",
+  "closed_at": "2026-11-07T21:59:58.295754408Z",
+  "close_reason": "Decided in the last note: a pane holds a name, a command or shell, and a cwd; a pin keeps the slot and offers a restart; GUI apps are not relaunched (decade-15e5eb).",
+  "resolution": "done",
   "notes": [
     {
       "id": "fb463d1a",
@@ -40,6 +40,9 @@
       "commit": "60ddbe2",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "31d801e",
+      "branch": "sessions"
+    }
   }
 }
