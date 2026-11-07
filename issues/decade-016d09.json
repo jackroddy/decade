@@ -15,11 +15,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T23:31:39.742798946Z",
-  "updated_at": "2026-11-07T23:31:39.753037423Z",
+  "updated_at": "2026-11-07T23:45:37.060480466Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "59a122fb",
+      "at": "2026-11-07T23:45:37.060479676Z",
+      "author": "Jack Roddy/6b9cbed5",
+      "text": "The full audit ran with `decade script` against an isolated server; screenshots are in `tmp-claude/2026-11-07-ui-audit/full/shots/` on Jack's machine. Findings beyond the three in this issue's body, most important first:\n\n1. The picker's selected cell has only a thin accent outline, and the current workspace looks the same as the selected one.\n2. The picker and palette have no footer of key hints; the settings panel has one (\"esc close\").\n3. The palette, the New workspace browser and the settings panel each have a different width and top edge, so the box jumps between steps. The palette is a tall, mostly empty box for four rows.\n4. Overlays have no scrim or shadow, and the selected palette row shows a lighter line along its top edge.\n5. The \"shell exited\" slot is small grey text on an inset box, and its restart button is small.\n6. Ctrl bar icons differ in size and weight, and the unpinned icon is nearly invisible on the focused (accent) bar.\n7. Launch truncates app names at the front (\"…H Server Browser\"), cutting the part that tells them apart.\n8. Settings values are right-aligned, so the left chevron moves between rows; \"Bar hold\" and \"Grab animation\" are unclear names.\n9. The New workspace browser gives no hint that Tab completes, and an empty directory shows blank space.\n10. Zoom is shown only in the top bar, not on the pane.\n11. Hit targets for the picker's x and the Ctrl bar icons are about 12 px.\n\nBugs found by the same audit:\n\n- The picker's close confirmation (\"close <name>? press x again\") runs past the window edge for a long name.\n- Picker labels run past the window edge in a small window, and the grid does not reflow.\n- The fourth picker cell showed no selection after three Tabs, reproduced three times.\n- The Ctrl bar covers the first row of the pane's client.\n- An overlay left open by a viewer that disconnects is still open for the next viewer.\n- Keys typed straight after a click were partly lost; this may be the script tool and is unconfirmed.\n\nNot taken: the audit suggested leaving client text out of picker thumbnails. Jack's design for the picker lets text inside client windows scale with them, so that stays.",
+      "commit": "50d4fec",
+      "branch": "sessions"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "bc045c7",
