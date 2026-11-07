@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::io::OwnedFd;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -9,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags};
+use rustix::fs::FlockOperation;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::{Buffer as _, Fourcc, Modifier};
 use smithay::backend::input::{
@@ -239,6 +241,12 @@ pub struct Commands {
 }
 
 pub fn run(commands: Commands) {
+    let viewer_path = viewer_socket_path();
+    if let Some(dir) = viewer_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _lock = lock_server(&viewer_path.with_file_name("server.lock"));
+
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new().unwrap();
     let display: Display<State> = Display::new().unwrap();
     let dh = display.handle();
@@ -360,17 +368,6 @@ pub fn run(commands: Commands) {
         )
         .unwrap();
 
-    let viewer_path = viewer_socket_path();
-    if let Some(dir) = viewer_path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if UnixStream::connect(&viewer_path).is_ok() {
-        eprintln!(
-            "decade: a server is already running at {}",
-            viewer_path.display()
-        );
-        std::process::exit(1);
-    }
     let _ = std::fs::remove_file(&viewer_path);
     let viewer_listener = UnixListener::bind(&viewer_path).unwrap();
     viewer_listener.set_nonblocking(true).unwrap();
@@ -510,6 +507,38 @@ pub fn run(commands: Commands) {
     }
     let _ = std::fs::remove_file(&state.env.channel);
     let _ = std::fs::remove_file(&viewer_path);
+}
+
+/// The exit status of a server that found another server running.
+pub const ANOTHER_SERVER: i32 = 3;
+
+fn lock_server(path: &Path) -> File {
+    let lock = match OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+    {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!("decade: {}: {error}", path.display());
+            std::process::exit(1);
+        }
+    };
+    match rustix::fs::flock(&lock, FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => lock,
+        Err(rustix::io::Errno::WOULDBLOCK) => {
+            eprintln!(
+                "decade: another server holds {}, so this one is exiting",
+                path.display()
+            );
+            std::process::exit(ANOTHER_SERVER);
+        }
+        Err(error) => {
+            eprintln!("decade: {} would not lock: {error}", path.display());
+            std::process::exit(1);
+        }
+    }
 }
 
 pub fn viewer_socket_path() -> PathBuf {

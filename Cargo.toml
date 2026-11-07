@@ -19,7 +19,7 @@ repository = "https://github.com/jackroddy/decade"
 
 [dependencies]
 fontdb = "0.24.0"
-rustix = { version = "0.38", features = ["event", "net"] }
+rustix = { version = "0.38", features = ["event", "fs", "net"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 swash = "0.2.10"

@@ -1,18 +1,20 @@
 use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::{self, Read};
+use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use rustix::event::{PollFd, PollFlags};
+use rustix::fs::MemfdFlags;
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::dmabuf::{DmabufFeedback, DmabufHandler, DmabufState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::calloop::generic::Generic;
-use smithay_client_toolkit::reexports::calloop::{EventLoop, Interest, Mode, PostAction};
+use smithay_client_toolkit::reexports::calloop::{
+    EventLoop, Interest, LoopHandle, Mode, PostAction, RegistrationToken,
+};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::shell::WaylandSurface;
@@ -20,14 +22,16 @@ use smithay_client_toolkit::shell::xdg::XdgShell;
 use smithay_client_toolkit::shell::xdg::window::{
     Window, WindowConfigure, WindowDecorations, WindowHandler,
 };
+use smithay_client_toolkit::subcompositor::SubcompositorState;
 use smithay_client_toolkit::{
-    delegate_compositor, delegate_dmabuf, delegate_output, delegate_registry, delegate_xdg_shell,
-    delegate_xdg_window, registry_handlers,
+    delegate_compositor, delegate_dmabuf, delegate_output, delegate_registry,
+    delegate_subcompositor, delegate_xdg_shell, delegate_xdg_window, registry_handlers,
 };
 use wayland_client::globals::{GlobalList, registry_queue_init};
 use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_keyboard, wl_keyboard::WlKeyboard, wl_output, wl_pointer,
-    wl_pointer::WlPointer, wl_seat, wl_seat::WlSeat, wl_surface::WlSurface,
+    wl_pointer::WlPointer, wl_region::WlRegion, wl_seat, wl_seat::WlSeat, wl_shm, wl_shm::WlShm,
+    wl_shm_pool::WlShmPool, wl_subsurface::WlSubsurface, wl_surface::WlSurface,
 };
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::cursor_shape::v1::client::{
@@ -46,20 +50,21 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1::{self, ZwpLinuxBufferParamsV1},
     zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
 };
+use wayland_protocols::wp::single_pixel_buffer::v1::client::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
 use wayland_protocols::wp::viewporter::client::{
     wp_viewport::WpViewport, wp_viewporter::WpViewporter,
 };
 
-use crate::compositor::viewer_socket_path;
+use crate::compositor::{ANOTHER_SERVER, viewer_socket_path};
 use crate::hypr::{self, Hyprland};
 use crate::inhibit::Shortcuts;
+use crate::palette::BACKGROUND;
 use crate::wire::{Decoder, Format, Outbox, Plane, ServerMessage, ViewerMessage};
 
 const PROTOCOL_VERSION: u32 = 1;
 const LOCAL: u32 = 0;
 const DEFAULT_SIZE: (u32, u32) = (1280, 800);
 const START_TIMEOUT: Duration = Duration::from_secs(10);
-const FENCE_TIMEOUT_MS: i32 = 500;
 
 // xkb's eight real modifiers have fixed indices, Shift
 // first; Caps Lock is Lock, and the standard keymaps
@@ -121,7 +126,7 @@ pub fn run(class: String, server_args: Vec<String>) {
     let (globals, queue) = registry_queue_init::<Viewer>(&connection)
         .unwrap_or_else(|error| fail(&format!("the Wayland registry did not load: {error}")));
     let qh = queue.handle();
-    let mut event_loop: EventLoop<Viewer> =
+    let mut event_loop: EventLoop<'static, Viewer> =
         EventLoop::try_new().unwrap_or_else(|error| fail(&error.to_string()));
     WaylandSource::new(connection.clone(), queue)
         .insert(event_loop.handle())
@@ -144,7 +149,7 @@ pub fn run(class: String, server_args: Vec<String>) {
         )
         .unwrap_or_else(|error| fail(&error.to_string()));
 
-    let mut viewer = Viewer::open(&globals, qh, class, server);
+    let mut viewer = Viewer::open(&globals, qh, event_loop.handle(), class, server);
     viewer.set_shortcuts(true);
     viewer.watch_hyprland(&event_loop);
 
@@ -198,13 +203,19 @@ fn connect_or_start(server_args: &[String]) -> Result<UnixStream, String> {
         .spawn()
         .map_err(|error| format!("decade server did not start: {error}"))?;
     let start = Instant::now();
+    let mut lost = false;
     loop {
         std::thread::sleep(Duration::from_millis(50));
         if let Ok(stream) = UnixStream::connect(&path) {
+            std::thread::spawn(move || child.wait());
             return Ok(stream);
         }
-        if let Ok(Some(status)) = child.try_wait() {
-            return Err(format!("decade server exited before it answered: {status}"));
+        if !lost && let Ok(Some(status)) = child.try_wait() {
+            if status.code() != Some(ANOTHER_SERVER) {
+                return Err(format!("decade server exited before it answered: {status}"));
+            }
+            // the server holding the lock answers at the same path
+            lost = true;
         }
         if start.elapsed() > START_TIMEOUT {
             return Err(format!(
@@ -215,9 +226,90 @@ fn connect_or_start(server_args: &[String]) -> Result<UnixStream, String> {
     }
 }
 
-fn wait_for(fence: &OwnedFd) {
-    let mut fds = [PollFd::new(fence, PollFlags::IN)];
-    while let Err(rustix::io::Errno::INTR) = rustix::event::poll(&mut fds, FENCE_TIMEOUT_MS) {}
+/// A 1×1 buffer of the background colour, for the window behind the frame.
+fn background(globals: &GlobalList, qh: &QueueHandle<Viewer>) -> WlBuffer {
+    if let Ok(manager) = globals.bind::<WpSinglePixelBufferManagerV1, _, _>(qh, 1..=1, ()) {
+        let [red, green, blue, alpha] = BACKGROUND.map(|c| (c as f64 * u32::MAX as f64) as u32);
+        let buffer = manager.create_u32_rgba_buffer(red, green, blue, alpha, qh, ());
+        manager.destroy();
+        return buffer;
+    }
+    let shm: WlShm = globals
+        .bind(qh, 1..=1, ())
+        .unwrap_or_else(|_| missing("wl_shm"));
+    let [red, green, blue, _] = BACKGROUND.map(|c| (c * 255.0).round() as u8);
+    let mut file = rustix::fs::memfd_create("decade-background", MemfdFlags::CLOEXEC)
+        .map(File::from)
+        .unwrap_or_else(|error| fail(&format!("no memfd for the background: {error}")));
+    // xrgb8888 is a little-endian u32, so blue comes first
+    if let Err(error) = file.write_all(&[blue, green, red, 0xff]) {
+        fail(&format!("the background did not write: {error}"));
+    }
+    let pool = shm.create_pool(file.as_fd(), 4, qh, ());
+    let buffer = pool.create_buffer(0, 1, 1, 4, wl_shm::Format::Xrgb8888, qh, ());
+    pool.destroy();
+    buffer
+}
+
+/// Where a frame sits in the window.
+struct Fit {
+    /// The frame's size in physical pixels.
+    frame: (u32, u32),
+
+    /// The frame's place in the window, in logical pixels.
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+impl Fit {
+    /// Compute the fit of a frame in a window: the whole window when the frame
+    /// is the window's physical size, else the frame scaled to fit and centred.
+    fn new(frame: (u32, u32), window: (u32, u32), physical: (u32, u32)) -> Fit {
+        let (width, height) = window;
+        if frame == physical || frame.0 == 0 || frame.1 == 0 {
+            return Fit {
+                frame,
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+        }
+        let (frame_width, frame_height) = (frame.0 as u64, frame.1 as u64);
+        let (window_width, window_height) = (width as u64, height as u64);
+        let (fit_width, fit_height) = if frame_width * window_height >= frame_height * window_width
+        {
+            let fit_height = (frame_height * window_width + frame_width / 2) / frame_width;
+            (window_width, fit_height)
+        } else {
+            let fit_width = (frame_width * window_height + frame_height / 2) / frame_height;
+            (fit_width, window_height)
+        };
+        let (fit_width, fit_height) = (fit_width.max(1) as u32, fit_height.max(1) as u32);
+        Fit {
+            frame,
+            x: (width as i32 - fit_width as i32) / 2,
+            y: (height as i32 - fit_height as i32) / 2,
+            width: fit_width,
+            height: fit_height,
+        }
+    }
+
+    /// The frame pixels per logical pixel, across and down.
+    fn scale(&self) -> (f64, f64) {
+        (
+            self.frame.0 as f64 / self.width.max(1) as f64,
+            self.frame.1 as f64 / self.height.max(1) as f64,
+        )
+    }
+
+    /// Convert a window-local position to physical pixels of the frame.
+    fn to_frame(&self, x: f64, y: f64) -> (f64, f64) {
+        let (x_scale, y_scale) = self.scale();
+        ((x - self.x as f64) * x_scale, (y - self.y as f64) * y_scale)
+    }
 }
 
 fn shape(name: &str) -> Shape {
@@ -233,8 +325,17 @@ struct Viewer {
     output_state: OutputState,
     dmabuf_state: DmabufState,
     qh: QueueHandle<Viewer>,
+    loop_handle: LoopHandle<'static, Viewer>,
     window: Window,
-    viewport: WpViewport,
+
+    /// The background buffer the window shows behind the frame.
+    background: WlBuffer,
+    window_viewport: WpViewport,
+
+    /// The subsurface the frame is shown on, above the window.
+    subsurface: WlSubsurface,
+    frame_surface: WlSurface,
+    frame_viewport: WpViewport,
 
     server: UnixStream,
     decoder: Decoder,
@@ -256,8 +357,8 @@ struct Viewer {
     welcomed: bool,
     buffers: HashMap<u32, Imported>,
 
-    /// A frame whose buffer the host has not yet created, with its fence.
-    held: Option<(u32, Option<OwnedFd>)>,
+    /// A frame not yet on screen.
+    pending: Option<Pending>,
 
     /// The size of the frame on screen.
     shown: Option<(u32, u32)>,
@@ -292,6 +393,13 @@ struct Imported {
     params: ZwpLinuxBufferParamsV1,
     width: u32,
     height: u32,
+}
+
+struct Pending {
+    id: u32,
+
+    /// The source watching the frame's fence, until the fence signals.
+    fence: Option<RegistrationToken>,
 }
 
 impl Imported {
@@ -331,6 +439,7 @@ impl Viewer {
     fn open(
         globals: &GlobalList,
         qh: QueueHandle<Viewer>,
+        loop_handle: LoopHandle<'static, Viewer>,
         class: String,
         server: UnixStream,
     ) -> Viewer {
@@ -352,14 +461,28 @@ impl Viewer {
             .ok()
             .map(Shortcuts::new);
 
+        let subcompositor =
+            SubcompositorState::bind(compositor.wl_compositor().clone(), globals, &qh)
+                .unwrap_or_else(|_| missing("wl_subcompositor"));
+
         let surface = compositor.create_surface(&qh);
-        let viewport = viewporter.get_viewport(&surface, &qh, ());
+        let window_viewport = viewporter.get_viewport(&surface, &qh, ());
         let _fractional_scale = fractional_scale
             .as_ref()
             .map(|manager| manager.get_fractional_scale(&surface, &qh, ()));
+
+        let (subsurface, frame_surface) = subcompositor.create_subsurface(surface.clone(), &qh);
+        let frame_viewport = viewporter.get_viewport(&frame_surface, &qh, ());
         let _feedback = dmabuf_state
-            .get_surface_feedback(&surface, &qh)
+            .get_surface_feedback(&frame_surface, &qh)
             .unwrap_or_else(|_| missing("linux-dmabuf version 4"));
+
+        // an empty input region passes the pointer through to
+        // the window, so positions are always window-local
+        let region = compositor.wl_compositor().create_region(&qh, ());
+        frame_surface.set_input_region(Some(&region));
+        region.destroy();
+
         let window = xdg_shell.create_window(surface, WindowDecorations::None, &qh);
         window.set_title("decade");
         window.set_app_id(class);
@@ -369,9 +492,14 @@ impl Viewer {
             registry_state: RegistryState::new(globals),
             output_state: OutputState::new(globals, &qh),
             dmabuf_state,
+            background: background(globals, &qh),
             qh,
+            loop_handle,
             window,
-            viewport,
+            window_viewport,
+            subsurface,
+            frame_surface,
+            frame_viewport,
             server,
             decoder: Decoder::new(),
             outbox: Outbox::new(),
@@ -383,7 +511,7 @@ impl Viewer {
             sent: None,
             welcomed: false,
             buffers: HashMap::new(),
-            held: None,
+            pending: None,
             shown: None,
             seat,
             pointer: None,
@@ -564,45 +692,90 @@ impl Viewer {
     }
 
     fn frame(&mut self, id: u32, fence: Option<OwnedFd>) {
-        let created = match self.buffers.get(&id) {
-            Some(imported) => imported.buffer.is_some(),
-            None => {
-                self.send(ViewerMessage::Release { id, fence: None });
-                return;
-            }
-        };
-        let superseded = if created {
-            self.show(id, fence);
-            self.held.take()
-        } else {
-            self.held.replace((id, fence))
-        };
-        if let Some((old, _)) = superseded {
+        if !self.buffers.contains_key(&id) {
+            self.send(ViewerMessage::Release { id, fence: None });
+            return;
+        }
+        if let Some(old) = self.take_pending() {
             self.send(ViewerMessage::Release {
                 id: old,
                 fence: None,
             });
         }
+        let fence = fence.and_then(|fence| self.watch(id, fence));
+        self.pending = Some(Pending { id, fence });
+        self.show_pending();
     }
 
-    fn show(&mut self, id: u32, fence: Option<OwnedFd>) {
+    fn watch(&mut self, id: u32, fence: OwnedFd) -> Option<RegistrationToken> {
+        let source = Generic::new(fence, Interest::READ, Mode::OneShot);
+        let inserted = self
+            .loop_handle
+            .insert_source(source, move |_, _, viewer: &mut Viewer| {
+                viewer.signalled(id);
+                Ok(PostAction::Remove)
+            });
+        match inserted {
+            Ok(token) => Some(token),
+            Err(error) => {
+                eprintln!("decade: a frame's fence could not be watched: {error}");
+                None
+            }
+        }
+    }
+
+    fn signalled(&mut self, id: u32) {
+        if let Some(pending) = &mut self.pending
+            && pending.id == id
+        {
+            pending.fence = None;
+            self.show_pending();
+        }
+    }
+
+    /// Drop the pending frame, returning its buffer's id.
+    fn take_pending(&mut self) -> Option<u32> {
+        let pending = self.pending.take()?;
+        if let Some(token) = pending.fence {
+            self.loop_handle.remove(token);
+        }
+        Some(pending.id)
+    }
+
+    fn show_pending(&mut self) {
+        let Some(Pending { id, fence: None }) = self.pending else {
+            return;
+        };
         let Some(imported) = self.buffers.get(&id) else {
             return;
         };
         let Some(buffer) = &imported.buffer else {
             return;
         };
-        if let Some(fence) = fence {
-            wait_for(&fence);
-        }
-        let surface = self.window.wl_surface();
-        surface.attach(Some(buffer), 0, 0);
-        surface.damage_buffer(0, 0, imported.width as i32, imported.height as i32);
-        self.viewport
-            .set_destination(self.size.0 as i32, self.size.1 as i32);
-        surface.frame(&self.qh, surface.clone());
-        surface.commit();
+        self.frame_surface.attach(Some(buffer), 0, 0);
+        self.frame_surface
+            .damage_buffer(0, 0, imported.width as i32, imported.height as i32);
+        self.frame_surface
+            .frame(&self.qh, self.frame_surface.clone());
         self.shown = Some((imported.width, imported.height));
+        self.pending = None;
+        self.place();
+    }
+
+    /// Place the frame in the window and commit both surfaces.
+    fn place(&self) {
+        let fit = self.fit();
+        self.frame_viewport
+            .set_destination(fit.width as i32, fit.height as i32);
+        self.subsurface.set_position(fit.x, fit.y);
+        self.frame_surface.commit();
+        self.window.wl_surface().commit();
+    }
+
+    fn fit(&self) -> Fit {
+        let physical = |logical: u32| ((logical as u64 * self.scale as u64 + 60) / 120) as u32;
+        let physical = (physical(self.size.0), physical(self.size.1));
+        Fit::new(self.shown.unwrap_or(physical), self.size, physical)
     }
 
     fn set_cursor(&mut self, cursor: Option<Shape>) {
@@ -619,20 +792,6 @@ impl Viewer {
             (Some(shape), Some(device)) => device.set_shape(serial, shape),
             (Some(_), None) => {}
         }
-    }
-
-    /// Convert a surface-local position to physical pixels of the frame on screen.
-    fn to_frame(&self, x: f64, y: f64) -> (f64, f64) {
-        let (width, height) = self.size;
-        let physical = |logical: u32| (logical as u64 * self.scale as u64 + 60) / 120;
-        let (frame_width, frame_height) = self
-            .shown
-            .map(|(w, h)| (w as u64, h as u64))
-            .unwrap_or((physical(width), physical(height)));
-        (
-            x * frame_width as f64 / width.max(1) as f64,
-            y * frame_height as f64 / height.max(1) as f64,
-        )
     }
 
     fn send_keys(&mut self) {
@@ -711,7 +870,7 @@ impl Viewer {
             } => {
                 self.enter_serial = Some(serial);
                 self.apply_cursor();
-                let (x, y) = self.to_frame(surface_x, surface_y);
+                let (x, y) = self.fit().to_frame(surface_x, surface_y);
                 let time = self.pointer_time;
                 self.input(ViewerMessage::Pointer { time, x, y });
             }
@@ -725,7 +884,7 @@ impl Viewer {
                 surface_y,
             } => {
                 self.pointer_time = time;
-                let (x, y) = self.to_frame(surface_x, surface_y);
+                let (x, y) = self.fit().to_frame(surface_x, surface_y);
                 self.input(ViewerMessage::Pointer { time, x, y });
             }
             wl_pointer::Event::Button {
@@ -789,7 +948,7 @@ impl Viewer {
     }
 
     fn send_scroll(&mut self) {
-        let (x_factor, y_factor) = self.to_frame(1.0, 1.0);
+        let (x_factor, y_factor) = self.fit().scale();
         let source = std::mem::take(&mut self.scroll_source);
         for axis in 0..2 {
             let scroll = std::mem::take(&mut self.scroll[axis]);
@@ -918,12 +1077,13 @@ impl WindowHandler for Viewer {
         if let (Some(width), Some(height)) = configure.new_size {
             self.size = (width.get(), height.get());
         }
-        self.configured = true;
-        if self.shown.is_some() {
-            self.viewport
-                .set_destination(self.size.0 as i32, self.size.1 as i32);
+        if !self.configured {
+            window.attach(Some(&self.background), 0, 0);
+            self.configured = true;
         }
-        window.commit();
+        self.window_viewport
+            .set_destination(self.size.0 as i32, self.size.1 as i32);
+        self.place();
         self.hello();
         self.sync_size();
     }
@@ -986,10 +1146,12 @@ impl DmabufHandler for Viewer {
             return;
         };
         imported.buffer = Some(buffer);
-        if self.held.as_ref().is_some_and(|&(held, _)| held == id)
-            && let Some((id, fence)) = self.held.take()
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.id == id)
         {
-            self.show(id, fence);
+            self.show_pending();
         }
     }
 
@@ -1006,8 +1168,12 @@ impl DmabufHandler for Viewer {
             imported.destroy();
         }
         self.send(ViewerMessage::BufferFailed { id });
-        if self.held.as_ref().is_some_and(|&(held, _)| held == id) {
-            self.held = None;
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.id == id)
+        {
+            self.take_pending();
             self.send(ViewerMessage::Ready);
         }
     }
@@ -1143,6 +1309,11 @@ macro_rules! no_events {
 }
 
 no_events!(
+    WlBuffer,
+    WlRegion,
+    WlShm,
+    WlShmPool,
+    WpSinglePixelBufferManagerV1,
     WpViewporter,
     WpViewport,
     WpFractionalScaleManagerV1,
@@ -1158,6 +1329,7 @@ delegate_registry!(Viewer);
 delegate_xdg_shell!(Viewer);
 delegate_xdg_window!(Viewer);
 delegate_dmabuf!(Viewer);
+delegate_subcompositor!(Viewer);
 
 #[cfg(test)]
 mod tests {
@@ -1169,5 +1341,28 @@ mod tests {
         assert_eq!(shape("text"), Shape::Text);
         assert_eq!(shape("zoom-out"), Shape::ZoomOut);
         assert_eq!(shape("no-such-cursor"), Shape::Default);
+    }
+
+    #[test]
+    fn a_frame_of_the_windows_physical_size_fills_the_window() {
+        let fit = Fit::new((2400, 1500), (1601, 1000), (2400, 1500));
+        assert_eq!((fit.x, fit.y, fit.width, fit.height), (0, 0, 1601, 1000));
+        assert_eq!(fit.to_frame(1601.0, 1000.0).1, 1500.0);
+    }
+
+    #[test]
+    fn a_wider_frame_is_letterboxed_above_and_below_and_centred() {
+        let fit = Fit::new((2000, 500), (1000, 1000), (1000, 1000));
+        assert_eq!((fit.x, fit.y, fit.width, fit.height), (0, 375, 1000, 250));
+        assert_eq!(fit.to_frame(500.0, 500.0), (1000.0, 250.0));
+        assert_eq!(fit.to_frame(0.0, 0.0), (0.0, -750.0));
+    }
+
+    #[test]
+    fn a_taller_frame_is_pillarboxed_and_positions_map_through_the_same_fit() {
+        let fit = Fit::new((500, 1000), (800, 400), (1600, 800));
+        assert_eq!((fit.x, fit.y, fit.width, fit.height), (300, 0, 200, 400));
+        assert_eq!(fit.to_frame(300.0, 400.0), (0.0, 1000.0));
+        assert_eq!(fit.scale(), (2.5, 2.5));
     }
 }
