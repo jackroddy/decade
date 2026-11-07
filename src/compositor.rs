@@ -1343,6 +1343,24 @@ impl State {
                 }
             }
             ViewerMessage::Show { id: workspace } => self.show(id, workspace),
+            ViewerMessage::List => {
+                let workspaces = self
+                    .workspaces
+                    .iter()
+                    .map(|workspace| wire::Listed {
+                        id: workspace.id,
+                        name: workspace.name.clone(),
+                        cwd: workspace.cwd.display().to_string(),
+                        panes: workspace.layout.panes.len() as u32,
+                    })
+                    .collect();
+                self.send(id, ServerMessage::Listing { workspaces });
+                let welcomed = self.viewers.get(&id).is_some_and(|viewer| viewer.welcomed);
+                if !welcomed {
+                    self.flush_viewers();
+                    self.viewer_gone(id);
+                }
+            }
             ViewerMessage::Error { message, .. } => {
                 eprintln!("decade: a viewer reported an error: {message}");
                 self.viewer_gone(id);

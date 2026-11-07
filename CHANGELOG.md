@@ -78,6 +78,8 @@ command line and what the tool writes.
   control the server. `start` runs a server in the background and opens no
   window. `stop` ends the server and every program in its panes. `status`
   prints the server's pid, and exits with 1 when no server is running.
+  `decade list` prints each workspace's id, name, number of panes and
+  directory.
 - `--class <app id>` sets the window's app id, for window rules. The default
   is `decade`.
 - Super with h, j, k or l moves focus between panes by direction,

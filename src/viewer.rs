@@ -576,6 +576,7 @@ impl Viewer {
                 }
                 self.exit = Some(0);
             }
+            ServerMessage::Listing { .. } => {}
             ServerMessage::Welcome { .. } => {
                 self.welcomed = true;
                 self.sync_size();

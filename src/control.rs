@@ -7,6 +7,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use rustix::fs::FlockOperation;
+
+use crate::wire::{Decoder, Listed, Outbox, ServerMessage, ViewerMessage};
 use rustix::process::{Pid, Signal};
 
 /// The exit status of a server that found another server running.
@@ -112,6 +114,36 @@ pub fn stop() -> Result<Option<u32>, String> {
         std::thread::sleep(POLL);
     }
     Ok(Some(pid))
+}
+
+/// The running server's workspaces, in picker order.
+pub fn list() -> Result<Vec<Listed>, String> {
+    let path = viewer_socket_path();
+    let stream = UnixStream::connect(&path).map_err(|_| "no server is running".to_string())?;
+    let mut outbox = Outbox::new();
+    outbox
+        .push_viewer_message(ViewerMessage::List)
+        .map_err(|error| format!("{error:?}"))?;
+    while !outbox.send(&stream).map_err(|error| error.to_string())? {}
+    let mut decoder = Decoder::new();
+    loop {
+        if let Some(message) = decoder
+            .next_server_message()
+            .map_err(|error| format!("{error:?}"))?
+        {
+            return match message {
+                ServerMessage::Listing { workspaces } => Ok(workspaces),
+                ServerMessage::Error { message, .. } => Err(message),
+                _ => Err("the server answered with something other than a listing".into()),
+            };
+        }
+        let open = decoder
+            .receive(&stream)
+            .map_err(|error| format!("{error:?}"))?;
+        if !open {
+            return Err("the server closed the connection without a listing".into());
+        }
+    }
 }
 
 /// Connect to the running server, starting one in the background first if none answers.

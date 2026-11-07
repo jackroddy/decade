@@ -84,6 +84,8 @@ Workspaces), then everything else.
   that cannot speak any version the viewer offers sends `error` and closes.
 
 Before `welcome`, the viewer may send nothing but `hello` and `formats`.
+The one exception is `list` (see Workspaces), which a client that only
+wants the workspace list sends in place of `hello`.
 
 ## Size and scale
 
@@ -320,6 +322,15 @@ own messages, with flow control.
 : Viewer to server. Show workspace `id` in this viewer. Each viewer shows
   its own workspace. The server answers with `showing`.
 
+`list()`
+: Client to server, as the first message in place of `hello`. The server
+  answers with `listing` and closes the connection. `decade list` uses it.
+  A viewer that has had `welcome` may send it too, and stays connected.
+
+`listing(count: u32, then for each: id: u32, name: string, cwd: string, panes: u32)`
+: Server to client. Every workspace in the order the picker shows them,
+  with its working directory and its number of panes.
+
 ## Closing
 
 `close(reason: u32, message: string)`
@@ -365,6 +376,7 @@ Viewer to server:
 | 15 | `cleared` |
 | 16 | `request` |
 | 17 | `show` |
+| 18 | `list` |
 
 Server to viewer:
 
@@ -386,6 +398,7 @@ Server to viewer:
 | 13 | `workspaces` |
 | 14 | `showing` |
 | 15 | `close` |
+| 16 | `listing` |
 
 Opcodes from 1000 up, in both directions, are reserved for remote frames and
 remote clipboard transfers.

@@ -131,6 +131,7 @@ pub enum ViewerMessage {
     Show {
         id: u32,
     },
+    List,
 }
 
 /// A message from the server to a viewer.
@@ -207,6 +208,9 @@ pub enum ServerMessage {
         reason: u32,
         message: String,
     },
+    Listing {
+        workspaces: Vec<Listed>,
+    },
 }
 
 /// A DRM fourcc and modifier the viewer's host can import.
@@ -237,6 +241,15 @@ pub struct Rect {
 pub struct Workspace {
     pub id: u32,
     pub name: String,
+}
+
+/// A workspace as `listing` describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub id: u32,
+    pub name: String,
+    pub cwd: String,
+    pub panes: u32,
 }
 
 /// A failure to encode, decode or move messages.
@@ -412,6 +425,7 @@ impl ViewerMessage {
                 w.u32(id);
                 17
             }
+            ViewerMessage::List => 18,
         };
         w.finish(opcode)
     }
@@ -556,6 +570,16 @@ impl ServerMessage {
                 w.u32(reason);
                 w.string(&message);
                 15
+            }
+            ServerMessage::Listing { workspaces } => {
+                w.count(workspaces.len());
+                for workspace in workspaces {
+                    w.u32(workspace.id);
+                    w.string(&workspace.name);
+                    w.string(&workspace.cwd);
+                    w.u32(workspace.panes);
+                }
+                16
             }
         };
         w.finish(opcode)
@@ -935,6 +959,7 @@ impl Decoder {
                 fd: a.fd()?,
             },
             17 => ViewerMessage::Show { id: a.u32()? },
+            18 => ViewerMessage::List,
             _ => return Err(Error::UnknownOpcode(opcode)),
         };
         a.finish()?;
@@ -1044,6 +1069,19 @@ impl Decoder {
                 reason: a.u32()?,
                 message: a.string()?,
             },
+            16 => {
+                let count = a.count(16)?;
+                let mut workspaces = Vec::with_capacity(count);
+                for _ in 0..count {
+                    workspaces.push(Listed {
+                        id: a.u32()?,
+                        name: a.string()?,
+                        cwd: a.string()?,
+                        panes: a.u32()?,
+                    });
+                }
+                ServerMessage::Listing { workspaces }
+            }
             _ => return Err(Error::UnknownOpcode(opcode)),
         };
         a.finish()?;
@@ -1248,6 +1286,7 @@ mod tests {
                 fd: fd(),
             },
             ViewerMessage::Show { id: 2 },
+            ViewerMessage::List,
         ]
     }
 
@@ -1353,6 +1392,14 @@ mod tests {
             ServerMessage::Close {
                 reason: 1,
                 message: "shutting down".into(),
+            },
+            ServerMessage::Listing {
+                workspaces: vec![Listed {
+                    id: 3,
+                    name: "decade".into(),
+                    cwd: "/home/jack/projects/decade".into(),
+                    panes: 2,
+                }],
             },
         ]
     }
@@ -1557,10 +1604,10 @@ mod tests {
     #[test]
     fn an_unknown_opcode_is_an_error() {
         let mut decoder = Decoder::new();
-        decoder.push_bytes(&header(8, 18, 0, 0));
+        decoder.push_bytes(&header(8, 19, 0, 0));
         assert!(matches!(
             decoder.next_viewer_message(),
-            Err(Error::UnknownOpcode(18))
+            Err(Error::UnknownOpcode(19))
         ));
         let mut decoder = Decoder::new();
         decoder.push_bytes(&header(8, 1000, 0, 0));

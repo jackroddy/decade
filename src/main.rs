@@ -40,7 +40,7 @@ mod workspace;
 
 #[cfg(target_os = "linux")]
 const USAGE: &str = "usage: decade [--class <app id>]
-       decade start | stop | restart | status
+       decade start | stop | restart | status | list
        decade server";
 
 #[cfg(target_os = "linux")]
@@ -55,6 +55,7 @@ fn main() {
             start();
         }
         (Some("status"), None, _) => status(),
+        (Some("list"), None, _) => list(),
         (None, _, _) => viewer::run("decade".to_string()),
         (Some("--class"), Some(class), None) => viewer::run(class),
         _ => {
@@ -96,6 +97,33 @@ fn stop() {
             eprintln!("decade: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn list() {
+    let workspaces = match control::list() {
+        Ok(workspaces) => workspaces,
+        Err(error) => {
+            eprintln!("decade: {error}");
+            std::process::exit(1);
+        }
+    };
+    let width = workspaces
+        .iter()
+        .map(|workspace| workspace.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    for workspace in workspaces {
+        let panes = if workspace.panes == 1 {
+            "pane"
+        } else {
+            "panes"
+        };
+        println!(
+            "{:>3}  {:width$}  {:>2} {panes:5}  {}",
+            workspace.id, workspace.name, workspace.panes, workspace.cwd
+        );
     }
 }
 
