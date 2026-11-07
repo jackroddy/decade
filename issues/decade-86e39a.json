@@ -15,7 +15,7 @@
   "lease_expires": "2026-11-07T09:13:06.824738705Z",
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.909931087Z",
-  "updated_at": "2026-11-07T09:22:34.70813556Z",
+  "updated_at": "2026-11-07T09:30:43.075456285Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -42,6 +42,14 @@
       "author": "Jack Roddy/575e4e76",
       "text": "An independent review of the split found nine defects and several smaller problems. The fixes landed in the commit after 2cae090 on sessions. Four findings are recorded here and not fixed:\n\n- The server ignores the `device` in `formats` and renders on the first GPU with a render node. On a laptop with two GPUs it can allocate on one the host cannot import from.\n- Frames of another size are stretched to the window, not fitted with their aspect ratio as `docs/viewer.md` says.\n- The viewer waits on each frame's fence by blocking its event loop, for up to 500 ms.\n- Two viewers started at the same moment can both start a server, and the second can unlink the first one's socket.",
       "commit": "5c77da3",
+      "branch": "sessions"
+    },
+    {
+      "id": "035ade3e",
+      "at": "2026-11-07T09:30:43.075455625Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "1a65d76 fixes three of the four findings recorded earlier. Frames of another size are now fitted with their aspect ratio on a background-coloured window. The fence wait joins the viewer's event loop instead of blocking it. An exclusive lock on `$XDG_RUNTIME_DIR/decade/server.lock` stops two servers from starting. The server still ignores the `device` in `formats` and renders on the first GPU with a render node.",
+      "commit": "1a65d76",
       "branch": "sessions"
     }
   ],
