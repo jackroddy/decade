@@ -11,6 +11,7 @@ mod panel;
 mod panes;
 mod settings;
 mod text;
+mod wire;
 
 fn main() {
     let mut commands = compositor::Commands {

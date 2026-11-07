@@ -439,6 +439,7 @@ dependencies = [
  "fontdb",
  "raw-window-handle",
  "rmcp",
+ "rustix 0.38.44",
  "serde",
  "serde_json",
  "smithay",
