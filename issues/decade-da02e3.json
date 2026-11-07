@@ -1,0 +1,28 @@
+{
+  "id": "decade-da02e3",
+  "title": "Persistent sessions owned by a server",
+  "body": "A decade session should outlive its window and mostly survive a reboot. Today every pane is a Wayland client of the decade process, and closing the window ends decade and every program in it.\n\nJack's requirement, from 2026-11-07: a server owns the session and its panes, a window only views it, and the layout and each pane's cwd come back after a reboot. herdr's session model was the starting reference. Jack kept only the server-owned, persistent part of it and dropped herdr's agent detection and sidebar.\n\nPieces, each its own issue:\n\n- how the server and its viewers are split, and how frames and input travel between them\n- the session directory, names, and the commands that start, attach to, list and stop a session\n- saving the session and restoring it at server start\n- remote viewing, over the network",
+  "type": "milestone",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T08:23:04.063048522Z",
+  "updated_at": "2026-11-07T08:23:04.063048522Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "60ddbe2",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
