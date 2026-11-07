@@ -3,7 +3,7 @@
   "title": "Client surfaces are not clipped to their pane",
   "body": "`render` in `src/compositor.rs` places each client's surface tree at its pane's origin with `render_elements_from_surface_tree` and does not crop it. Between a configure and the client's next commit, a client whose buffer is still the old, larger size draws over its neighbours.\n\n## Proposal\n\nWrap each pane's surface elements in smithay's `CropRenderElement`, cropped to the pane's `client_rect`.\n\n## Open\n\n- Whether the lag is long enough to see once every layout change configures every pane, which is what decade-f92199 fixes.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": "decade-1b6bb6",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:40:06.09328988Z",
-  "updated_at": "2026-11-07T05:40:06.09328988Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T23:31:04.576198768Z",
+  "closed_at": "2026-11-07T23:31:04.576198768Z",
+  "close_reason": "Landed in bc045c7: each pane's surfaces are wrapped in CropRenderElement cut to the pane's client rect. A ghostty slightly wider than its pane had been covering the right border.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "93a5286",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "bc045c7",
+      "branch": "sessions"
+    }
   }
 }
