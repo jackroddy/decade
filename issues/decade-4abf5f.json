@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-07T05:44:42.779615832Z",
   "defer_until": null,
   "created_at": "2026-11-07T05:27:44.867626313Z",
-  "updated_at": "2026-11-07T05:29:42.779615832Z",
+  "updated_at": "2026-11-07T05:44:16.193259414Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "a11a0398",
+      "at": "2026-11-07T05:44:16.193258814Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "Timestamps on a debug build with two panes, in ms after the Ctrl press, over four presses:\n\n| timer fired | bars submitted | last client commit |\n|---|---|---|\n| 300 | 300.8 | 325.6 |\n| 300 | 300.7 | 324.9 |\n| 300 | 300.7 | 325.9 |\n| 300 | 300.6 | 327.0 |\n\nThe hold was the delay. The reconfigure round trip after it took about 26 ms, so the second idea in the body, drawing the bars before reconfiguring, was not worth doing. Jack tried 50 ms and kept it.",
+      "commit": "07e5c73",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "93a5286",
