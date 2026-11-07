@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T02:23:01.657356117Z",
-  "updated_at": "2026-11-06T02:23:01.657356117Z",
+  "updated_at": "2026-11-07T01:05:07.978180793Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "ff48a8dd",
+      "at": "2026-11-07T01:05:07.978180373Z",
+      "author": "Jack Roddy/618aab71",
+      "text": "Open again after decade became a nested Wayland compositor on 2026-11-06. smithay renders with its own GLES2 renderer and imports client buffers through EGL. wgpu's stable API cannot import a Wayland dmabuf, so the likely outcome is that the cell renderer moves to smithay's GL renderer. The grid, font and atlas code in `grid.rs` and `text.rs` stay; the pipeline in `gpu.rs` and `cell.wgsl` would become a GLSL shader. The lean is now whatever smithay's winit backend hands us. The spike settles it.",
+      "commit": "a822d1e",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "none",
