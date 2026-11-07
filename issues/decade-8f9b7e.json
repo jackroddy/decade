@@ -3,7 +3,7 @@
   "title": "The palette launches GUI apps from their desktop entries",
   "body": "decade starts programs only through `spawn_terminal` in `src/compositor.rs`, which runs ghostty. Any other window that connects lands in a new transient pane through `commit`.\n\n## Proposal\n\nThe Launch menu lists GUI apps from the `.desktop` files in the XDG data directories, skipping entries with `Terminal=true` or `NoDisplay=true`. Typing filters them by name. Enter starts the app's `Exec` line with `WAYLAND_DISPLAY` pointing at decade, and the window arrives as a new transient pane split from the focused one.\n\n## Open\n\n- Whether to parse `.desktop` files by hand or with a crate. `Exec` field codes such as `%U` and `%f` have to be stripped either way.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-fb197a",
@@ -12,19 +12,22 @@
   ],
   "related": [],
   "assignee": "Jack Roddy/575e4e76",
-  "lease_expires": "2026-11-07T07:29:58.307363272Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T06:31:44.547044819Z",
-  "updated_at": "2026-11-07T07:14:58.307363272Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T07:21:26.331806299Z",
+  "closed_at": "2026-11-07T07:21:26.331806299Z",
+  "close_reason": "2fd6fa5 adds Launch to the palette. Apps not built for decade can misbehave, which decade-8a8093 covers.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "4fa2ae0",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "2fd6fa5",
+      "branch": "dev"
+    }
   }
 }
