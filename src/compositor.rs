@@ -14,6 +14,7 @@ use smithay::backend::input::{
     AbsolutePositionEvent, Axis as InputAxis, AxisSource, ButtonState, Event, InputEvent, KeyState,
     KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
 };
+use smithay::backend::renderer::element::solid::SolidColorRenderElement;
 use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, render_elements_from_surface_tree,
 };
@@ -21,7 +22,9 @@ use smithay::backend::renderer::element::texture::TextureRenderElement;
 use smithay::backend::renderer::element::utils::RescaleRenderElement;
 use smithay::backend::renderer::element::{Id, Kind};
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
-use smithay::backend::renderer::utils::{draw_render_elements, on_commit_buffer_handler};
+use smithay::backend::renderer::utils::{
+    CommitCounter, draw_render_elements, on_commit_buffer_handler,
+};
 use smithay::backend::renderer::{
     Color32F, Frame, ImportAll, ImportDma, ImportMem, Renderer, RendererSuper,
 };
@@ -77,6 +80,7 @@ use crate::channel::{Host, Out, Router};
 use crate::chrome;
 use crate::grid::Grid;
 use crate::mcp;
+use crate::palette::ACCENT;
 use crate::panes::{
     BACKGROUND, BarButton, Boundary, Direction, FOREGROUND, Kind as PaneKind, Layout, Pane,
 };
@@ -105,6 +109,7 @@ render_elements! {
     Chrome = TextureRenderElement<<R as RendererSuper>::TextureId>,
     Ghost = RescaleRenderElement<WaylandSurfaceRenderElement<R>>,
     GhostChrome = RescaleRenderElement<TextureRenderElement<<R as RendererSuper>::TextureId>>,
+    GhostOutline = SolidColorRenderElement,
 }
 
 enum Key {
@@ -651,8 +656,8 @@ impl State {
                         return;
                     }
                     Some(Drag::Pane { id, grab, start }) => {
-                        let target = self.pane_under_pointer().filter(|&target| target != id);
-                        self.layout.drop_target = target;
+                        let (column, row) = self.pointer_cell();
+                        self.layout.drag_cell = Some((column, row));
                         self.drag = Some(Drag::Pane { id, grab, start });
                         self.backend.window().request_redraw();
                         return;
@@ -881,8 +886,13 @@ impl State {
         };
         self.layout.dragging = None;
         self.ghost = None;
-        if let Some(target) = self.layout.drop_target.take() {
-            self.layout.swap(id, target);
+        let drop = self
+            .layout
+            .drag_cell
+            .take()
+            .and_then(|(column, row)| self.layout.drop_at(id, column, row));
+        if let Some(drop) = drop {
+            self.layout.apply_drop(id, drop);
             self.relayout();
         } else {
             self.backend.window().request_redraw();
@@ -999,9 +1009,10 @@ impl State {
                 .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
                 .ok();
         }
-        if layout.bar {
+        if layout.bar || layout.dragging.is_some() {
             let mut grid = crate::panes::overlay_grid(layout.columns, layout.rows);
             layout.draw_bars(&mut grid);
+            layout.draw_drop(&mut grid);
             let unchanged = bars.as_ref().is_some_and(|(_, previous)| {
                 previous.columns == grid.columns && previous.cells == grid.cells
             });
@@ -1047,10 +1058,47 @@ impl State {
             let alpha = 1.0 + (GHOST_ALPHA - 1.0) * eased as f32;
             let pointer = pointer.to_physical(scale).to_i32_round();
             let origin = pointer - grab;
+            let cell: Point<i32, Physical> =
+                (font.cell_width as i32, font.cell_height as i32).into();
+            let inner = pane.rect.inner();
             let pixels = (
+                (inner.columns * font.cell_width) as i32,
+                (inner.rows * font.cell_height) as i32,
+            );
+            let outer: Point<i32, Physical> = (
                 (pane.rect.columns * font.cell_width) as i32,
                 (pane.rect.rows * font.cell_height) as i32,
+            )
+                .into();
+            let shrink = |point: Point<i32, Physical>| {
+                let offset = (point - pointer).to_f64().upscale(ghost_scale);
+                (pointer.to_f64() + offset).to_i32_round::<i32>()
+            };
+            let start = shrink(origin + cell.downscale(2));
+            let end = shrink(origin + outer - cell.downscale(2));
+            let thickness = (font.cell_width as i32 / 8).max(1);
+            let color = Color32F::new(
+                ACCENT[0] * alpha,
+                ACCENT[1] * alpha,
+                ACCENT[2] * alpha,
+                alpha,
             );
+            let (width, height) = (end.x - start.x + thickness, end.y - start.y + thickness);
+            let lines = [
+                (start, (width, thickness)),
+                ((start.x, end.y).into(), (width, thickness)),
+                (start, (thickness, height)),
+                ((end.x, start.y).into(), (thickness, height)),
+            ];
+            for (at, size) in lines {
+                elements.push(Element::GhostOutline(SolidColorRenderElement::new(
+                    Id::new(),
+                    Rectangle::new(at, size.into()),
+                    CommitCounter::default(),
+                    color,
+                    Kind::Unspecified,
+                )));
+            }
             if ghost.as_ref().is_none_or(|(_, bar)| *bar != layout.bar)
                 && let Some(grid) = layout.draw_ghost(pane.id)
             {
@@ -1065,7 +1113,7 @@ impl State {
                 let element = TextureRenderElement::from_static_texture(
                     Id::new(),
                     renderer.context_id(),
-                    origin.to_f64(),
+                    (origin + cell).to_f64(),
                     texture.clone(),
                     1,
                     Transform::Normal,

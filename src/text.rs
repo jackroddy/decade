@@ -82,10 +82,44 @@ impl Glyphs {
     }
 }
 
+const EDGE_BASE: u32 = 0x10FF00;
+const EDGE_LEFT: u32 = 1;
+const EDGE_RIGHT: u32 = 2;
+const EDGE_TOP: u32 = 4;
+const EDGE_BOTTOM: u32 = 8;
+
+pub fn edge_char(left: bool, right: bool, top: bool, bottom: bool) -> char {
+    let bits = [
+        (left, EDGE_LEFT),
+        (right, EDGE_RIGHT),
+        (top, EDGE_TOP),
+        (bottom, EDGE_BOTTOM),
+    ]
+    .into_iter()
+    .filter(|&(on, _)| on)
+    .fold(0, |bits, (_, bit)| bits | bit);
+    char::from_u32(EDGE_BASE + bits).unwrap_or(' ')
+}
+
 fn rasterize(context: &mut ScaleContext, font: &Font, ch: char, right_half: bool) -> Vec<u8> {
     let width = font.cell_width as i32;
     let height = font.cell_height as i32;
     let mut pixels = vec![0; (width * height) as usize];
+    if let Some(bits) = (ch as u32).checked_sub(EDGE_BASE).filter(|&bits| bits < 16) {
+        let thickness = (width / 8).max(1);
+        for y in 0..height {
+            for x in 0..width {
+                let on = (bits & EDGE_LEFT != 0 && x < thickness)
+                    || (bits & EDGE_RIGHT != 0 && x >= width - thickness)
+                    || (bits & EDGE_TOP != 0 && y < thickness)
+                    || (bits & EDGE_BOTTOM != 0 && y >= height - thickness);
+                if on {
+                    pixels[(y * width + x) as usize] = 255;
+                }
+            }
+        }
+        return pixels;
+    }
     let font_ref = font.as_ref();
     let glyph = font_ref.charmap().map(ch);
     let mut scaler = context.builder(font_ref).size(font.px).hint(true).build();

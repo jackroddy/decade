@@ -2,6 +2,7 @@ use smithay::wayland::shell::xdg::ToplevelSurface;
 
 use crate::grid::{CLEAR, Grid, Rgba};
 use crate::palette;
+use crate::text::edge_char;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;
@@ -19,6 +20,7 @@ const STATUS: Rgba = palette::LIGHTER_BACKGROUND;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 
 const MIN_PANE: u32 = 4;
+const EDGE_BAND: u32 = 2;
 const BUTTON_WIDTH: u32 = 4;
 const PIN_ICON: char = '\u{f0403}';
 const UNPINNED_ICON: char = '\u{f0930}';
@@ -117,6 +119,21 @@ pub enum BarButton {
     Name,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Side {
+    Left,
+    Right,
+    Above,
+    Below,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Drop {
+    Swap(usize),
+    Split { target: usize, side: Side },
+    Edge(Side),
+}
+
 pub struct Boundary {
     path: Vec<bool>,
     axis: Axis,
@@ -130,7 +147,7 @@ pub struct Layout {
     pub zoom: Option<usize>,
     pub bar: bool,
     pub palette: bool,
-    pub drop_target: Option<usize>,
+    pub drag_cell: Option<(u32, u32)>,
     pub dragging: Option<usize>,
     pub hover: Option<(usize, BarButton)>,
     root: Node,
@@ -156,7 +173,7 @@ impl Layout {
             zoom: None,
             bar: false,
             palette: false,
-            drop_target: None,
+            drag_cell: None,
             dragging: None,
             hover: None,
             root: Node::Split {
@@ -331,11 +348,6 @@ impl Layout {
         id
     }
 
-    pub fn swap(&mut self, a: usize, b: usize) {
-        swap_leaves(&mut self.root, a, b);
-        self.arrange();
-    }
-
     pub fn remove(&mut self, id: usize) {
         let Some(index) = self.panes.iter().position(|pane| pane.id == id) else {
             return;
@@ -376,6 +388,94 @@ impl Layout {
         }
         let mut path = Vec::new();
         find_boundary(&self.root, self.body(), column, row, &mut path)
+    }
+
+    pub fn drop_at(&self, dragged: usize, column: u32, row: u32) -> Option<Drop> {
+        let body = self.body();
+        if self.panes.len() < 2 || row >= body.rows || body.columns <= EDGE_BAND * 2 {
+            return None;
+        }
+        if column < EDGE_BAND {
+            return Some(Drop::Edge(Side::Left));
+        }
+        if column >= body.columns - EDGE_BAND {
+            return Some(Drop::Edge(Side::Right));
+        }
+        if row < EDGE_BAND {
+            return Some(Drop::Edge(Side::Above));
+        }
+        if row >= body.rows.saturating_sub(EDGE_BAND) {
+            return Some(Drop::Edge(Side::Below));
+        }
+        let target = self.pane_at(column, row).filter(|&id| id != dragged)?;
+        drop_zones(self.pane(target)?.rect)
+            .into_iter()
+            .find(|(_, zone)| zone.contains(column, row))
+            .map(|(side, _)| match side {
+                None => Drop::Swap(target),
+                Some(side) => Drop::Split { target, side },
+            })
+    }
+
+    pub fn apply_drop(&mut self, dragged: usize, drop: Drop) {
+        let root = std::mem::replace(&mut self.root, Node::Leaf(dragged));
+        self.root = dropped(root, dragged, drop);
+        self.zoom = None;
+        self.arrange();
+    }
+
+    pub fn draw_drop(&self, grid: &mut Grid) {
+        let (Some(dragged), Some((column, row))) = (self.dragging, self.drag_cell) else {
+            return;
+        };
+        let active = self.drop_at(dragged, column, row);
+        if let Some(target) = self.pane_at(column, row).filter(|&id| id != dragged)
+            && let Some(pane) = self.pane(target)
+        {
+            for (side, zone) in drop_zones(pane.rect) {
+                let drop = match side {
+                    None => Drop::Swap(target),
+                    Some(side) => Drop::Split { target, side },
+                };
+                draw_zone(grid, zone, active == Some(drop));
+            }
+        }
+        let body = self.body();
+        let strips = [
+            (
+                Side::Left,
+                CellRect {
+                    columns: EDGE_BAND,
+                    ..body
+                },
+            ),
+            (
+                Side::Right,
+                CellRect {
+                    column: body.columns.saturating_sub(EDGE_BAND),
+                    columns: EDGE_BAND,
+                    ..body
+                },
+            ),
+            (
+                Side::Above,
+                CellRect {
+                    rows: EDGE_BAND,
+                    ..body
+                },
+            ),
+            (
+                Side::Below,
+                CellRect {
+                    row: body.rows.saturating_sub(EDGE_BAND),
+                    rows: EDGE_BAND,
+                    ..body
+                },
+            ),
+        ];
+        for (side, strip) in strips {
+            draw_zone(grid, strip, active == Some(Drop::Edge(side)));
+        }
     }
 
     pub fn drag_boundary(&mut self, boundary: &Boundary, column: u32, row: u32) {
@@ -433,9 +533,7 @@ impl Layout {
             if self.dragging == Some(pane.id) {
                 continue;
             }
-            let outline = if self.drop_target == Some(pane.id) {
-                DROP
-            } else if pane.id == self.focused {
+            let outline = if pane.id == self.focused {
                 FOCUS
             } else {
                 OUTLINE
@@ -462,28 +560,27 @@ impl Layout {
         }
         for pane in self.visible() {
             if self.dragging != Some(pane.id) {
-                self.draw_bar(grid, pane, pane.rect);
+                self.draw_bar(grid, pane, pane.rect.inner());
             }
         }
     }
 
     pub fn draw_ghost(&self, id: usize) -> Option<Grid> {
         let pane = self.pane(id)?;
-        let rect = CellRect {
+        let inner = CellRect {
             column: 0,
             row: 0,
-            ..pane.rect
+            ..pane.rect.inner()
         };
-        let mut grid = Grid::new(rect.columns, rect.rows, FOREGROUND, CLEAR);
-        draw_pane(&mut grid, pane, rect, FOCUS);
+        let mut grid = Grid::new(inner.columns, inner.rows, FOREGROUND, CLEAR);
+        draw_waiting(&mut grid, pane, inner);
         if self.bar {
-            self.draw_bar(&mut grid, pane, rect);
+            self.draw_bar(&mut grid, pane, inner);
         }
         Some(grid)
     }
 
-    fn draw_bar(&self, grid: &mut Grid, pane: &Pane, rect: CellRect) {
-        let inner = rect.inner();
+    fn draw_bar(&self, grid: &mut Grid, pane: &Pane, inner: CellRect) {
         if inner.is_empty() {
             return;
         }
@@ -557,6 +654,7 @@ impl Layout {
                 rows: height,
             },
             FOCUS,
+            BACKGROUND,
         );
         grid.text(column + 2, row + 1, "command palette", FOREGROUND, PANE);
         grid.text(
@@ -570,8 +668,11 @@ impl Layout {
 }
 
 fn draw_pane(grid: &mut Grid, pane: &Pane, rect: CellRect, outline: Rgba) {
-    outline_box(grid, rect, outline);
-    let inner = rect.inner();
+    outline_box(grid, rect, outline, BACKGROUND);
+    draw_waiting(grid, pane, rect.inner());
+}
+
+fn draw_waiting(grid: &mut Grid, pane: &Pane, inner: CellRect) {
     if inner.is_empty() || pane.toplevel.is_some() {
         return;
     }
@@ -595,30 +696,18 @@ fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 3] {
     ]
 }
 
-fn outline_box(grid: &mut Grid, rect: CellRect, color: Rgba) {
+fn outline_box(grid: &mut Grid, rect: CellRect, color: Rgba, bg: Rgba) {
     if rect.columns < 2 || rect.rows < 2 {
         return;
     }
     let right = rect.column + rect.columns - 1;
     let bottom = rect.row + rect.rows - 1;
     let horizontal: String = "─".repeat(rect.columns as usize - 2);
-    grid.text(
-        rect.column,
-        rect.row,
-        &format!("┌{horizontal}┐"),
-        color,
-        BACKGROUND,
-    );
-    grid.text(
-        rect.column,
-        bottom,
-        &format!("└{horizontal}┘"),
-        color,
-        BACKGROUND,
-    );
+    grid.text(rect.column, rect.row, &format!("┌{horizontal}┐"), color, bg);
+    grid.text(rect.column, bottom, &format!("└{horizontal}┘"), color, bg);
     for row in rect.row + 1..bottom {
-        grid.text(rect.column, row, "│", color, BACKGROUND);
-        grid.text(right, row, "│", color, BACKGROUND);
+        grid.text(rect.column, row, "│", color, bg);
+        grid.text(right, row, "│", color, bg);
     }
 }
 
@@ -708,6 +797,136 @@ fn swap_leaves(node: &mut Node, a: usize, b: usize) {
         Node::Split { first, second, .. } => {
             swap_leaves(first, a, b);
             swap_leaves(second, a, b);
+        }
+    }
+}
+
+fn drop_zones(rect: CellRect) -> [(Option<Side>, CellRect); 5] {
+    let (quarter_columns, quarter_rows) = (rect.columns / 4, rect.rows / 4);
+    let middle_columns = rect.columns - quarter_columns * 2;
+    let middle_rows = rect.rows - quarter_rows * 2;
+    let zone = |column: u32, row: u32, columns: u32, rows: u32| CellRect {
+        column: rect.column + column,
+        row: rect.row + row,
+        columns,
+        rows,
+    };
+    [
+        (
+            None,
+            zone(quarter_columns, quarter_rows, middle_columns, middle_rows),
+        ),
+        (
+            Some(Side::Left),
+            zone(0, quarter_rows, quarter_columns, middle_rows),
+        ),
+        (
+            Some(Side::Right),
+            zone(
+                quarter_columns + middle_columns,
+                quarter_rows,
+                quarter_columns,
+                middle_rows,
+            ),
+        ),
+        (
+            Some(Side::Above),
+            zone(quarter_columns, 0, middle_columns, quarter_rows),
+        ),
+        (
+            Some(Side::Below),
+            zone(
+                quarter_columns,
+                quarter_rows + middle_rows,
+                middle_columns,
+                quarter_rows,
+            ),
+        ),
+    ]
+}
+
+fn draw_zone(grid: &mut Grid, zone: CellRect, active: bool) {
+    let bg = if active {
+        [DROP[0], DROP[1], DROP[2], 0.35]
+    } else {
+        CLEAR
+    };
+    if active {
+        grid.fill(zone.column, zone.row, zone.columns, zone.rows, bg);
+    }
+    let (right, bottom) = (zone.column + zone.columns, zone.row + zone.rows);
+    for row in zone.row..bottom {
+        for column in zone.column..right {
+            let sides = (
+                column == zone.column,
+                column + 1 == right,
+                row == zone.row,
+                row + 1 == bottom,
+            );
+            if sides.0 || sides.1 || sides.2 || sides.3 {
+                let edge = edge_char(sides.0, sides.1, sides.2, sides.3);
+                grid.text(column, row, &edge.to_string(), DROP, bg);
+            }
+        }
+    }
+}
+
+fn dropped(root: Node, dragged: usize, drop: Drop) -> Node {
+    match drop {
+        Drop::Swap(target) => {
+            let mut root = root;
+            swap_leaves(&mut root, dragged, target);
+            root
+        }
+        Drop::Split { target, side } => {
+            let mut root = remove_leaf(root, dragged);
+            split_beside(&mut root, target, side, dragged);
+            root
+        }
+        Drop::Edge(side) => {
+            let rest = Box::new(remove_leaf(root, dragged));
+            let new = Box::new(Node::Leaf(dragged));
+            let (axis, before) = side_axis(side);
+            let (ratio, first, second) = if before {
+                (1.0 / 3.0, new, rest)
+            } else {
+                (2.0 / 3.0, rest, new)
+            };
+            Node::Split {
+                axis,
+                ratio,
+                first,
+                second,
+            }
+        }
+    }
+}
+
+fn side_axis(side: Side) -> (Axis, bool) {
+    match side {
+        Side::Left => (Axis::Horizontal, true),
+        Side::Right => (Axis::Horizontal, false),
+        Side::Above => (Axis::Vertical, true),
+        Side::Below => (Axis::Vertical, false),
+    }
+}
+
+fn split_beside(node: &mut Node, target: usize, side: Side, new: usize) -> bool {
+    match node {
+        Node::Leaf(id) if *id == target => {
+            let (axis, before) = side_axis(side);
+            let (first, second) = if before { (new, target) } else { (target, new) };
+            *node = Node::Split {
+                axis,
+                ratio: 0.5,
+                first: Box::new(Node::Leaf(first)),
+                second: Box::new(Node::Leaf(second)),
+            };
+            true
+        }
+        Node::Leaf(_) => false,
+        Node::Split { first, second, .. } => {
+            split_beside(first, target, side, new) || split_beside(second, target, side, new)
         }
     }
 }
@@ -960,7 +1179,7 @@ mod tests {
         let mut layout = Layout::new(100, 41);
         let chat = layout.pane(0).unwrap().rect;
         let code = layout.pane(2).unwrap().rect;
-        layout.swap(0, 2);
+        layout.apply_drop(0, Drop::Swap(2));
         assert_eq!(layout.pane(0).unwrap().rect, code);
         assert_eq!(layout.pane(2).unwrap().rect, chat);
         assert_eq!(layout.pane(0).unwrap().name, "chat");
@@ -973,13 +1192,13 @@ mod tests {
     fn swapping_a_pane_with_itself_changes_nothing() {
         let mut layout = Layout::new(100, 41);
         let rects: Vec<CellRect> = layout.panes.iter().map(|pane| pane.rect).collect();
-        layout.swap(1, 1);
+        layout.apply_drop(1, Drop::Swap(1));
         let after: Vec<CellRect> = layout.panes.iter().map(|pane| pane.rect).collect();
         assert_eq!(after, rects);
     }
 
     #[test]
-    fn a_dragged_pane_leaves_its_slot_empty_and_its_ghost_is_the_whole_pane() {
+    fn a_dragged_pane_leaves_its_slot_empty_and_its_ghost_is_the_inside_of_the_pane() {
         let mut layout = Layout::new(100, 41);
         layout.bar = true;
         let rect = layout.pane(0).unwrap().rect;
@@ -988,9 +1207,9 @@ mod tests {
         layout.draw(&mut chrome);
         assert!(chrome.cells[(rect.row * 100 + rect.column) as usize].ch != '┌');
         let ghost = layout.draw_ghost(0).unwrap();
-        assert_eq!((ghost.columns, ghost.rows), (rect.columns, rect.rows));
-        assert_eq!(ghost.cells[0].ch, '┌');
-        assert_eq!(ghost.cells[ghost.columns as usize + 2].ch, 'c');
+        let inner = rect.inner();
+        assert_eq!((ghost.columns, ghost.rows), (inner.columns, inner.rows));
+        assert_eq!(ghost.cells[1].ch, 'c');
     }
 
     #[test]
@@ -1022,6 +1241,50 @@ mod tests {
         assert!(!grid.cells[close].right_half);
         assert_eq!(grid.cells[close + 1].ch, CLOSE_ICON);
         assert!(grid.cells[close + 1].right_half);
+    }
+
+    #[test]
+    fn the_middle_of_a_pane_swaps_and_its_edges_split() {
+        let layout = Layout::new(100, 41);
+        let code = layout.pane(2).unwrap().rect;
+        let middle = (code.column + code.columns / 2, code.row + code.rows / 2);
+        assert_eq!(layout.drop_at(0, middle.0, middle.1), Some(Drop::Swap(2)));
+        assert_eq!(
+            layout.drop_at(0, code.column + 3, middle.1),
+            Some(Drop::Split {
+                target: 2,
+                side: Side::Left
+            })
+        );
+        assert_eq!(layout.drop_at(1, 0, 10), Some(Drop::Edge(Side::Left)));
+        assert_eq!(layout.drop_at(0, code.column + 3, code.row + 3), None);
+        assert_eq!(layout.drop_at(0, 20, 20), None);
+    }
+
+    #[test]
+    fn splitting_a_pane_gives_the_dropped_pane_the_half_on_that_side() {
+        let mut layout = Layout::new(100, 41);
+        let code = layout.pane(2).unwrap().rect;
+        let drop = Drop::Split {
+            target: 2,
+            side: Side::Right,
+        };
+        layout.apply_drop(0, drop);
+        let chat = layout.pane(0).unwrap().rect;
+        assert_eq!(layout.pane(2).unwrap().rect.column, 0);
+        assert!(chat.column > 0);
+        assert_eq!(chat.row, layout.pane(2).unwrap().rect.row);
+        assert!(chat.columns < code.columns * 2);
+    }
+
+    #[test]
+    fn a_drop_on_the_window_edge_spans_that_side() {
+        let mut layout = Layout::new(100, 41);
+        layout.apply_drop(2, Drop::Edge(Side::Left));
+        let code = layout.pane(2).unwrap().rect;
+        assert_eq!((code.column, code.row), (0, 0));
+        assert_eq!(code.rows, 40);
+        assert_eq!(code.columns, 33);
     }
 
     #[test]

@@ -23,8 +23,9 @@ command line and what the tool writes.
 - Pinning a pane makes it an anchor for its program's app id. Unpinning an
   anchor makes it a pane that closes with its program.
 - Ctrl+dragging a pane, or dragging it by the name on its bar, carries a
-  small copy of it under the pointer. Dropping it on another pane swaps the
-  two.
+  small copy of it under the pointer. Dropping it on a target drawn over
+  another pane swaps the two or splits that pane on one side. Dropping it
+  on a window edge makes it span that side.
 - Ctrl+Space opens a command palette, empty for now; Esc closes it.
 - Scroll wheel events reach clients.
 - decade is an MCP server over streamable HTTP, at the address in
