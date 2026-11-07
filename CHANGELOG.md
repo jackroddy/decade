@@ -12,6 +12,16 @@ command line and what the tool writes.
 
 ### Added
 
+- Panes are a split tree. A new window with no anchor of its own, or
+  Ctrl+Shift+Enter, splits the focused pane along its longer side; a pane
+  made that way closes when its client exits. The three original panes are
+  anchors: they stay as empty slots, saying what they wait for, when their
+  client goes, and take it back when it returns.
+- Holding Ctrl alone for a third of a second shows a bar on each pane with
+  its name, a zoom toggle and an x that asks the client to close. Dragging
+  the outline between two panes resizes them.
+- Ctrl+Space opens a command palette, empty for now; Esc closes it.
+- Scroll wheel events reach clients.
 - decade is an MCP server over streamable HTTP, at the address in
   `DECADE_MCP` in the environment of everything it starts. Its tools are
   `focus`, `panes`, `code.show`, `code.mark` and `code.clear`; a call becomes
@@ -31,6 +41,8 @@ command line and what the tool writes.
 
 ### Changed
 
+- A pane is drawn as a rectangle with a one-cell outline, coloured only on the
+  focused pane; the title strips are gone.
 - decade is a Wayland compositor nested in a window, on smithay. Any Wayland
   client is a pane; the terminal pane runs ghostty. Clients are told the
   host's scale and render at it. The window chrome is a grid of character

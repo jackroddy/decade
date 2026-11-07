@@ -1,17 +1,18 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::os::unix::io::OwnedFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::input::{
-    AbsolutePositionEvent, ButtonState, Event, InputEvent, KeyState, KeyboardKeyEvent,
-    PointerButtonEvent,
+    AbsolutePositionEvent, Axis as InputAxis, AxisSource, ButtonState, Event, InputEvent, KeyState,
+    KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
 };
 use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, render_elements_from_surface_tree,
@@ -25,13 +26,14 @@ use smithay::backend::renderer::{
 };
 use smithay::backend::winit::{self, WinitEvent, WinitGraphicsBackend, WinitInput};
 use smithay::input::keyboard::{FilterResult, keysyms};
-use smithay::input::pointer::{ButtonEvent, CursorImageStatus, MotionEvent};
+use smithay::input::pointer::{AxisFrame, ButtonEvent, CursorImageStatus, MotionEvent};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::channel::{self as calloop_channel, Event as ChannelEvent};
 use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{
-    EventLoop, Interest, LoopHandle, LoopSignal, Mode as CalloopMode, PostAction,
+    EventLoop, Interest, LoopHandle, LoopSignal, Mode as CalloopMode, PostAction, RegistrationToken,
 };
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
@@ -74,16 +76,34 @@ use crate::channel::{Host, Out, Router};
 use crate::chrome;
 use crate::grid::Grid;
 use crate::mcp;
-use crate::panes::{BACKGROUND, Direction, FOREGROUND, Layout, Pane};
+use crate::panes::{
+    BACKGROUND, BarButton, Boundary, Direction, FOREGROUND, Kind as PaneKind, Layout, Pane,
+};
 use crate::text::{FONT_PX, Font, Glyphs};
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
+const BAR_HOLD: Duration = Duration::from_millis(300);
+const BTN_LEFT: u32 = 0x110;
 
 render_elements! {
     Element<R> where R: ImportAll + ImportMem;
     Surface = WaylandSurfaceRenderElement<R>,
     Chrome = TextureRenderElement<<R as RendererSuper>::TextureId>,
+}
+
+enum Key {
+    Focus(Direction),
+    NewPane,
+    Palette,
+    Escape,
+    Swallow,
+}
+
+struct ChildEnv {
+    wayland: OsString,
+    channel: PathBuf,
+    mcp: Option<String>,
 }
 
 pub struct State {
@@ -104,14 +124,17 @@ pub struct State {
     router: Router,
     sockets: HashMap<usize, UnixStream>,
     next_client: usize,
-    channel_path: PathBuf,
-    mcp_url: Option<String>,
+    env: ChildEnv,
+    children: Vec<Child>,
     font: Font,
     glyphs: Glyphs,
     layout: Layout,
     unplaced: Vec<ToplevelSurface>,
     chrome: Option<GlesTexture>,
+    overlay: Option<GlesTexture>,
     pointer: Point<f64, Logical>,
+    drag: Option<Boundary>,
+    ctrl_timer: Option<RegistrationToken>,
     scale: f64,
     start: Instant,
 }
@@ -226,13 +249,7 @@ pub fn run(commands: Commands) {
         )
         .unwrap();
 
-    let mut router = Router::new(
-        layout
-            .panes
-            .iter()
-            .map(|pane| pane.title.to_string())
-            .collect(),
-    );
+    let mut router = Router::new(layout.panes.iter().map(|pane| pane.name.clone()).collect());
     router.connected(AGENT_CLIENT);
     router.handle(AGENT_CLIENT, r#"{"hello":{"name":"agent"}}"#);
     let (mcp_requests, mcp_source) = calloop_channel::channel();
@@ -244,7 +261,7 @@ pub fn run(commands: Commands) {
         })
         .unwrap();
     let mcp = match mcp::start(mcp_requests) {
-        Ok(server) => Some(server),
+        Ok(server) => Some(server.url),
         Err(error) => {
             eprintln!("decade: the MCP server did not start: {error}");
             None
@@ -268,29 +285,31 @@ pub fn run(commands: Commands) {
         router,
         sockets: HashMap::new(),
         next_client: 0,
-        channel_path,
-        mcp_url: mcp.map(|server| server.url),
+        env: ChildEnv {
+            wayland: socket_name,
+            channel: channel_path,
+            mcp,
+        },
+        children: Vec::new(),
         font,
         glyphs: Glyphs::new(),
         layout,
         unplaced: Vec::new(),
         chrome: None,
+        overlay: None,
         pointer: (0.0, 0.0).into(),
+        drag: None,
+        ctrl_timer: None,
         scale,
         start: Instant::now(),
     };
 
-    let env = ChildEnv {
-        wayland: &socket_name,
-        channel: &state.channel_path,
-        mcp: state.mcp_url.as_deref(),
-    };
-    let mut children = vec![spawn_terminal(&env, "terminal", &[])];
+    state.spawn_terminal("terminal", &[]);
     if let Some(chat) = &commands.chat {
-        children.push(spawn_terminal(&env, "chat", chat));
+        state.spawn_terminal("chat", chat);
     }
     if let Some(code) = &commands.code {
-        children.push(spawn_terminal(&env, "code", code));
+        state.spawn_terminal("code", code);
     }
     state.backend.window().request_redraw();
     event_loop
@@ -299,10 +318,10 @@ pub fn run(commands: Commands) {
         })
         .unwrap();
 
-    for child in children.iter_mut().flatten() {
+    for child in &mut state.children {
         let _ = child.kill();
     }
-    let _ = std::fs::remove_file(&state.channel_path);
+    let _ = std::fs::remove_file(&state.env.channel);
 }
 
 fn channel_path() -> PathBuf {
@@ -333,38 +352,29 @@ fn remove_stale_sockets(dir: &Path) {
     }
 }
 
-struct ChildEnv<'a> {
-    wayland: &'a std::ffi::OsStr,
-    channel: &'a Path,
-    mcp: Option<&'a str>,
-}
-
-fn spawn_terminal(env: &ChildEnv, pane: &str, command: &[String]) -> Option<Child> {
-    let mut ghostty = Command::new("ghostty");
-    ghostty
-        .env("WAYLAND_DISPLAY", env.wayland)
-        .env("DECADE_SOCKET", env.channel)
-        .env("DECADE_PANE", pane);
-    if let Some(mcp) = env.mcp {
-        ghostty.env("DECADE_MCP", mcp);
-    }
-    ghostty
-        .env_remove("DISPLAY")
-        .args(["--window-decoration=none", "--gtk-titlebar=false"])
-        .arg(format!("--class=decade.{pane}"));
-    if !command.is_empty() {
-        ghostty.arg("-e").args(command);
-    }
-    match ghostty.spawn() {
-        Ok(child) => Some(child),
-        Err(error) => {
-            eprintln!("decade: could not start ghostty: {error}");
-            None
+impl State {
+    fn spawn_terminal(&mut self, pane: &str, command: &[String]) {
+        let mut ghostty = Command::new("ghostty");
+        ghostty
+            .env("WAYLAND_DISPLAY", &self.env.wayland)
+            .env("DECADE_SOCKET", &self.env.channel)
+            .env("DECADE_PANE", pane);
+        if let Some(mcp) = &self.env.mcp {
+            ghostty.env("DECADE_MCP", mcp);
+        }
+        ghostty
+            .env_remove("DISPLAY")
+            .args(["--window-decoration=none", "--gtk-titlebar=false"])
+            .arg(format!("--class=decade.{pane}"));
+        if !command.is_empty() {
+            ghostty.arg("-e").args(command);
+        }
+        match ghostty.spawn() {
+            Ok(child) => self.children.push(child),
+            Err(error) => eprintln!("decade: could not start ghostty: {error}"),
         }
     }
-}
 
-impl State {
     fn channel_connected(&mut self, stream: UnixStream) {
         if stream.set_nonblocking(true).is_err() {
             return;
@@ -419,7 +429,7 @@ impl State {
             match out {
                 Out::Line(to, text) if to == AGENT_CLIENT => reply.push(text),
                 Out::Line(to, text) => self.channel_send(to, &text),
-                Out::Host(Host::Focus(pane)) => self.focus(pane),
+                Out::Host(Host::Focus(pane)) => self.focus_named(&pane),
             }
         }
         let _ = request.reply.send(reply);
@@ -434,7 +444,7 @@ impl State {
         for out in self.router.handle(id, line) {
             match out {
                 Out::Line(to, text) => self.channel_send(to, &text),
-                Out::Host(Host::Focus(pane)) => self.focus(pane),
+                Out::Host(Host::Focus(pane)) => self.focus_named(&pane),
             }
         }
     }
@@ -476,20 +486,31 @@ impl State {
             rescaled.then_some(Scale::Fractional(scale)),
             None,
         );
+        self.relayout();
+    }
+
+    fn relayout(&mut self) {
         self.chrome = None;
-        for pane in 0..self.layout.panes.len() {
-            self.configure(pane);
+        self.overlay = None;
+        let ids: Vec<usize> = self.layout.panes.iter().map(|pane| pane.id).collect();
+        for id in ids {
+            self.configure(id);
         }
         self.backend.window().request_redraw();
     }
 
-    fn configure(&mut self, pane: usize) {
-        let pane = &self.layout.panes[pane];
+    fn configure(&mut self, id: usize) {
+        let Some(pane) = self.layout.pane(id) else {
+            return;
+        };
         let Some(toplevel) = &pane.toplevel else {
             return;
         };
         let (_, size) = self.client_geometry(pane);
-        let focused = self.layout.panes[self.layout.focused].toplevel.as_ref() == Some(toplevel);
+        if size.w <= 0 || size.h <= 0 {
+            return;
+        }
+        let focused = self.layout.focused == id;
         toplevel.with_pending_state(|state| {
             state.size = Some(size);
             if focused {
@@ -505,59 +526,106 @@ impl State {
         }
     }
 
-    fn focus(&mut self, pane: usize) {
-        self.layout.focused = pane;
-        self.chrome = None;
-        let surface = self.layout.panes[pane]
-            .toplevel
-            .as_ref()
+    fn focus(&mut self, id: usize) {
+        if self.layout.pane(id).is_none() {
+            return;
+        }
+        self.layout.focused = id;
+        let surface = self
+            .layout
+            .pane(id)
+            .and_then(|pane| pane.toplevel.as_ref())
             .map(|toplevel| toplevel.wl_surface().clone());
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
-        for pane in 0..self.layout.panes.len() {
-            self.configure(pane);
+        self.relayout();
+    }
+
+    fn focus_named(&mut self, name: &str) {
+        if let Some(id) = self.layout.by_name(name) {
+            self.focus(id);
         }
-        self.backend.window().request_redraw();
+    }
+
+    fn new_terminal_pane(&mut self) {
+        let name = self.layout.unique_name("terminal");
+        let id = self.layout.add_transient(name.clone());
+        self.router.add_pane(name.clone());
+        self.spawn_terminal(&name, &[]);
+        self.focus(id);
+    }
+
+    fn remove_pane(&mut self, id: usize) {
+        let Some(pane) = self.layout.pane(id) else {
+            return;
+        };
+        let name = pane.name.clone();
+        self.layout.remove(id);
+        self.router.remove_pane(&name);
+        let focused = self.layout.focused;
+        self.focus(focused);
+    }
+
+    fn close_pane(&mut self, id: usize) {
+        let Some(pane) = self.layout.pane(id) else {
+            return;
+        };
+        match (&pane.toplevel, &pane.kind) {
+            (Some(toplevel), _) => toplevel.send_close(),
+            (None, PaneKind::Transient) => self.remove_pane(id),
+            (None, PaneKind::Anchor { .. }) => {}
+        }
+    }
+
+    fn show_bar(&mut self, show: bool) {
+        if self.layout.bar != show {
+            self.layout.bar = show;
+            self.relayout();
+        }
+    }
+
+    fn cancel_ctrl_timer(&mut self) {
+        if let Some(token) = self.ctrl_timer.take() {
+            self.loop_handle.remove(token);
+        }
+    }
+
+    fn ctrl_pressed(&mut self) {
+        self.cancel_ctrl_timer();
+        let timer = Timer::from_duration(BAR_HOLD);
+        self.ctrl_timer = self
+            .loop_handle
+            .insert_source(timer, |_, _, state| {
+                state.ctrl_timer = None;
+                state.show_bar(true);
+                TimeoutAction::Drop
+            })
+            .ok();
+    }
+
+    fn ctrl_released(&mut self) {
+        self.cancel_ctrl_timer();
+        self.show_bar(false);
     }
 
     fn input(&mut self, event: InputEvent<WinitInput>) {
         match event {
-            InputEvent::Keyboard { event } => {
-                let keyboard = self.seat.get_keyboard().unwrap();
-                let pressed = event.state() == KeyState::Pressed;
-                let direction = keyboard.input::<Direction, _>(
-                    self,
-                    event.key_code(),
-                    event.state(),
-                    SERIAL_COUNTER.next_serial(),
-                    event.time_msec(),
-                    |_, modifiers, handle| {
-                        if !pressed || !modifiers.ctrl {
-                            return FilterResult::Forward;
-                        }
-                        match handle.modified_sym().raw() {
-                            keysyms::KEY_h => FilterResult::Intercept(Direction::Left),
-                            keysyms::KEY_j => FilterResult::Intercept(Direction::Down),
-                            keysyms::KEY_k => FilterResult::Intercept(Direction::Up),
-                            keysyms::KEY_l => FilterResult::Intercept(Direction::Right),
-                            _ => FilterResult::Forward,
-                        }
-                    },
-                );
-                if let Some(direction) = direction
-                    && let Some(pane) = self.layout.neighbour(direction)
-                {
-                    self.focus(pane);
-                }
-            }
+            InputEvent::Keyboard { event } => self.keyboard(event),
             InputEvent::PointerMotionAbsolute { event } => {
                 let size = self.backend.window_size().to_f64().to_logical(self.scale);
                 self.pointer = event.position_transformed(size.to_i32_round());
+                if let Some(boundary) = self.drag.take() {
+                    let (column, row) = self.pointer_cell();
+                    self.layout.drag_boundary(&boundary, column, row);
+                    self.drag = Some(boundary);
+                    self.relayout();
+                    return;
+                }
                 let pointer = self.seat.get_pointer().unwrap();
-                let focus = self.pane_under_pointer().and_then(|pane| {
-                    let (origin, _) = self.client_geometry(&self.layout.panes[pane]);
-                    self.layout.panes[pane]
-                        .toplevel
+                let focus = self.pane_under_pointer().and_then(|id| {
+                    let pane = self.layout.pane(id)?;
+                    let (origin, _) = self.client_geometry(pane);
+                    pane.toplevel
                         .as_ref()
                         .map(|toplevel| (toplevel.wl_surface().clone(), origin.to_f64()))
                 });
@@ -573,11 +641,14 @@ impl State {
                 pointer.frame(self);
             }
             InputEvent::PointerButton { event } => {
-                if event.state() == ButtonState::Pressed
-                    && let Some(pane) = self.pane_under_pointer()
-                    && pane != self.layout.focused
-                {
-                    self.focus(pane);
+                let pressed = event.state() == ButtonState::Pressed;
+                if event.button_code() == BTN_LEFT {
+                    if pressed && self.press_on_chrome() {
+                        return;
+                    }
+                    if !pressed && self.drag.take().is_some() {
+                        return;
+                    }
                 }
                 let pointer = self.seat.get_pointer().unwrap();
                 pointer.button(
@@ -591,19 +662,134 @@ impl State {
                 );
                 pointer.frame(self);
             }
+            InputEvent::PointerAxis { event } => {
+                let pointer = self.seat.get_pointer().unwrap();
+                let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
+                for axis in [InputAxis::Horizontal, InputAxis::Vertical] {
+                    let amount = event
+                        .amount(axis)
+                        .unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0);
+                    if amount != 0.0 {
+                        frame = frame.value(axis, amount);
+                        if let Some(v120) = event.amount_v120(axis) {
+                            frame = frame.v120(axis, v120 as i32);
+                        }
+                    } else if event.source() == AxisSource::Finger {
+                        frame = frame.stop(axis);
+                    }
+                }
+                pointer.axis(self, frame);
+                pointer.frame(self);
+            }
             _ => {}
         }
     }
 
-    fn pane_under_pointer(&self) -> Option<usize> {
+    fn keyboard(
+        &mut self,
+        event: <WinitInput as smithay::backend::input::InputBackend>::KeyboardKeyEvent,
+    ) {
+        let keyboard = self.seat.get_keyboard().unwrap();
+        let pressed = event.state() == KeyState::Pressed;
+        let palette = self.layout.palette;
+        let mut control_key = false;
+        let key = keyboard.input::<Key, _>(
+            self,
+            event.key_code(),
+            event.state(),
+            SERIAL_COUNTER.next_serial(),
+            event.time_msec(),
+            |_, modifiers, handle| {
+                let sym = handle.modified_sym().raw();
+                control_key = sym == keysyms::KEY_Control_L || sym == keysyms::KEY_Control_R;
+                if palette {
+                    return if pressed && sym == keysyms::KEY_Escape {
+                        FilterResult::Intercept(Key::Escape)
+                    } else {
+                        FilterResult::Intercept(Key::Swallow)
+                    };
+                }
+                if !pressed || !modifiers.ctrl {
+                    return FilterResult::Forward;
+                }
+                match sym {
+                    keysyms::KEY_h => FilterResult::Intercept(Key::Focus(Direction::Left)),
+                    keysyms::KEY_j => FilterResult::Intercept(Key::Focus(Direction::Down)),
+                    keysyms::KEY_k => FilterResult::Intercept(Key::Focus(Direction::Up)),
+                    keysyms::KEY_l => FilterResult::Intercept(Key::Focus(Direction::Right)),
+                    keysyms::KEY_space => FilterResult::Intercept(Key::Palette),
+                    keysyms::KEY_Return if modifiers.shift => FilterResult::Intercept(Key::NewPane),
+                    _ => FilterResult::Forward,
+                }
+            },
+        );
+        match (control_key, pressed) {
+            (true, true) => self.ctrl_pressed(),
+            (true, false) => self.ctrl_released(),
+            (false, true) => self.cancel_ctrl_timer(),
+            (false, false) => {}
+        }
+        match key {
+            Some(Key::Focus(direction)) => {
+                if let Some(id) = self.layout.neighbour(direction) {
+                    self.focus(id);
+                }
+            }
+            Some(Key::NewPane) => self.new_terminal_pane(),
+            Some(Key::Palette) => {
+                self.layout.palette = true;
+                self.overlay = None;
+                self.backend.window().request_redraw();
+            }
+            Some(Key::Escape) => {
+                self.layout.palette = false;
+                self.overlay = None;
+                self.backend.window().request_redraw();
+            }
+            Some(Key::Swallow) | None => {}
+        }
+    }
+
+    fn press_on_chrome(&mut self) -> bool {
+        let (column, row) = self.pointer_cell();
+        if let Some((id, button)) = self.layout.bar_hit(column, row) {
+            match button {
+                BarButton::Close => self.close_pane(id),
+                BarButton::Zoom => {
+                    self.layout.toggle_zoom(id);
+                    self.relayout();
+                }
+                BarButton::Name => self.focus(id),
+            }
+            return true;
+        }
+        if let Some(boundary) = self.layout.boundary_at(column, row) {
+            self.drag = Some(boundary);
+            return true;
+        }
+        if let Some(id) = self.pane_under_pointer()
+            && id != self.layout.focused
+        {
+            self.focus(id);
+        }
+        false
+    }
+
+    fn pointer_cell(&self) -> (u32, u32) {
         let physical = self.pointer.to_physical(self.scale);
-        let column = (physical.x / self.font.cell_width as f64) as u32;
-        let row = (physical.y / self.font.cell_height as f64) as u32;
+        (
+            (physical.x.max(0.0) / self.font.cell_width as f64) as u32,
+            (physical.y.max(0.0) / self.font.cell_height as f64) as u32,
+        )
+    }
+
+    fn pane_under_pointer(&self) -> Option<usize> {
+        let (column, row) = self.pointer_cell();
         self.layout.pane_at(column, row)
     }
 
     fn client_geometry(&self, pane: &Pane) -> (Point<i32, Logical>, Size<i32, Logical>) {
-        let rect = pane.client_rect();
+        let rect = self.layout.client_rect(pane);
         let origin: Point<i32, Physical> = (
             (rect.column * self.font.cell_width) as i32,
             (rect.row * self.font.cell_height) as i32,
@@ -642,6 +828,7 @@ impl State {
             backend,
             layout,
             chrome,
+            overlay,
             font,
             glyphs,
             start,
@@ -653,26 +840,56 @@ impl State {
         let damage = Rectangle::from_size(size);
         let (renderer, mut framebuffer) = backend.bind().unwrap();
 
+        let texture_size = (
+            (layout.columns * font.cell_width) as i32,
+            (layout.rows * font.cell_height) as i32,
+        );
         if chrome.is_none() {
             let mut grid = Grid::new(layout.columns, layout.rows, FOREGROUND, BACKGROUND);
             layout.draw(&mut grid);
             let pixels = chrome::raster(&grid, font, glyphs);
-            let texture_size = (
-                (grid.columns * font.cell_width) as i32,
-                (grid.rows * font.cell_height) as i32,
-            );
-            let texture = renderer
+            *chrome = renderer
                 .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
-                .unwrap();
-            *chrome = Some(texture);
+                .ok();
         }
+        if overlay.is_none() && layout.palette {
+            let mut grid = crate::panes::overlay_grid(layout.columns, layout.rows);
+            layout.draw_overlay(&mut grid);
+            let pixels = chrome::raster(&grid, font, glyphs);
+            *overlay = renderer
+                .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
+                .ok();
+        }
+        let texture_element = |renderer: &GlesRenderer, texture: &GlesTexture| {
+            Element::Chrome(TextureRenderElement::from_static_texture(
+                Id::new(),
+                renderer.context_id(),
+                (0.0, 0.0),
+                texture.clone(),
+                1,
+                Transform::Normal,
+                None,
+                Some(Rectangle::from_size(size.to_f64().to_logical(1.0))),
+                Some(size.to_f64().to_logical(scale).to_i32_round()),
+                None,
+                Kind::Unspecified,
+            ))
+        };
 
         let mut elements: Vec<Element<GlesRenderer>> = Vec::new();
-        for pane in &layout.panes {
+        if layout.palette
+            && let Some(texture) = overlay.as_ref()
+        {
+            elements.push(texture_element(renderer, texture));
+        }
+        for pane in layout.visible() {
             let Some(toplevel) = &pane.toplevel else {
                 continue;
             };
-            let rect = pane.client_rect();
+            let rect = layout.client_rect(pane);
+            if rect.columns == 0 || rect.rows == 0 {
+                continue;
+            }
             let origin = (
                 (rect.column * font.cell_width) as i32,
                 (rect.row * font.cell_height) as i32,
@@ -688,19 +905,9 @@ impl State {
                 );
             elements.extend(surfaces.into_iter().map(Element::Surface));
         }
-        elements.push(Element::Chrome(TextureRenderElement::from_static_texture(
-            Id::new(),
-            renderer.context_id(),
-            (0.0, 0.0),
-            chrome.clone().unwrap(),
-            1,
-            Transform::Normal,
-            None,
-            Some(Rectangle::from_size(size.to_f64().to_logical(1.0))),
-            Some(size.to_f64().to_logical(scale).to_i32_round()),
-            None,
-            Kind::Unspecified,
-        )));
+        if let Some(texture) = chrome.as_ref() {
+            elements.push(texture_element(renderer, texture));
+        }
 
         let mut frame = renderer
             .render(&mut framebuffer, size, Transform::Flipped180)
@@ -717,7 +924,7 @@ impl State {
         drop(framebuffer);
 
         let time = start.elapsed().as_millis() as u32;
-        for pane in &layout.panes {
+        for pane in layout.visible() {
             if let Some(toplevel) = &pane.toplevel {
                 send_frames_surface_tree(toplevel.wl_surface(), time);
             }
@@ -778,31 +985,33 @@ impl CompositorHandler for State {
                     .get::<XdgToplevelSurfaceData>()
                     .and_then(|data| data.lock().unwrap().app_id.clone())
             });
-            match self.layout.place(app_id.as_deref()) {
-                Some(pane) => {
-                    let toplevel = self.unplaced.remove(i);
-                    self.layout.panes[pane].toplevel = Some(toplevel);
-                    self.configure(pane);
+            let toplevel = self.unplaced.remove(i);
+            let id = match self.layout.place(app_id.as_deref()) {
+                Some(id) => id,
+                None => {
+                    let name = self
+                        .layout
+                        .unique_name(app_id.as_deref().unwrap_or("window"));
+                    let id = self.layout.add_transient(name.clone());
+                    self.router.add_pane(name);
+                    id
                 }
-                None => eprintln!(
-                    "decade: no pane for a window with app id {}",
-                    app_id.as_deref().unwrap_or("(none)")
-                ),
+            };
+            if let Some(pane) = self.layout.pane_mut(id) {
+                pane.toplevel = Some(toplevel);
             }
+            self.focus(id);
         }
-        let pane = self.layout.panes.iter().position(|pane| {
+        let pane = self.layout.panes.iter().find(|pane| {
             pane.toplevel
                 .as_ref()
                 .is_some_and(|toplevel| toplevel.wl_surface() == surface)
         });
         if let Some(pane) = pane
-            && !self.layout.panes[pane]
-                .toplevel
-                .as_ref()
-                .unwrap()
-                .is_initial_configure_sent()
+            && !pane.toplevel.as_ref().unwrap().is_initial_configure_sent()
         {
-            self.configure(pane);
+            let id = pane.id;
+            self.configure(id);
         }
     }
 }
@@ -817,10 +1026,23 @@ impl XdgShellHandler for State {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        if let Some(pane) = self.layout.pane_of(&surface) {
-            self.layout.panes[pane].toplevel = None;
-        }
         self.unplaced.retain(|toplevel| toplevel != &surface);
+        let Some(id) = self.layout.pane_of(&surface) else {
+            return;
+        };
+        let transient = matches!(
+            self.layout.pane(id).map(|pane| &pane.kind),
+            Some(PaneKind::Transient)
+        );
+        if let Some(pane) = self.layout.pane_mut(id) {
+            pane.toplevel = None;
+        }
+        if transient {
+            self.remove_pane(id);
+        } else {
+            let focused = self.layout.focused;
+            self.focus(focused);
+        }
     }
 
     fn new_popup(&mut self, _: PopupSurface, _: PositionerState) {}

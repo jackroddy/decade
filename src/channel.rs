@@ -38,11 +38,11 @@ struct PaneInfo<'a> {
 pub struct Client {
     pub name: Option<String>,
     pub accepts: Vec<String>,
-    pub pane: Option<usize>,
+    pub pane: Option<String>,
 }
 
 pub enum Host {
-    Focus(usize),
+    Focus(String),
 }
 
 pub enum Out {
@@ -78,10 +78,25 @@ impl Router {
         self.clients.remove(&id);
     }
 
-    pub fn occupant(&self, pane: usize) -> Option<(usize, &Client)> {
+    pub fn add_pane(&mut self, name: String) {
+        if !self.panes.contains(&name) {
+            self.panes.push(name);
+        }
+    }
+
+    pub fn remove_pane(&mut self, name: &str) {
+        self.panes.retain(|pane| pane != name);
+        for client in self.clients.values_mut() {
+            if client.pane.as_deref() == Some(name) {
+                client.pane = None;
+            }
+        }
+    }
+
+    pub fn occupant(&self, pane: &str) -> Option<(usize, &Client)> {
         self.clients
             .iter()
-            .find(|(_, client)| client.pane == Some(pane))
+            .find(|(_, client)| client.pane.as_deref() == Some(pane))
             .map(|(id, client)| (*id, client))
     }
 
@@ -106,23 +121,23 @@ impl Router {
             return vec![error_line(id, "say hello first", value)];
         }
         if let Some(focus) = envelope.focus {
-            return match self.pane_index(&focus.pane) {
-                Some(pane) => vec![Out::Host(Host::Focus(pane))],
-                None => vec![error_line(
+            return if self.panes.contains(&focus.pane) {
+                vec![Out::Host(Host::Focus(focus.pane))]
+            } else {
+                vec![error_line(
                     id,
                     &format!("no pane named {}", focus.pane),
                     value,
-                )],
+                )]
             };
         }
         if envelope.panes.is_some() {
             let panes: Vec<PaneInfo> = self
                 .panes
                 .iter()
-                .enumerate()
-                .map(|(i, name)| PaneInfo {
+                .map(|name| PaneInfo {
                     name,
-                    client: self.occupant(i).and_then(|(_, c)| c.name.as_deref()),
+                    client: self.occupant(name).and_then(|(_, c)| c.name.as_deref()),
                 })
                 .collect();
             return vec![Out::Line(id, json!({ "panes": panes }).to_string())];
@@ -134,10 +149,10 @@ impl Router {
                 value,
             )];
         };
-        let Some(pane) = self.pane_index(&to) else {
+        if !self.panes.contains(&to) {
             return vec![error_line(id, &format!("no pane named {to}"), value)];
-        };
-        let Some((target, client)) = self.occupant(pane) else {
+        }
+        let Some((target, client)) = self.occupant(&to) else {
             return vec![error_line(
                 id,
                 &format!("no client occupies pane {to}"),
@@ -165,13 +180,14 @@ impl Router {
         let mut out = Vec::new();
         let mut pane = None;
         if let Some(wanted) = &hello.pane {
-            match self.pane_index(wanted) {
-                None => out.push(error_line(
+            if !self.panes.contains(wanted) {
+                out.push(error_line(
                     id,
                     &format!("no pane named {wanted}"),
                     value.clone(),
-                )),
-                Some(index) => match self.occupant(index) {
+                ));
+            } else {
+                match self.occupant(wanted) {
                     Some((other, occupant)) if other != id => out.push(error_line(
                         id,
                         &format!(
@@ -180,8 +196,8 @@ impl Router {
                         ),
                         value.clone(),
                     )),
-                    _ => pane = Some(index),
-                },
+                    _ => pane = Some(wanted.clone()),
+                }
             }
         }
         let client = self.clients.entry(id).or_insert(Client {
@@ -191,16 +207,12 @@ impl Router {
         });
         client.name = Some(hello.name);
         client.accepts = hello.accepts;
-        client.pane = pane;
+        client.pane = pane.clone();
         let welcome = json!({
-            "welcome": { "pane": pane.map(|p| self.panes[p].as_str()), "version": VERSION }
+            "welcome": { "pane": pane, "version": VERSION }
         });
         out.push(Out::Line(id, welcome.to_string()));
         out
-    }
-
-    fn pane_index(&self, name: &str) -> Option<usize> {
-        self.panes.iter().position(|pane| pane == name)
     }
 }
 
@@ -240,7 +252,10 @@ mod tests {
             out,
             vec![(1, json!({"welcome": {"pane": "code", "version": 1}}))]
         );
-        assert_eq!(r.occupant(2).unwrap().1.name.as_deref(), Some("code-pane"));
+        assert_eq!(
+            r.occupant("code").unwrap().1.name.as_deref(),
+            Some("code-pane")
+        );
     }
 
     #[test]
@@ -322,7 +337,7 @@ mod tests {
         r.connected(1);
         r.handle(1, r#"{"hello": {"name": "coax", "pane": "chat"}}"#);
         let out = r.handle(1, r#"{"focus": {"pane": "terminal"}}"#);
-        assert!(matches!(out[0], Out::Host(Host::Focus(1))));
+        assert!(matches!(&out[0], Out::Host(Host::Focus(pane)) if pane == "terminal"));
         let out = lines(r.handle(1, r#"{"panes": {}}"#));
         assert_eq!(
             out[0].1,
@@ -340,6 +355,6 @@ mod tests {
         r.connected(1);
         r.handle(1, r#"{"hello": {"name": "coax", "pane": "chat"}}"#);
         r.disconnected(1);
-        assert!(r.occupant(0).is_none());
+        assert!(r.occupant("chat").is_none());
     }
 }
