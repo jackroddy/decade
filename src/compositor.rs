@@ -88,7 +88,7 @@ const BAR_HOLD: Duration = Duration::from_millis(50);
 const BTN_LEFT: u32 = 0x110;
 const GHOST_SCALE: f64 = 0.2;
 const GHOST_ALPHA: f32 = 0.8;
-const GRAB_ANIMATION: Duration = Duration::from_millis(100);
+const GRAB_ANIMATION: Duration = Duration::from_millis(50);
 
 enum Drag {
     Boundary(Boundary),
