@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-07T07:45:11.090191368Z",
   "defer_until": null,
   "created_at": "2026-11-07T07:26:52.247769708Z",
-  "updated_at": "2026-11-07T07:30:11.090191368Z",
+  "updated_at": "2026-11-07T07:30:47.439705683Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "ea2d0444",
+      "at": "2026-11-07T07:30:47.439705023Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "Checked on 2026-11-07, by reading binaries and Cargo.lock. Nothing has run yet.\n\n- Hyprland 0.56.2 contains `zwp_keyboard_shortcuts_inhibit_manager_v1` and a `CKeyboardShortcutsInhibitProtocol`, so it offers the protocol.\n- Hyprland's Lua `hl.bind` accepts a `dont_inhibit` option among `repeating`, `non_consuming`, `transparent`, `ignore_mods` and others. It is presumably the Lua form of the classic `p` flag, which lets a bind ignore an inhibitor.\n- winit 0.30.13 already builds `wayland-backend` with `client_system`, and `wayland-protocols` 0.32 with `client` and `unstable`. decade can wrap winit's `wl_display` with `Backend::from_foreign_display`, rebuild winit's `wl_surface` from the raw-window-handle pointer, bind its own `wl_seat` and the inhibit manager on its own event queue, and call `inhibit_shortcuts` once. Under the protocol, Hyprland then turns the inhibitor on and off as the surface gains and loses keyboard focus.\n- Omarchy's binds all go through `o.bind` in `/usr/share/omarchy/default/hypr/helpers.lua`, which passes an options table to `hl.bind`. A wrapper in Jack's own config could set `dont_inhibit = true` on every bind except the ones decade should take. That turns the subset into a short list of keys for decade.",
+      "commit": "3b8a796",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "2fd6fa5",
