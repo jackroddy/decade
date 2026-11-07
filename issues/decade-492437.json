@@ -1,0 +1,28 @@
+{
+  "id": "decade-492437",
+  "title": "Ctrl+Space opens an empty command palette",
+  "body": "No palette exists and the key is not claimed.\n\n## Proposal\n\nCtrl+Space draws a box over the centre of the body, above the clients, with\nthe title \"command palette\" and nothing in it; keys go to it and Esc closes\nit. The chrome gains an overlay layer with transparency for this, drawn\nabove client surfaces. What the palette does is a later milestone.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:07:44.970943631Z",
+  "updated_at": "2026-11-07T05:07:44.970943631Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "9494070",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
