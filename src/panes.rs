@@ -18,7 +18,6 @@ const BAR_FOCUSED_TEXT: Rgba = palette::DARK_BACKGROUND;
 const HOVER: Rgba = palette::SELECTION;
 const CLOSE_HOVER: Rgba = palette::RED;
 const UNPINNED: Rgba = palette::MUTED;
-const STATUS: Rgba = palette::LIGHTER_BACKGROUND;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 
 const MIN_PANE: u32 = 4;
@@ -172,8 +171,8 @@ pub struct Boundary {
 }
 
 pub struct Layout {
-    pub columns: u32,
-    pub rows: u32,
+    /// The cells the panes share, inside decade's top bar and sidebar.
+    pub area: CellRect,
     pub panes: Vec<Pane>,
     pub focused: usize,
     pub zoom: Option<usize>,
@@ -186,10 +185,9 @@ pub struct Layout {
 }
 
 impl Layout {
-    pub fn new(columns: u32, rows: u32) -> Layout {
+    pub fn new(area: CellRect) -> Layout {
         let mut layout = Layout {
-            columns,
-            rows,
+            area,
             panes: vec![Pane::new(0, "terminal".to_string(), Kind::Transient)],
             focused: 0,
             zoom: None,
@@ -205,8 +203,7 @@ impl Layout {
     }
 
     pub fn restore(
-        columns: u32,
-        rows: u32,
+        area: CellRect,
         panes: Vec<Pane>,
         root: Node,
         focused: usize,
@@ -214,8 +211,7 @@ impl Layout {
     ) -> Layout {
         let next_id = panes.iter().map(|pane| pane.id + 1).max().unwrap_or(0);
         let mut layout = Layout {
-            columns,
-            rows,
+            area,
             panes,
             focused,
             zoom,
@@ -234,19 +230,13 @@ impl Layout {
         &self.root
     }
 
-    pub fn resize(&mut self, columns: u32, rows: u32) {
-        self.columns = columns;
-        self.rows = rows;
+    pub fn resize(&mut self, area: CellRect) {
+        self.area = area;
         self.arrange();
     }
 
     fn body(&self) -> CellRect {
-        CellRect {
-            column: 0,
-            row: 0,
-            columns: self.columns,
-            rows: self.rows.saturating_sub(1),
-        }
+        self.area
     }
 
     pub fn arrange(&mut self) {
@@ -590,7 +580,7 @@ impl Layout {
         None
     }
 
-    pub fn draw(&self, scene: &mut Scene, workspace: &str) {
+    pub fn draw(&self, scene: &mut Scene) {
         for pane in self.visible() {
             if self.dragging == Some(pane.id) {
                 continue;
@@ -603,26 +593,6 @@ impl Layout {
             scene.outline(pane.rect, outline);
             draw_waiting(scene, pane, pane.rect.inner());
         }
-        if self.rows == 0 {
-            return;
-        }
-        let status_row = self.rows - 1;
-        scene.fill(
-            CellRect {
-                column: 0,
-                row: status_row,
-                columns: self.columns,
-                rows: 1,
-            },
-            STATUS,
-        );
-        let focused = self
-            .pane(self.focused)
-            .map(|pane| pane.name.as_str())
-            .unwrap_or("");
-        let zoom = if self.zoom.is_some() { "  zoom" } else { "" };
-        let status = format!(" {workspace}  {focused}{zoom}  Super+Shift+Space palette");
-        scene.text(0, status_row, &status, FOREGROUND);
     }
 
     pub fn draw_bars(&self, scene: &mut Scene) {
@@ -1117,11 +1087,18 @@ fn node_at<'a>(node: &'a mut Node, path: &[bool]) -> Option<&'a mut Node> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
+    pub const AREA: CellRect = CellRect {
+        column: 0,
+        row: 0,
+        columns: 100,
+        rows: 40,
+    };
+
     fn three_anchors() -> Layout {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = Layout::new(AREA);
         layout.panes[0].name = "chat".to_string();
         layout.add_transient("terminal".to_string());
         layout.add_transient("code".to_string());
@@ -1268,7 +1245,7 @@ mod tests {
         layout.dragging = Some(0);
         let font = crate::text::Font::load(14.0);
         let mut chrome = Scene::new(&font);
-        layout.draw(&mut chrome, "decade");
+        layout.draw(&mut chrome);
         let waiting = chrome.shapes.iter().any(|shape| {
             matches!(shape, crate::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
         });
@@ -1376,12 +1353,12 @@ mod tests {
 
     #[test]
     fn a_pinned_terminal_whose_shell_exited_shows_a_restart_button() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = Layout::new(AREA);
         layout.panes[0].cwd = Some(PathBuf::from("/home/jack"));
         layout.pin(0, "decade.w0.terminal".to_string());
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, "jack");
+        layout.draw(&mut scene);
         let texts = texts(&scene);
         assert!(texts.iter().any(|text| text == "shell exited"));
         assert!(texts.iter().any(|text| text == "restart"));
@@ -1389,12 +1366,12 @@ mod tests {
 
     #[test]
     fn a_pinned_gui_pane_without_its_window_waits_and_offers_no_restart() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = Layout::new(AREA);
         layout.pin(0, "org.gnome.Nautilus".to_string());
         assert!(!layout.panes[0].restartable());
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, "jack");
+        layout.draw(&mut scene);
         let texts = texts(&scene);
         assert!(
             texts

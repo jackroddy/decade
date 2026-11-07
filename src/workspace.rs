@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use smithay::reexports::calloop::RegistrationToken;
 
 use crate::channel::{AGENT, AgentState, Router};
-use crate::panes::Layout;
+use crate::panes::{CellRect, Layout};
 
 pub struct Workspace {
     pub id: u32,
@@ -48,12 +48,12 @@ pub fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clone)
 }
 
 impl Workspace {
-    pub fn new(id: u32, cwd: PathBuf, columns: u32, rows: u32) -> Workspace {
+    pub fn new(id: u32, cwd: PathBuf, area: CellRect) -> Workspace {
         let name = cwd
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| cwd.display().to_string());
-        let mut layout = Layout::new(columns, rows);
+        let mut layout = Layout::new(area);
         layout.panes[0].cwd = Some(cwd.clone());
         Workspace::with_layout(id, name, cwd, layout)
     }
@@ -100,19 +100,23 @@ mod tests {
 
     #[test]
     fn a_workspace_is_named_after_its_directory() {
-        let workspace = Workspace::new(0, PathBuf::from("/home/jack/projects/decade"), 100, 41);
+        let workspace = Workspace::new(
+            0,
+            PathBuf::from("/home/jack/projects/decade"),
+            crate::panes::tests::AREA,
+        );
         assert_eq!(workspace.name, "decade");
     }
 
     #[test]
     fn a_workspace_at_the_root_is_named_after_the_path() {
-        let workspace = Workspace::new(0, PathBuf::from("/"), 100, 41);
+        let workspace = Workspace::new(0, PathBuf::from("/"), crate::panes::tests::AREA);
         assert_eq!(workspace.name, "/");
     }
 
     #[test]
     fn a_new_workspace_holds_one_terminal_pane() {
-        let workspace = Workspace::new(0, PathBuf::from("/home/jack"), 100, 41);
+        let workspace = Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
         let names: Vec<&str> = workspace
             .layout
             .panes

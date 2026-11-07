@@ -22,8 +22,16 @@ command line and what the tool writes.
 - New workspace in the palette takes a path, starting at `~/`, and lists
   the directories that complete it. Tab or Enter on a directory completes
   it, and Open creates a workspace there and shows it. The workspace takes
-  the directory's name, with a count after it when that name is taken. The
-  status line shows the name of the workspace on screen.
+  the directory's name, with a count after it when that name is taken.
+- A top bar replaces the status line. It shows the workspace and focused
+  pane on the left, the number of workspaces whose agents need attention,
+  are done or are working on the right, and a button that opens the
+  palette. A sidebar on the left lists every workspace, those whose agents
+  most need the person first, with the agent's message under one that
+  needs attention or is done. A click on a workspace shows it, and a click
+  on its mark returns done or attention to idle. Super+B collapses the
+  sidebar to a strip of marks, and Super+A shows the next workspace whose
+  agent needs the person.
 - The server saves its workspaces to `~/.local/state/decade/workspaces.toml`
   and restores them when it starts. The file holds each workspace's name,
   directory and split tree, and each pane's name and whether it is pinned.

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::panes::{Axis, Kind, Layout, Node, Pane};
+use crate::panes::{Axis, CellRect, Kind, Layout, Node, Pane};
 use crate::workspace::Workspace;
 
 const VERSION: u32 = 1;
@@ -180,7 +180,7 @@ fn shell_cwd(ghostty: u32) -> Option<PathBuf> {
 impl Saved {
     /// Rebuild the layout, with each pinned terminal waiting for the app id
     /// that starts with `prefix`.
-    pub fn layout(&self, columns: u32, rows: u32, prefix: &str) -> Result<Layout, String> {
+    pub fn layout(&self, area: CellRect, prefix: &str) -> Result<Layout, String> {
         let ids: HashMap<&str, usize> = self
             .panes
             .iter()
@@ -225,7 +225,7 @@ impl Saved {
             .collect();
         let focused = id_of(&self.focused)?;
         let zoom = self.zoom.as_deref().map(id_of).transpose()?;
-        Ok(Layout::restore(columns, rows, panes, root, focused, zoom))
+        Ok(Layout::restore(area, panes, root, focused, zoom))
     }
 }
 
@@ -264,7 +264,11 @@ mod tests {
     use super::*;
 
     fn workspace() -> Workspace {
-        let mut workspace = Workspace::new(2, PathBuf::from("/home/jack/projects/decade"), 100, 41);
+        let mut workspace = Workspace::new(
+            2,
+            PathBuf::from("/home/jack/projects/decade"),
+            crate::panes::tests::AREA,
+        );
         let layout = &mut workspace.layout;
         let code = layout.add_transient("code".to_string());
         layout.pane_mut(code).unwrap().cwd = Some(PathBuf::from("/tmp"));
@@ -285,7 +289,9 @@ mod tests {
         let file: File = toml::from_str(&text).unwrap();
         let back = &file.workspaces[0];
         assert_eq!(back, &saved(&workspace));
-        let layout = back.layout(100, 41, "decade.w0.").unwrap();
+        let layout = back
+            .layout(crate::panes::tests::AREA, "decade.w0.")
+            .unwrap();
         let rects: Vec<_> = layout.panes.iter().map(|pane| pane.rect).collect();
         let before: Vec<_> = workspace
             .layout
@@ -305,7 +311,9 @@ mod tests {
     fn a_pinned_gui_pane_waits_for_its_app_and_a_pinned_terminal_for_its_new_class() {
         let mut workspace = workspace();
         workspace.layout.pin(0, "decade.w2.terminal".to_string());
-        let layout = saved(&workspace).layout(100, 41, "decade.w0.").unwrap();
+        let layout = saved(&workspace)
+            .layout(crate::panes::tests::AREA, "decade.w0.")
+            .unwrap();
         let app_id = |id: usize| match &layout.pane(id).unwrap().kind {
             Kind::Anchor { app_id } => Some(app_id.clone()),
             Kind::Transient => None,
@@ -320,7 +328,9 @@ mod tests {
         let mut workspace = workspace();
         workspace.layout.unpin(2);
         workspace.layout.pane_mut(2).unwrap().app_id = Some("org.gnome.Nautilus".to_string());
-        let layout = saved(&workspace).layout(100, 41, "decade.w0.").unwrap();
+        let layout = saved(&workspace)
+            .layout(crate::panes::tests::AREA, "decade.w0.")
+            .unwrap();
         assert_eq!(
             layout.place(Some("org.gnome.Nautilus"), "decade.w0."),
             Some(2)
@@ -331,7 +341,11 @@ mod tests {
     fn a_tree_naming_a_missing_pane_is_refused() {
         let mut saved = saved(&workspace());
         saved.panes.pop();
-        assert!(saved.layout(100, 41, "decade.w0.").is_err());
+        assert!(
+            saved
+                .layout(crate::panes::tests::AREA, "decade.w0.")
+                .is_err()
+        );
     }
 
     #[test]

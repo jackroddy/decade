@@ -88,6 +88,7 @@ use crate::apps;
 use crate::channel::{AGENT, AgentState, Host, Out};
 use crate::control::{self, viewer_socket_path};
 use crate::draw::{Face, Scene, Shape, TextCache};
+use crate::frame::{self, Hit};
 use crate::gpu::Gpu;
 use crate::hypr::Hyprland;
 use crate::mcp;
@@ -95,7 +96,7 @@ use crate::menu::{Action, Menu, MenuKey, Outcome};
 use crate::palette::{self, ACCENT};
 use crate::panel::{Panel, PanelOutcome};
 use crate::panes::{
-    BACKGROUND, BarButton, Boundary, Direction, Drop, Kind as PaneKind, Layout, Pane,
+    BACKGROUND, BarButton, Boundary, CellRect, Direction, Drop, Kind as PaneKind, Layout, Pane,
 };
 use crate::picker::{self, Grid, Picker};
 use crate::save;
@@ -159,6 +160,8 @@ enum Key {
     Palette,
     Picker,
     Restart,
+    Sidebar,
+    NextNeeding,
     Clipboard(Chord),
     Menu(MenuKey),
     Swallow,
@@ -218,6 +221,7 @@ pub struct State {
     rounded: GlesPixelProgram,
     menu: Option<Menu>,
     picker: Option<Picker>,
+    sidebar_open: bool,
 
     /// The timer that sends frame callbacks to hidden workspaces while the picker is open.
     picker_tick: Option<RegistrationToken>,
@@ -401,7 +405,7 @@ pub fn run() {
         size.w as u32 / font.cell_width,
         size.h as u32 / font.cell_height,
     );
-    let (workspaces, save_path) = restore(columns, rows);
+    let (workspaces, save_path) = restore(frame::pane_area(columns, rows, true));
 
     let handle = event_loop.handle();
     let socket = ListeningSocketSource::new_auto().unwrap();
@@ -514,6 +518,7 @@ pub fn run() {
         unplaced: Vec::new(),
         menu: None,
         picker: None,
+        sidebar_open: true,
         picker_tick: None,
         panel: None,
         settings,
@@ -568,8 +573,8 @@ pub fn run() {
     let _ = std::fs::remove_file(&viewer_path);
 }
 
-fn restore(columns: u32, rows: u32) -> (Vec<Workspace>, Option<PathBuf>) {
-    let home = || vec![Workspace::new(0, workspace::home(), columns, rows)];
+fn restore(area: CellRect) -> (Vec<Workspace>, Option<PathBuf>) {
+    let home = || vec![Workspace::new(0, workspace::home(), area)];
     let Some(path) = save::path() else {
         return (home(), None);
     };
@@ -581,7 +586,7 @@ fn restore(columns: u32, rows: u32) -> (Vec<Workspace>, Option<PathBuf>) {
             .map(|(id, saved)| {
                 let id = id as u32;
                 let prefix = format!("decade.w{id}.");
-                let layout = saved.layout(columns, rows, &prefix)?;
+                let layout = saved.layout(area, &prefix)?;
                 Ok(Workspace::with_layout(
                     id,
                     saved.name.clone(),
@@ -915,9 +920,7 @@ impl State {
     fn add_workspace(&mut self, cwd: PathBuf) -> u32 {
         let id = self.next_workspace;
         self.next_workspace += 1;
-        let columns = self.size.w as u32 / self.font.cell_width;
-        let rows = self.size.h as u32 / self.font.cell_height;
-        let mut created = Workspace::new(id, cwd, columns, rows);
+        let mut created = Workspace::new(id, cwd, self.pane_area());
         let taken = self.workspaces.iter().map(|known| known.name.as_str());
         created.name = workspace::unique_name(&created.name, taken);
         self.workspaces.push(created);
@@ -1849,12 +1852,71 @@ impl State {
         self.relayout_all();
     }
 
+    fn grid(&self) -> (u32, u32) {
+        (
+            self.size.w as u32 / self.font.cell_width,
+            self.size.h as u32 / self.font.cell_height,
+        )
+    }
+
+    fn pane_area(&self) -> CellRect {
+        let (columns, rows) = self.grid();
+        frame::pane_area(columns, rows, self.sidebar_open)
+    }
+
     fn resize_layouts(&mut self) {
-        let columns = self.size.w as u32 / self.font.cell_width;
-        let rows = self.size.h as u32 / self.font.cell_height;
+        let area = self.pane_area();
         for workspace in &mut self.workspaces {
-            workspace.layout.resize(columns, rows);
+            workspace.layout.resize(area);
         }
+    }
+
+    fn frame(&self) -> frame::Frame {
+        let (columns, rows) = self.grid();
+        build_frame(
+            &self.workspaces,
+            self.current(),
+            columns,
+            rows,
+            self.sidebar_open,
+        )
+    }
+
+    fn toggle_sidebar(&mut self) {
+        self.sidebar_open = !self.sidebar_open;
+        self.resize_layouts();
+        self.relayout_all();
+    }
+
+    fn frame_hit(&mut self, hit: Hit) {
+        match hit {
+            Hit::Show(id) => {
+                if let Some(active) = self.active {
+                    self.show(active, id);
+                }
+            }
+            Hit::Clear(id) => {
+                if let Some(index) = self.workspace_index(id) {
+                    self.clear_agents(index);
+                }
+            }
+            Hit::New => {
+                self.open_palette();
+                if let Some(menu) = &mut self.menu {
+                    menu.start_new_workspace();
+                }
+            }
+            Hit::Palette => self.open_palette(),
+            Hit::Sidebar => self.toggle_sidebar(),
+        }
+        self.request_redraw();
+    }
+
+    fn open_palette(&mut self) {
+        let shown = &self.workspaces[self.current()];
+        let (id, name) = (shown.id, shown.name.clone());
+        self.menu = Some(Menu::new(apps::installed(), workspace::home(), id, &name));
+        self.request_redraw();
     }
 
     fn forget_stale(&mut self) {
@@ -2152,6 +2214,13 @@ impl State {
             }
             return;
         }
+        if button == BTN_LEFT && pressed {
+            let (column, row) = self.pointer_cell();
+            if let Some(hit) = self.frame().hit(column, row) {
+                self.frame_hit(hit);
+                return;
+            }
+        }
         if button == BTN_LEFT {
             if pressed && self.press_on_chrome() {
                 return;
@@ -2368,11 +2437,12 @@ impl State {
                 self.relayout();
             }
             Key::NewPane => self.new_terminal_pane(),
-            Key::Palette => {
-                let shown = &self.workspaces[self.current()];
-                let (id, name) = (shown.id, shown.name.clone());
-                self.menu = Some(Menu::new(apps::installed(), workspace::home(), id, &name));
-                self.request_redraw();
+            Key::Palette => self.open_palette(),
+            Key::Sidebar => self.toggle_sidebar(),
+            Key::NextNeeding => {
+                if let (Some(id), Some(active)) = (self.frame().next_needing(), self.active) {
+                    self.show(active, id);
+                }
             }
             Key::Picker => self.open_picker(),
             Key::Restart => {
@@ -2611,6 +2681,7 @@ impl State {
             picker,
             settings,
             rounded,
+            sidebar_open,
             ..
         } = self;
         let layout = &workspaces[workspace].layout;
@@ -2773,7 +2844,12 @@ impl State {
 
         if picker.is_none() {
             let mut below = Scene::new(font);
-            layout.draw(&mut below, &workspaces[workspace].name);
+            layout.draw(&mut below);
+            let grid = (
+                size.w as u32 / font.cell_width,
+                size.h as u32 / font.cell_height,
+            );
+            build_frame(workspaces, workspace, grid.0, grid.1, *sidebar_open).draw(&mut below);
             paint.scene(&mut elements, &below, Point::default(), None);
         }
 
@@ -2804,6 +2880,35 @@ impl State {
         }
         Ok(sync.export())
     }
+}
+
+fn build_frame(
+    workspaces: &[Workspace],
+    shown: usize,
+    columns: u32,
+    rows: u32,
+    open: bool,
+) -> frame::Frame {
+    let entries = workspaces
+        .iter()
+        .enumerate()
+        .map(|(i, workspace)| {
+            let urgent = workspace.agents.values().max_by_key(|agent| agent.state);
+            frame::Entry {
+                id: workspace.id,
+                name: workspace.name.clone(),
+                state: workspace.agent_state(),
+                message: urgent.and_then(|agent| agent.message.clone()),
+                current: i == shown,
+            }
+        })
+        .collect();
+    let layout = &workspaces[shown].layout;
+    let pane = layout
+        .pane(layout.focused)
+        .map(|pane| pane.name.clone())
+        .unwrap_or_default();
+    frame::Frame::new(columns, rows, open, entries, pane, layout.zoom.is_some())
 }
 
 fn paint_picker(
@@ -3090,6 +3195,8 @@ fn repeats(key: Key) -> bool {
         | Key::Palette
         | Key::Picker
         | Key::Restart
+        | Key::Sidebar
+        | Key::NextNeeding
         | Key::Clipboard(_)
         | Key::Swallow => false,
     }
@@ -3122,6 +3229,8 @@ fn super_key(sym: u32, shift: bool) -> Option<Key> {
         keysyms::KEY_Return if shift => Some(Key::NewPane),
         keysyms::KEY_space if shift => Some(Key::Palette),
         keysyms::KEY_Tab if !shift => Some(Key::Picker),
+        keysyms::KEY_b if !shift => Some(Key::Sidebar),
+        keysyms::KEY_a if !shift => Some(Key::NextNeeding),
         _ => None,
     }
 }

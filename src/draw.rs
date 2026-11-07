@@ -126,6 +126,14 @@ impl Scene {
         self.box_lines(x, y, width, height, color);
     }
 
+    /// A line one stroke wide down the right edge of `rect`.
+    pub fn right_edge(&mut self, rect: CellRect, color: Rgba) {
+        let (x, y) = self.px(rect.column + rect.columns, rect.row);
+        let (_, height) = self.px(0, rect.rows);
+        let line = self.line_width();
+        self.rect(x - line, y, line, height, color);
+    }
+
     pub fn box_lines(&mut self, x: i32, y: i32, width: i32, height: i32, color: Rgba) {
         let line = self.line_width();
         self.rect(x, y, width, line, color);
