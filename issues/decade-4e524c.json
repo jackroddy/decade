@@ -1,0 +1,28 @@
+{
+  "id": "decade-4e524c",
+  "title": "Dragging a pane's bar onto another pane swaps them",
+  "body": "Later. With the Ctrl bar up, a press on a bar and a drag moves an outline of the pane; dropping it on another pane swaps the two leaves in the tree. Dropping on an edge to split there is a refinement after that.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:07:44.979143876Z",
+  "updated_at": "2026-11-07T05:07:44.979143876Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "9494070",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
