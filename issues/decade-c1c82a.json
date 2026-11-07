@@ -15,9 +15,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.946868295Z",
-  "updated_at": "2026-11-07T23:07:36.967482978Z",
+  "updated_at": "2026-11-07T23:07:56.105119012Z",
   "closed_at": "2026-11-07T23:07:36.967482978Z",
-  "close_reason": "Start, stop, restart and status landed in ce0862d, list in a33300f. Jack dropped attach, since plain decade already attaches and the picker switches workspaces, and dropped closing a workspace from the shell. One server per user is now a rule in CLAUDE.md.",
+  "close_reason": "Start, stop, restart and status landed in ce0862d, list in 4b25fe2. Jack dropped attach, since plain decade already attaches and the picker switches workspaces, and dropped closing a workspace from the shell. One server per user is now a rule in CLAUDE.md.",
   "resolution": "done",
   "notes": [
     {
