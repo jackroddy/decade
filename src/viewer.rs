@@ -115,8 +115,8 @@ const SHAPES: [&str; 34] = [
     "zoom-out",
 ];
 
-pub fn run(class: String, server_args: Vec<String>) {
-    let server = match connect_or_start(&server_args) {
+pub fn run(class: String) {
+    let server = match connect_or_start() {
         Ok(server) => server,
         Err(error) => fail(&error),
     };
@@ -184,7 +184,7 @@ fn missing(name: &str) -> ! {
     fail(&format!("the host has no {name}"))
 }
 
-fn connect_or_start(server_args: &[String]) -> Result<UnixStream, String> {
+fn connect_or_start() -> Result<UnixStream, String> {
     let path = viewer_socket_path();
     if let Ok(stream) = UnixStream::connect(&path) {
         return Ok(stream);
@@ -199,7 +199,6 @@ fn connect_or_start(server_args: &[String]) -> Result<UnixStream, String> {
     let log_out = log.try_clone().map_err(|error| error.to_string())?;
     let mut child = Command::new(exe)
         .arg("server")
-        .args(server_args)
         .process_group(0)
         .stdin(Stdio::null())
         .stdout(log_out)

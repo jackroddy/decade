@@ -156,37 +156,24 @@ pub struct Layout {
 
 impl Layout {
     pub fn new(columns: u32, rows: u32) -> Layout {
-        let anchor = |id: usize, name: &str| Pane {
-            id,
-            name: name.to_string(),
-            kind: Kind::Anchor {
-                app_id: format!("decade.{name}"),
-            },
-            rect: CellRect::EMPTY,
-            toplevel: None,
-        };
         let mut layout = Layout {
             columns,
             rows,
-            panes: vec![anchor(0, "chat"), anchor(1, "terminal"), anchor(2, "code")],
-            focused: 1,
+            panes: vec![Pane {
+                id: 0,
+                name: "terminal".to_string(),
+                kind: Kind::Transient,
+                rect: CellRect::EMPTY,
+                toplevel: None,
+            }],
+            focused: 0,
             zoom: None,
             bar: false,
             drag_cell: None,
             dragging: None,
             hover: None,
-            root: Node::Split {
-                axis: Axis::Horizontal,
-                ratio: 0.5,
-                first: Box::new(Node::Leaf(0)),
-                second: Box::new(Node::Split {
-                    axis: Axis::Vertical,
-                    ratio: 0.5,
-                    first: Box::new(Node::Leaf(1)),
-                    second: Box::new(Node::Leaf(2)),
-                }),
-            },
-            next_id: 3,
+            root: Node::Leaf(0),
+            next_id: 1,
         };
         layout.arrange();
         layout
@@ -317,7 +304,7 @@ impl Layout {
         self.drag_boundary(&boundary, edge, edge);
     }
 
-    pub fn place(&self, app_id: Option<&str>) -> Option<usize> {
+    pub fn place(&self, app_id: Option<&str>, prefix: &str) -> Option<usize> {
         let app_id = app_id?;
         self.panes
             .iter()
@@ -325,16 +312,9 @@ impl Layout {
                 pane.toplevel.is_none()
                     && match &pane.kind {
                         Kind::Anchor { app_id: wanted } => wanted == app_id,
-                        Kind::Transient => app_id.strip_prefix("decade.") == Some(&pane.name),
+                        Kind::Transient => app_id.strip_prefix(prefix) == Some(&pane.name),
                     }
             })
-            .map(|pane| pane.id)
-    }
-
-    pub fn pane_of(&self, toplevel: &ToplevelSurface) -> Option<usize> {
-        self.panes
-            .iter()
-            .find(|pane| pane.toplevel.as_ref() == Some(toplevel))
             .map(|pane| pane.id)
     }
 
@@ -1072,9 +1052,21 @@ fn node_at<'a>(node: &'a mut Node, path: &[bool]) -> Option<&'a mut Node> {
 mod tests {
     use super::*;
 
+    fn three_anchors() -> Layout {
+        let mut layout = Layout::new(100, 41);
+        layout.panes[0].name = "chat".to_string();
+        layout.add_transient("terminal".to_string());
+        layout.add_transient("code".to_string());
+        for (id, name) in [(0, "chat"), (1, "terminal"), (2, "code")] {
+            layout.pin(id, format!("decade.{name}"));
+        }
+        layout.focused = 1;
+        layout
+    }
+
     #[test]
     fn the_three_anchors_fill_the_body_above_the_status_line() {
-        let layout = Layout::new(100, 41);
+        let layout = three_anchors();
         let rects: Vec<CellRect> = layout.panes.iter().map(|pane| pane.rect).collect();
         assert_eq!(
             rects[0],
@@ -1107,7 +1099,7 @@ mod tests {
 
     #[test]
     fn a_transient_pane_splits_the_focused_pane_and_leaves_with_its_client() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         layout.focused = 0;
         let id = layout.add_transient("terminal2".into());
         assert_eq!(layout.focused, id);
@@ -1126,7 +1118,7 @@ mod tests {
 
     #[test]
     fn zoom_gives_one_pane_the_body_and_hides_the_rest() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         layout.toggle_zoom(2);
         assert_eq!(layout.pane(2).unwrap().rect.columns, 100);
         assert_eq!(layout.visible().count(), 1);
@@ -1136,7 +1128,7 @@ mod tests {
 
     #[test]
     fn the_boundary_between_chat_and_the_right_column_can_be_dragged() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         let boundary = layout
             .boundary_at(50, 10)
             .expect("the outline cells are a boundary");
@@ -1149,7 +1141,7 @@ mod tests {
 
     #[test]
     fn the_bar_covers_the_top_row_of_the_client_and_leaves_its_size_alone() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         let pane = layout.pane(0).unwrap();
         let before = layout.client_rect(pane);
         layout.bar = true;
@@ -1165,16 +1157,22 @@ mod tests {
 
     #[test]
     fn a_transient_pane_is_placed_by_the_app_id_of_the_terminal_started_for_it() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         let name = layout.unique_name("terminal");
         let id = layout.add_transient(name);
-        assert_eq!(layout.place(Some("decade.terminal2")), Some(id));
-        assert_eq!(layout.place(Some("decade.terminal3")), None);
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal2"), "decade.w0."),
+            Some(id)
+        );
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal3"), "decade.w0."),
+            None
+        );
     }
 
     #[test]
     fn swapping_two_panes_exchanges_their_rects_and_nothing_else() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         let chat = layout.pane(0).unwrap().rect;
         let code = layout.pane(2).unwrap().rect;
         layout.apply_drop(0, Drop::Swap(2));
@@ -1188,7 +1186,7 @@ mod tests {
 
     #[test]
     fn swapping_a_pane_with_itself_changes_nothing() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         let rects: Vec<CellRect> = layout.panes.iter().map(|pane| pane.rect).collect();
         layout.apply_drop(1, Drop::Swap(1));
         let after: Vec<CellRect> = layout.panes.iter().map(|pane| pane.rect).collect();
@@ -1197,7 +1195,7 @@ mod tests {
 
     #[test]
     fn a_dragged_pane_leaves_its_slot_empty_and_its_ghost_is_the_inside_of_the_pane() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         layout.bar = true;
         layout.dragging = Some(0);
         let font = crate::text::Font::load(14.0);
@@ -1218,23 +1216,26 @@ mod tests {
 
     #[test]
     fn a_pinned_transient_pane_waits_for_its_clients_app_id() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         let id = layout.add_transient("nautilus".to_string());
         layout.pin(id, "org.gnome.Nautilus".to_string());
-        assert_eq!(layout.place(Some("org.gnome.Nautilus")), Some(id));
+        assert_eq!(
+            layout.place(Some("org.gnome.Nautilus"), "decade.w0."),
+            Some(id)
+        );
         assert_eq!(layout.pane(id).unwrap().name, "nautilus");
     }
 
     #[test]
     fn an_unpinned_anchor_is_transient() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         layout.unpin(0);
         assert!(matches!(layout.pane(0).unwrap().kind, Kind::Transient));
     }
 
     #[test]
     fn the_middle_of_a_pane_swaps_and_its_edges_split() {
-        let layout = Layout::new(100, 41);
+        let layout = three_anchors();
         let code = layout.pane(2).unwrap().rect;
         let middle = (code.column + code.columns / 2, code.row + code.rows / 2);
         assert_eq!(layout.drop_at(0, middle.0, middle.1), Some(Drop::Swap(2)));
@@ -1252,7 +1253,7 @@ mod tests {
 
     #[test]
     fn splitting_a_pane_gives_the_dropped_pane_the_half_on_that_side() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         let code = layout.pane(2).unwrap().rect;
         let drop = Drop::Split {
             target: 2,
@@ -1268,7 +1269,7 @@ mod tests {
 
     #[test]
     fn a_drop_on_the_window_edge_spans_that_side() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         layout.apply_drop(2, Drop::Edge(Side::Left));
         let code = layout.pane(2).unwrap().rect;
         assert_eq!((code.column, code.row), (0, 0));
@@ -1278,7 +1279,7 @@ mod tests {
 
     #[test]
     fn resizing_moves_the_nearest_divider_on_that_axis() {
-        let mut layout = Layout::new(100, 41);
+        let mut layout = three_anchors();
         let chat = layout.pane(0).unwrap().rect.columns;
         layout.resize_toward(0, Direction::Right, 2);
         assert_eq!(layout.pane(0).unwrap().rect.columns, chat + 2);
@@ -1289,7 +1290,7 @@ mod tests {
 
     #[test]
     fn names_are_made_unique_by_counting() {
-        let layout = Layout::new(100, 41);
+        let layout = three_anchors();
         assert_eq!(layout.unique_name("terminal"), "terminal2");
         assert_eq!(layout.unique_name("nautilus"), "nautilus");
     }

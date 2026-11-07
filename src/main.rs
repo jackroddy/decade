@@ -29,49 +29,24 @@ mod text;
 #[cfg(target_os = "linux")]
 mod viewer;
 mod wire;
+#[cfg(target_os = "linux")]
+mod workspace;
 
 #[cfg(target_os = "linux")]
-const USAGE: &str = "usage: decade [--class <app id>] [--chat \"<command>\"] [--code \"<command>\"]
-       decade server [--chat \"<command>\"] [--code \"<command>\"]";
+const USAGE: &str = "usage: decade [--class <app id>]
+       decade server";
 
 #[cfg(target_os = "linux")]
 fn main() {
-    let mut args = std::env::args().skip(1).peekable();
-    let server = args.peek().map(String::as_str) == Some("server");
-    if server {
-        args.next();
-    }
-    let mut commands = compositor::Commands {
-        chat: None,
-        code: None,
-    };
-    let mut class = "decade".to_string();
-    let mut server_args = Vec::new();
-    while let Some(flag) = args.next() {
-        let Some(value) = args.next() else {
+    let mut args = std::env::args().skip(1);
+    match (args.next().as_deref(), args.next(), args.next()) {
+        (Some("server"), None, _) => compositor::run(),
+        (None, _, _) => viewer::run("decade".to_string()),
+        (Some("--class"), Some(class), None) => viewer::run(class),
+        _ => {
             eprintln!("{USAGE}");
             std::process::exit(2);
-        };
-        let command = || Some(value.split_whitespace().map(str::to_string).collect());
-        match flag.as_str() {
-            "--chat" => commands.chat = command(),
-            "--code" => commands.code = command(),
-            "--class" if !server => {
-                class = value;
-                continue;
-            }
-            _ => {
-                eprintln!("{USAGE}");
-                std::process::exit(2);
-            }
         }
-        server_args.push(flag);
-        server_args.push(value);
-    }
-    if server {
-        compositor::run(commands);
-    } else {
-        viewer::run(class, server_args);
     }
 }
 

@@ -100,7 +100,8 @@ use crate::panes::{
 };
 use crate::settings::{self, Settings};
 use crate::text::Font;
-use crate::wire::{Decoder, Outbox, Plane, ServerMessage, ViewerMessage, Workspace};
+use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
+use crate::workspace::Workspace;
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
@@ -205,7 +206,7 @@ pub struct State {
     children: Vec<Child>,
     font: Font,
     texts: TextCache,
-    layout: Layout,
+    workspaces: Vec<Workspace>,
     unplaced: Vec<ToplevelSurface>,
     menu_font: Font,
     rounded: GlesPixelProgram,
@@ -238,6 +239,7 @@ struct Viewer {
     wants_frame: bool,
     keys: Vec<u32>,
     buttons: Vec<u32>,
+    workspace: u32,
 
     /// Per selection, the serial of this viewer's newest offer or clear.
     seen: [u32; 2],
@@ -282,12 +284,7 @@ struct Repeat {
     rate: i32,
 }
 
-pub struct Commands {
-    pub chat: Option<Vec<String>>,
-    pub code: Option<Vec<String>>,
-}
-
-pub fn run(commands: Commands) {
+pub fn run() {
     let viewer_path = viewer_socket_path();
     if let Some(dir) = viewer_path.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -383,7 +380,10 @@ pub fn run(commands: Commands) {
         None => Settings::default(),
     };
     let font = Font::load(settings.font_size * scale as f32);
-    let layout = Layout::new(
+    let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from);
+    let workspace = Workspace::new(
+        0,
+        home,
         size.w as u32 / font.cell_width,
         size.h as u32 / font.cell_height,
     );
@@ -460,7 +460,14 @@ pub fn run(commands: Commands) {
         )
         .unwrap();
 
-    let mut router = Router::new(layout.panes.iter().map(|pane| pane.name.clone()).collect());
+    let mut router = Router::new(
+        workspace
+            .layout
+            .panes
+            .iter()
+            .map(|pane| pane.name.clone())
+            .collect(),
+    );
     router.connected(AGENT_CLIENT);
     router.handle(AGENT_CLIENT, r#"{"hello":{"name":"agent"}}"#);
     let (mcp_requests, mcp_source) = calloop_channel::channel();
@@ -517,7 +524,7 @@ pub fn run(commands: Commands) {
         texts: TextCache::new(),
         menu_font: Font::load(settings.palette_size * scale as f32),
         rounded,
-        layout,
+        workspaces: vec![workspace],
         unplaced: Vec::new(),
         menu: None,
         panel: None,
@@ -530,13 +537,7 @@ pub fn run(commands: Commands) {
         start: Instant::now(),
     };
 
-    state.spawn_terminal("terminal", &[]);
-    if let Some(chat) = &commands.chat {
-        state.spawn_terminal("chat", chat);
-    }
-    if let Some(code) = &commands.code {
-        state.spawn_terminal("code", code);
-    }
+    state.spawn_terminal(0, "terminal");
     while !state.stopping {
         let backlog = state
             .viewers
@@ -626,9 +627,12 @@ fn remove_stale_sockets(dir: &Path) {
 }
 
 impl State {
-    fn command(&self, program: &str) -> Command {
+    fn command(&self, workspace: usize, program: &str) -> Command {
+        let workspace = &self.workspaces[workspace];
         let mut command = Command::new(program);
         command
+            .current_dir(&workspace.cwd)
+            .env("DECADE_WORKSPACE", &workspace.name)
             .env("WAYLAND_DISPLAY", &self.env.wayland)
             .env("DECADE_SOCKET", &self.env.channel)
             .env_remove("DISPLAY");
@@ -642,21 +646,19 @@ impl State {
         let Some((program, args)) = argv.split_first() else {
             return;
         };
-        match self.command(program).args(args).spawn() {
+        match self.command(self.current(), program).args(args).spawn() {
             Ok(child) => self.children.push(child),
             Err(error) => eprintln!("decade: could not start {program}: {error}"),
         }
     }
 
-    fn spawn_terminal(&mut self, pane: &str, command: &[String]) {
-        let mut ghostty = self.command("ghostty");
+    fn spawn_terminal(&mut self, workspace: usize, pane: &str) {
+        let prefix = self.workspaces[workspace].app_id_prefix();
+        let mut ghostty = self.command(workspace, "ghostty");
         ghostty
             .env("DECADE_PANE", pane)
             .args(["--window-decoration=none", "--gtk-titlebar=false"])
-            .arg(format!("--class=decade.{pane}"));
-        if !command.is_empty() {
-            ghostty.arg("-e").args(command);
-        }
+            .arg(format!("--class={prefix}{pane}"));
         match ghostty.spawn() {
             Ok(child) => self.children.push(child),
             Err(error) => eprintln!("decade: could not start ghostty: {error}"),
@@ -694,6 +696,7 @@ impl State {
                 wants_frame: true,
                 keys: Vec::new(),
                 buttons: Vec::new(),
+                workspace: self.workspaces[0].id,
                 seen: [0; 2],
             },
         );
@@ -769,12 +772,8 @@ impl State {
             }
         }
         if self.active == Some(id) {
-            self.active = self
-                .viewers
-                .iter()
-                .find(|(_, viewer)| viewer.welcomed)
-                .map(|(&id, _)| id);
-            self.apply_active_size();
+            let next = self.welcomed().next();
+            self.set_active(next);
         }
     }
 
@@ -827,9 +826,92 @@ impl State {
 
     fn make_active(&mut self, id: usize) {
         if self.active != Some(id) {
-            self.active = Some(id);
-            self.apply_active_size();
+            self.set_active(Some(id));
         }
+    }
+
+    fn set_active(&mut self, active: Option<usize>) {
+        let before = self.current();
+        self.active = active;
+        self.apply_active_size();
+        if self.current() != before {
+            self.workspace_shown();
+        }
+    }
+
+    fn current(&self) -> usize {
+        self.active
+            .and_then(|id| self.viewers.get(&id))
+            .and_then(|viewer| {
+                self.workspaces
+                    .iter()
+                    .position(|workspace| workspace.id == viewer.workspace)
+            })
+            .unwrap_or(0)
+    }
+
+    fn layout(&self) -> &Layout {
+        &self.workspaces[self.current()].layout
+    }
+
+    fn layout_mut(&mut self) -> &mut Layout {
+        let current = self.current();
+        &mut self.workspaces[current].layout
+    }
+
+    fn pane_of_surface(&self, surface: &WlSurface) -> Option<(usize, usize)> {
+        self.workspaces
+            .iter()
+            .enumerate()
+            .find_map(|(index, workspace)| {
+                let pane = workspace.layout.panes.iter().find(|pane| {
+                    pane.toplevel
+                        .as_ref()
+                        .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+                })?;
+                Some((index, pane.id))
+            })
+    }
+
+    fn workspace_list(&self) -> ServerMessage {
+        ServerMessage::Workspaces {
+            workspaces: self
+                .workspaces
+                .iter()
+                .map(|workspace| wire::Workspace {
+                    id: workspace.id,
+                    name: workspace.name.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    fn show(&mut self, viewer: usize, workspace: u32) {
+        let before = self.current();
+        let known = self.workspaces.iter().any(|known| known.id == workspace);
+        let Some(entry) = self.viewers.get_mut(&viewer) else {
+            return;
+        };
+        if known {
+            entry.workspace = workspace;
+        }
+        let shown = entry.workspace;
+        self.send(viewer, ServerMessage::Showing { id: shown });
+        if self.current() != before {
+            self.workspace_shown();
+        }
+        self.request_redraw();
+    }
+
+    fn workspace_shown(&mut self) {
+        self.drag = None;
+        let layout = self.layout_mut();
+        layout.dragging = None;
+        layout.bar = false;
+        layout.hover = None;
+        self.relayout_all();
+        let focused = self.layout().focused;
+        self.focus(focused);
     }
 
     fn apply_active_size(&mut self) {
@@ -889,18 +971,10 @@ impl State {
                     }
                 }
                 self.send(id, ServerMessage::Welcome { version: 1 });
-                self.send(
-                    id,
-                    ServerMessage::Workspaces {
-                        workspaces: vec![Workspace {
-                            id: 0,
-                            name: "decade".to_string(),
-                        }],
-                    },
-                );
-                self.send(id, ServerMessage::Showing { id: 0 });
-                self.active = Some(id);
-                self.apply_active_size();
+                self.send(id, self.workspace_list());
+                let shown = self.workspaces[0].id;
+                self.send(id, ServerMessage::Showing { id: shown });
+                self.make_active(id);
                 self.send_cursor(id);
                 for selection in [CLIPBOARD, PRIMARY] {
                     if self.offered[selection as usize].mimes.is_some() {
@@ -1096,7 +1170,7 @@ impl State {
                     let _ = request_primary_client_selection(&self.seat, mime, fd);
                 }
             }
-            ViewerMessage::Show { .. } => self.send(id, ServerMessage::Showing { id: 0 }),
+            ViewerMessage::Show { id: workspace } => self.show(id, workspace),
             ViewerMessage::Error { message, .. } => {
                 eprintln!("decade: a viewer reported an error: {message}");
                 self.viewer_gone(id);
@@ -1273,7 +1347,13 @@ impl State {
         };
         let mut dmabuf = viewer.pool[index].dmabuf.clone();
         let buffer = viewer.pool[index].id;
-        let fence = match self.render(&mut dmabuf) {
+        let workspace = viewer.workspace;
+        let workspace = self
+            .workspaces
+            .iter()
+            .position(|known| known.id == workspace)
+            .unwrap_or(0);
+        let fence = match self.render(&mut dmabuf, workspace) {
             Ok(fence) => fence,
             Err(error) => {
                 if !self.render_failing {
@@ -1407,14 +1487,17 @@ impl State {
             self.font = Font::load(self.settings.font_size * scale as f32);
             self.menu_font = Font::load(self.settings.palette_size * scale as f32);
             self.texts.clear();
-            for pane in &self.layout.panes {
+            for pane in self
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.layout.panes)
+            {
                 if let Some(toplevel) = &pane.toplevel {
                     self.send_scale(toplevel.wl_surface());
                 }
             }
         }
-        self.layout
-            .resize(width / self.font.cell_width, height / self.font.cell_height);
+        self.resize_layouts();
         self.output.change_current_state(
             Some(Mode {
                 size: (width as i32, height as i32).into(),
@@ -1424,7 +1507,15 @@ impl State {
             rescaled.then_some(Scale::Fractional(scale)),
             None,
         );
-        self.relayout();
+        self.relayout_all();
+    }
+
+    fn resize_layouts(&mut self) {
+        let columns = self.size.w as u32 / self.font.cell_width;
+        let rows = self.size.h as u32 / self.font.cell_height;
+        for workspace in &mut self.workspaces {
+            workspace.layout.resize(columns, rows);
+        }
     }
 
     fn forget_stale(&mut self) {
@@ -1446,15 +1537,27 @@ impl State {
     }
 
     fn relayout(&mut self) {
-        let ids: Vec<usize> = self.layout.panes.iter().map(|pane| pane.id).collect();
+        self.relayout_workspace(self.current());
+    }
+
+    fn relayout_all(&mut self) {
+        for workspace in 0..self.workspaces.len() {
+            self.relayout_workspace(workspace);
+        }
+    }
+
+    fn relayout_workspace(&mut self, workspace: usize) {
+        let layout = &self.workspaces[workspace].layout;
+        let ids: Vec<usize> = layout.panes.iter().map(|pane| pane.id).collect();
         for id in ids {
-            self.configure(id);
+            self.configure(workspace, id);
         }
         self.request_redraw();
     }
 
-    fn configure(&mut self, id: usize) {
-        let Some(pane) = self.layout.pane(id) else {
+    fn configure(&mut self, workspace: usize, id: usize) {
+        let layout = &self.workspaces[workspace].layout;
+        let Some(pane) = layout.pane(id) else {
             return;
         };
         let Some(toplevel) = &pane.toplevel else {
@@ -1464,7 +1567,7 @@ impl State {
         if size.w <= 0 || size.h <= 0 {
             return;
         }
-        let focused = self.layout.focused == id;
+        let focused = workspace == self.current() && layout.focused == id;
         toplevel.with_pending_state(|state| {
             state.size = Some(size);
             if focused {
@@ -1481,20 +1584,21 @@ impl State {
     }
 
     fn focus(&mut self, id: usize) {
-        if self.layout.pane(id).is_none() {
+        if self.layout().pane(id).is_none() {
             return;
         }
-        let previous = self.layout.focused;
-        self.layout.focused = id;
+        let previous = self.layout().focused;
+        self.layout_mut().focused = id;
         let surface = self
-            .layout
+            .layout()
             .pane(id)
             .and_then(|pane| pane.toplevel.as_ref())
             .map(|toplevel| toplevel.wl_surface().clone());
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
-        self.configure(previous);
-        self.configure(id);
+        let current = self.current();
+        self.configure(current, previous);
+        self.configure(current, id);
         self.chrome_changed();
     }
 
@@ -1503,47 +1607,50 @@ impl State {
     }
 
     fn focus_named(&mut self, name: &str) {
-        if let Some(id) = self.layout.by_name(name) {
+        if let Some(id) = self.layout().by_name(name) {
             self.focus(id);
         }
     }
 
     fn new_terminal_pane(&mut self) {
-        let name = self.layout.unique_name("terminal");
-        let id = self.layout.add_transient(name.clone());
+        let name = self.layout().unique_name("terminal");
+        let id = self.layout_mut().add_transient(name.clone());
         self.router.add_pane(name.clone());
-        self.spawn_terminal(&name, &[]);
+        self.spawn_terminal(self.current(), &name);
         self.relayout();
         self.focus(id);
     }
 
-    fn remove_pane(&mut self, id: usize) {
-        let Some(pane) = self.layout.pane(id) else {
+    fn remove_pane(&mut self, workspace: usize, id: usize) {
+        let layout = &mut self.workspaces[workspace].layout;
+        let Some(pane) = layout.pane(id) else {
             return;
         };
         let name = pane.name.clone();
-        self.layout.remove(id);
+        layout.remove(id);
         self.router.remove_pane(&name);
-        self.relayout();
-        let focused = self.layout.focused;
-        self.focus(focused);
+        self.relayout_workspace(workspace);
+        if workspace == self.current() {
+            let focused = self.layout().focused;
+            self.focus(focused);
+        }
     }
 
     fn close_pane(&mut self, id: usize) {
-        let Some(pane) = self.layout.pane(id) else {
+        let Some(pane) = self.layout().pane(id) else {
             return;
         };
         match (&pane.toplevel, &pane.kind) {
             (Some(toplevel), _) => toplevel.send_close(),
-            (None, PaneKind::Transient) => self.remove_pane(id),
+            (None, PaneKind::Transient) => self.remove_pane(self.current(), id),
             (None, PaneKind::Anchor { .. }) => {}
         }
     }
 
     fn show_bar(&mut self, show: bool) {
-        if self.layout.bar != show {
-            self.layout.bar = show;
-            self.layout.hover = None;
+        if self.layout().bar != show {
+            self.layout_mut().bar = show;
+            self.layout_mut().hover = None;
             self.request_redraw();
         }
     }
@@ -1577,34 +1684,34 @@ impl State {
         match self.drag.take() {
             Some(Drag::Boundary(boundary)) => {
                 let (column, row) = self.pointer_cell();
-                self.layout.drag_boundary(&boundary, column, row);
+                self.layout_mut().drag_boundary(&boundary, column, row);
                 self.drag = Some(Drag::Boundary(boundary));
                 self.relayout();
                 return;
             }
             Some(Drag::Pane { id, grab, start }) => {
                 let (column, row) = self.pointer_cell();
-                self.layout.drag_cell = Some((column, row));
+                self.layout_mut().drag_cell = Some((column, row));
                 self.drag = Some(Drag::Pane { id, grab, start });
                 self.request_redraw();
                 return;
             }
             None => {}
         }
-        if self.layout.bar {
+        if self.layout().bar {
             let (column, row) = self.pointer_cell();
             let hover = self
-                .layout
+                .layout()
                 .bar_hit(column, row)
                 .filter(|&(_, button)| button != BarButton::Name);
-            if hover != self.layout.hover {
-                self.layout.hover = hover;
+            if hover != self.layout().hover {
+                self.layout_mut().hover = hover;
                 self.chrome_changed();
             }
         }
         let pointer = self.seat.get_pointer().unwrap();
         let focus = self.pane_under_pointer().and_then(|id| {
-            let pane = self.layout.pane(id)?;
+            let pane = self.layout().pane(id)?;
             let (origin, _) = self.client_geometry(pane);
             pane.toplevel
                 .as_ref()
@@ -1738,8 +1845,8 @@ impl State {
 
     fn send_chord(&mut self, chord: Chord) {
         let terminal = self
-            .layout
-            .pane(self.layout.focused)
+            .layout()
+            .pane(self.layout().focused)
             .and_then(|pane| pane.toplevel.as_ref())
             .and_then(|toplevel| app_id(toplevel.wl_surface()))
             .is_some_and(|app_id| app_id.starts_with("decade."));
@@ -1808,25 +1915,26 @@ impl State {
         match key {
             Key::Clipboard(chord) => self.send_chord(chord),
             Key::Zoom => {
-                let focused = self.layout.focused;
-                self.layout.toggle_zoom(focused);
+                let focused = self.layout().focused;
+                self.layout_mut().toggle_zoom(focused);
                 self.relayout();
             }
             Key::Focus(direction) => {
-                if let Some(id) = self.layout.neighbour(direction) {
+                if let Some(id) = self.layout().neighbour(direction) {
                     self.focus(id);
                 }
             }
             Key::Move(direction) => {
-                let focused = self.layout.focused;
-                if let Some(id) = self.layout.neighbour(direction) {
-                    self.layout.apply_drop(focused, Drop::Swap(id));
+                let focused = self.layout().focused;
+                if let Some(id) = self.layout().neighbour(direction) {
+                    self.layout_mut().apply_drop(focused, Drop::Swap(id));
                     self.relayout();
                 }
             }
             Key::Resize(direction) => {
-                let focused = self.layout.focused;
-                self.layout.resize_toward(focused, direction, RESIZE_STEP);
+                let focused = self.layout().focused;
+                self.layout_mut()
+                    .resize_toward(focused, direction, RESIZE_STEP);
                 self.relayout();
             }
             Key::NewPane => self.new_terminal_pane(),
@@ -1874,25 +1982,21 @@ impl State {
             self.font = Font::load(self.settings.font_size * self.scale as f32);
             self.menu_font = Font::load(self.settings.palette_size * self.scale as f32);
             self.texts.clear();
-            let size = self.size;
-            self.layout.resize(
-                size.w as u32 / self.font.cell_width,
-                size.h as u32 / self.font.cell_height,
-            );
-            self.relayout();
+            self.resize_layouts();
+            self.relayout_all();
         }
     }
 
     fn press_on_chrome(&mut self) -> bool {
         let (column, row) = self.pointer_cell();
-        let bar = self.layout.bar_hit(column, row);
+        let bar = self.layout().bar_hit(column, row);
         match bar {
             Some((id, BarButton::Close)) => {
                 self.close_pane(id);
                 return true;
             }
             Some((id, BarButton::Zoom)) => {
-                self.layout.toggle_zoom(id);
+                self.layout_mut().toggle_zoom(id);
                 self.relayout();
                 return true;
             }
@@ -1902,7 +2006,7 @@ impl State {
             }
             _ => {}
         }
-        if let Some(boundary) = self.layout.boundary_at(column, row) {
+        if let Some(boundary) = self.layout().boundary_at(column, row) {
             self.drag = Some(Drag::Boundary(boundary));
             return true;
         }
@@ -1914,14 +2018,14 @@ impl State {
             self.start_pane_drag(id);
             return true;
         }
-        if id != self.layout.focused {
+        if id != self.layout().focused {
             self.focus(id);
         }
         false
     }
 
     fn toggle_pin(&mut self, id: usize) {
-        let Some(pane) = self.layout.pane(id) else {
+        let Some(pane) = self.layout().pane(id) else {
             return;
         };
         let client = pane
@@ -1930,14 +2034,14 @@ impl State {
             .map(|toplevel| toplevel.wl_surface().clone());
         match &pane.kind {
             PaneKind::Anchor { .. } => {
-                self.layout.unpin(id);
+                self.layout_mut().unpin(id);
                 if client.is_none() {
-                    self.remove_pane(id);
+                    self.remove_pane(self.current(), id);
                 }
             }
             PaneKind::Transient => {
                 if let Some(app_id) = client.as_ref().and_then(app_id) {
-                    self.layout.pin(id, app_id);
+                    self.layout_mut().pin(id, app_id);
                 }
             }
         }
@@ -1945,7 +2049,7 @@ impl State {
     }
 
     fn start_pane_drag(&mut self, id: usize) {
-        self.layout.hover = None;
+        self.layout_mut().hover = None;
         self.focus(id);
         let pointer = self.pointer.to_physical(self.scale).to_i32_round();
         let grab = pointer - self.pane_origin(id);
@@ -1954,7 +2058,7 @@ impl State {
             grab,
             start: Instant::now(),
         });
-        self.layout.dragging = Some(id);
+        self.layout_mut().dragging = Some(id);
         self.request_redraw();
     }
 
@@ -1962,14 +2066,14 @@ impl State {
         let Drag::Pane { id, .. } = drag else {
             return;
         };
-        self.layout.dragging = None;
+        self.layout_mut().dragging = None;
         let drop = self
-            .layout
+            .layout_mut()
             .drag_cell
             .take()
-            .and_then(|(column, row)| self.layout.drop_at(id, column, row));
+            .and_then(|(column, row)| self.layout().drop_at(id, column, row));
         if let Some(drop) = drop {
-            self.layout.apply_drop(id, drop);
+            self.layout_mut().apply_drop(id, drop);
             self.relayout();
         } else {
             self.request_redraw();
@@ -1977,7 +2081,7 @@ impl State {
     }
 
     fn pane_origin(&self, id: usize) -> Point<i32, Physical> {
-        let Some(pane) = self.layout.pane(id) else {
+        let Some(pane) = self.layout().pane(id) else {
             return Point::default();
         };
         let rect = pane.rect;
@@ -1998,11 +2102,11 @@ impl State {
 
     fn pane_under_pointer(&self) -> Option<usize> {
         let (column, row) = self.pointer_cell();
-        self.layout.pane_at(column, row)
+        self.layout().pane_at(column, row)
     }
 
     fn client_geometry(&self, pane: &Pane) -> (Point<i32, Logical>, Size<i32, Logical>) {
-        let rect = self.layout.client_rect(pane);
+        let rect = self.layout().client_rect(pane);
         let origin: Point<i32, Physical> = (
             (rect.column * self.font.cell_width) as i32,
             (rect.row * self.font.cell_height) as i32,
@@ -2027,12 +2131,13 @@ impl State {
         });
     }
 
-    fn render(&mut self, target: &mut Dmabuf) -> Result<Option<OwnedFd>, String> {
+    fn render(&mut self, target: &mut Dmabuf, workspace: usize) -> Result<Option<OwnedFd>, String> {
+        let current = self.current();
         let State {
             gpu,
             size,
             wants_redraw,
-            layout,
+            workspaces,
             font,
             menu_font,
             texts,
@@ -2046,6 +2151,12 @@ impl State {
             rounded,
             ..
         } = self;
+        let layout = &workspaces[workspace].layout;
+        let (menu, panel, drag) = if workspace == current {
+            (menu.as_ref(), panel.as_ref(), drag.as_ref())
+        } else {
+            (None, None, None)
+        };
         let scale = *scale;
         let size = *size;
         let damage = Rectangle::from_size(size);
@@ -2498,33 +2609,39 @@ impl CompositorHandler for State {
         {
             let app_id = app_id(surface);
             let toplevel = self.unplaced.remove(i);
-            let id = match self.layout.place(app_id.as_deref()) {
-                Some(id) => id,
+            let placed = self
+                .workspaces
+                .iter()
+                .enumerate()
+                .find_map(|(index, workspace)| {
+                    let prefix = workspace.app_id_prefix();
+                    let id = workspace.layout.place(app_id.as_deref(), &prefix)?;
+                    Some((index, id))
+                });
+            let (workspace, id) = match placed {
+                Some(placed) => placed,
                 None => {
-                    let name = self
-                        .layout
-                        .unique_name(app_id.as_deref().unwrap_or("window"));
-                    let id = self.layout.add_transient(name.clone());
+                    let workspace = self.current();
+                    let layout = &mut self.workspaces[workspace].layout;
+                    let name = layout.unique_name(app_id.as_deref().unwrap_or("window"));
+                    let id = layout.add_transient(name.clone());
                     self.router.add_pane(name);
-                    self.relayout();
-                    id
+                    self.relayout_workspace(workspace);
+                    (workspace, id)
                 }
             };
-            if let Some(pane) = self.layout.pane_mut(id) {
+            if let Some(pane) = self.workspaces[workspace].layout.pane_mut(id) {
                 pane.toplevel = Some(toplevel);
             }
-            self.focus(id);
+            if workspace == self.current() {
+                self.focus(id);
+            }
         }
-        let pane = self.layout.panes.iter().find(|pane| {
-            pane.toplevel
-                .as_ref()
-                .is_some_and(|toplevel| toplevel.wl_surface() == surface)
-        });
-        if let Some(pane) = pane
+        if let Some((workspace, id)) = self.pane_of_surface(surface)
+            && let Some(pane) = self.workspaces[workspace].layout.pane(id)
             && !pane.toplevel.as_ref().unwrap().is_initial_configure_sent()
         {
-            let id = pane.id;
-            self.configure(id);
+            self.configure(workspace, id);
         }
     }
 }
@@ -2540,20 +2657,17 @@ impl XdgShellHandler for State {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.unplaced.retain(|toplevel| toplevel != &surface);
-        let Some(id) = self.layout.pane_of(&surface) else {
+        let Some((workspace, id)) = self.pane_of_surface(surface.wl_surface()) else {
             return;
         };
-        let transient = matches!(
-            self.layout.pane(id).map(|pane| &pane.kind),
-            Some(PaneKind::Transient)
-        );
-        if let Some(pane) = self.layout.pane_mut(id) {
-            pane.toplevel = None;
-        }
-        if transient {
-            self.remove_pane(id);
-        } else {
-            let focused = self.layout.focused;
+        let Some(pane) = self.workspaces[workspace].layout.pane_mut(id) else {
+            return;
+        };
+        pane.toplevel = None;
+        if matches!(pane.kind, PaneKind::Transient) {
+            self.remove_pane(workspace, id);
+        } else if workspace == self.current() {
+            let focused = self.layout().focused;
             self.focus(focused);
         }
     }

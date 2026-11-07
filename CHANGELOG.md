@@ -12,16 +12,20 @@ command line and what the tool writes.
 
 ### Added
 
+- A server holds workspaces. Each has a name, a working directory and its
+  own panes. A new server starts one workspace in the home directory, named
+  after that directory, with one terminal. Programs decade starts run in
+  their workspace's directory, with its name in `DECADE_WORKSPACE`.
 - Panes are a split tree. A new window with no anchor of its own, or
   Super+Shift+Return, splits the focused pane along its longer side; a pane
-  made that way closes when its client exits. The three original panes are
-  anchors: they stay as empty slots, saying what they wait for, when their
-  client goes, and take it back when it returns.
+  made that way closes when its client exits.
 - Holding Ctrl alone for 50 ms shows a bar over the top row of each pane
   with its name and buttons to pin, zoom and close it. Dragging the outline
   between two panes resizes them.
-- Pinning a pane makes it an anchor for its program's app id. Unpinning an
-  anchor makes it a pane that closes with its program.
+- Pinning a pane makes it an anchor for its program's app id. An anchor
+  stays as an empty slot, saying what it waits for, when its client goes,
+  and takes it back when it returns. Unpinning an anchor makes it a pane
+  that closes with its program.
 - Ctrl+dragging a pane, or dragging it by the name on its bar, carries a
   small copy of it under the pointer. Dropping it on a target drawn over
   another pane swaps the two or splits that pane on one side. Dropping it
@@ -44,9 +48,6 @@ command line and what the tool writes.
   anything else. `docs/protocol.md` has the details.
 - `--class <app id>` sets the window's app id, for window rules. The default
   is `decade`.
-- `--chat "<command>"` and `--code "<command>"` run a command in a terminal
-  inside the chat pane or the code pane, in addition to the shell in the
-  terminal pane.
 - Super with h, j, k or l moves focus between panes by direction,
   Super+Shift swaps the focused pane with its neighbour, Super with an arrow
   key moves the nearest divider, and Super+M zooms the focused pane. A click
