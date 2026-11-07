@@ -51,6 +51,8 @@ pub enum Hit {
     New,
     Palette,
     Sidebar,
+    Tab(usize),
+    NewTab,
 }
 
 enum Line {
@@ -66,6 +68,8 @@ pub struct Frame {
 
     /// The workspaces, most urgent agent state first, otherwise in the picker's order.
     pub entries: Vec<Entry>,
+    pub tabs: usize,
+    pub active_tab: usize,
     pub pane: String,
     pub zoom: bool,
 }
@@ -96,6 +100,7 @@ impl Frame {
         rows: u32,
         open: bool,
         mut entries: Vec<Entry>,
+        (tabs, active_tab): (usize, usize),
         pane: String,
         zoom: bool,
     ) -> Frame {
@@ -105,6 +110,8 @@ impl Frame {
             rows,
             open,
             entries,
+            tabs,
+            active_tab,
             pane,
             zoom,
         }
@@ -116,6 +123,35 @@ impl Frame {
             .iter()
             .find(|entry| !entry.current && entry.state >= Some(AgentState::Done))
             .map(|entry| entry.id)
+    }
+
+    /// The current workspace's name, cut to fit the top bar.
+    fn name(&self) -> String {
+        let current = self
+            .entries
+            .iter()
+            .find(|entry| entry.current)
+            .map(|entry| entry.name.as_str())
+            .unwrap_or("");
+        fit(current, self.room() / 2)
+    }
+
+    fn room(&self) -> usize {
+        (self.columns as usize / 2).max(8)
+    }
+
+    /// The top bar's tab buttons and the `+` after them, each with its
+    /// first column and label.
+    fn tab_buttons(&self) -> Vec<(u32, String, Hit)> {
+        let mut column = CLOSED_WIDTH + self.name().chars().count() as u32 + 1;
+        let mut buttons = Vec::new();
+        let tabs = (0..self.tabs).map(|tab| (format!(" {} ", tab + 1), Hit::Tab(tab)));
+        for (label, hit) in tabs.chain([(" + ".to_string(), Hit::NewTab)]) {
+            let width = label.chars().count() as u32;
+            buttons.push((column, label, hit));
+            column += width;
+        }
+        buttons
     }
 
     fn lines(&self) -> Vec<(u32, Line)> {
@@ -144,7 +180,12 @@ impl Frame {
             } else if column + 3 >= self.columns {
                 Some(Hit::Palette)
             } else {
-                None
+                self.tab_buttons()
+                    .into_iter()
+                    .find(|(start, label, _)| {
+                        (*start..start + label.chars().count() as u32).contains(&column)
+                    })
+                    .map(|(_, _, hit)| hit)
             };
         }
         if column >= sidebar_width(self.open) {
@@ -183,17 +224,26 @@ impl Frame {
         };
         scene.fill(bar, BAR);
         scene.text(1, 0, &DIAMOND.to_string(), palette::ACCENT);
-        let current = self
-            .entries
-            .iter()
-            .find(|entry| entry.current)
-            .map(|entry| entry.name.as_str())
-            .unwrap_or("");
-        let room = (self.columns as usize / 2).max(8);
-        let name = fit(current, room / 2);
-        scene.text(CLOSED_WIDTH, 0, &name, TEXT);
-        let mut column = CLOSED_WIDTH + name.chars().count() as u32 + 2;
-        let pane = fit(&self.pane, room / 2);
+        scene.text(CLOSED_WIDTH, 0, &self.name(), TEXT);
+        let mut column = CLOSED_WIDTH;
+        for (start, label, hit) in self.tab_buttons() {
+            let width = label.chars().count() as u32;
+            let color = if hit == Hit::Tab(self.active_tab) {
+                let button = CellRect {
+                    column: start,
+                    row: 0,
+                    columns: width,
+                    rows: TOP,
+                };
+                scene.fill(button, CURRENT);
+                TEXT
+            } else {
+                DIM
+            };
+            scene.text(start, 0, &label, color);
+            column = start + width + 1;
+        }
+        let pane = fit(&self.pane, self.room() / 2);
         scene.text(column, 0, &pane, DIM);
         column += pane.chars().count() as u32 + 2;
         if self.zoom {
@@ -287,7 +337,15 @@ mod tests {
             entry(4, "sufr", Some(AgentState::Done)),
         ];
         entries[2].message = Some("which branch?".to_string());
-        Frame::new(120, 40, open, entries, "terminal".to_string(), false)
+        Frame::new(
+            120,
+            40,
+            open,
+            entries,
+            (2, 1),
+            "terminal".to_string(),
+            false,
+        )
     }
 
     #[test]
@@ -324,6 +382,34 @@ mod tests {
         assert_eq!(frame.hit(1, 0), Some(Hit::Sidebar));
         assert_eq!(frame.hit(118, 0), Some(Hit::Palette));
         assert_eq!(frame.hit(60, 0), None);
+    }
+
+    #[test]
+    fn the_top_bar_has_a_button_per_tab_after_the_name_and_a_plus_after_them() {
+        let frame = frame(true);
+
+        // "jack" takes columns 3 to 6, so " 1 " starts at 8
+        assert_eq!(frame.hit(7, 0), None);
+        assert_eq!(frame.hit(8, 0), Some(Hit::Tab(0)));
+        assert_eq!(frame.hit(10, 0), Some(Hit::Tab(0)));
+        assert_eq!(frame.hit(11, 0), Some(Hit::Tab(1)));
+        assert_eq!(frame.hit(14, 0), Some(Hit::NewTab));
+        assert_eq!(frame.hit(17, 0), None);
+    }
+
+    #[test]
+    fn a_long_workspace_name_is_cut_so_the_tabs_stay_on_the_bar() {
+        let mut frame = frame(true);
+        frame
+            .entries
+            .iter_mut()
+            .find(|entry| entry.current)
+            .unwrap()
+            .name = "x".repeat(200);
+        let buttons = frame.tab_buttons();
+        let (start, _, hit) = buttons.last().unwrap();
+        assert_eq!(*hit, Hit::NewTab);
+        assert!(*start < 60);
     }
 
     #[test]

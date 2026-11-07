@@ -40,6 +40,7 @@ pub enum Action {
     Settings,
     NewWorkspace(PathBuf),
     CloseWorkspace(u32),
+    CloseTab { workspace: u32, tab: usize },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -92,7 +93,7 @@ impl Row {
 }
 
 impl Menu {
-    pub fn new(apps: Vec<App>, home: PathBuf, workspace: u32, name: &str) -> Menu {
+    pub fn new(apps: Vec<App>, home: PathBuf, workspace: u32, name: &str, tab: usize) -> Menu {
         let launch = apps
             .into_iter()
             .map(|app| Row::new(APP_ICON, &app.name, Target::Run(Action::Launch(app.argv))))
@@ -103,9 +104,16 @@ impl Menu {
             &confirm,
             Target::Run(Action::CloseWorkspace(workspace)),
         )];
+        let confirm = format!("Close tab {}", tab + 1);
+        let close_tab = vec![Row::new(
+            CLOSE_ICON,
+            &confirm,
+            Target::Run(Action::CloseTab { workspace, tab }),
+        )];
         let rows = vec![
             Row::new('\u{f003b}', "Launch", Target::Submenu(launch)),
             Row::new(FOLDER_ICON, "New workspace", Target::Directory),
+            Row::new(CLOSE_ICON, "Close tab", Target::Submenu(close_tab)),
             Row::new(CLOSE_ICON, "Close workspace", Target::Submenu(close)),
             Row::new('\u{f0493}', "Settings", Target::Run(Action::Settings)),
         ];
@@ -365,7 +373,7 @@ mod tests {
 
     #[test]
     fn typing_filters_the_rows_by_label() {
-        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade");
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade", 0);
         menu.key(MenuKey::Char('l'));
         menu.key(MenuKey::Char('a'));
         assert_eq!(labels(&menu), ["Launch"]);
@@ -377,13 +385,13 @@ mod tests {
 
     #[test]
     fn the_selection_stays_inside_the_list() {
-        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade");
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade", 0);
         menu.key(MenuKey::Up);
         assert_eq!(menu.selected, 0);
         for _ in 0..5 {
             menu.key(MenuKey::Down);
         }
-        assert_eq!(menu.selected, 3);
+        assert_eq!(menu.selected, 4);
     }
 
     #[test]
@@ -392,7 +400,7 @@ mod tests {
             name: "Files".to_string(),
             argv: vec!["nautilus".to_string()],
         };
-        let mut menu = Menu::new(vec![app], PathBuf::from("/"), 0, "decade");
+        let mut menu = Menu::new(vec![app], PathBuf::from("/"), 0, "decade", 0);
         menu.key(MenuKey::Enter);
         for ch in "fil".chars() {
             menu.key(MenuKey::Char(ch));
@@ -403,8 +411,8 @@ mod tests {
 
     #[test]
     fn closing_a_workspace_takes_a_second_enter_on_a_row_naming_it() {
-        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 4, "decade");
-        for ch in "close".chars() {
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 4, "decade", 0);
+        for ch in "close w".chars() {
             menu.key(MenuKey::Char(ch));
         }
         assert_eq!(menu.key(MenuKey::Enter), Outcome::Open);
@@ -414,8 +422,23 @@ mod tests {
     }
 
     #[test]
+    fn closing_a_tab_takes_a_second_enter_on_a_row_naming_it() {
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 4, "decade", 1);
+        for ch in "close t".chars() {
+            menu.key(MenuKey::Char(ch));
+        }
+        assert_eq!(menu.key(MenuKey::Enter), Outcome::Open);
+        assert_eq!(labels(&menu), ["Close tab 2"]);
+        let close = Action::CloseTab {
+            workspace: 4,
+            tab: 1,
+        };
+        assert_eq!(menu.key(MenuKey::Enter), Outcome::Run(close));
+    }
+
+    #[test]
     fn enter_opens_a_submenu_and_escape_goes_up_then_closes() {
-        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade");
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade", 0);
         menu.key(MenuKey::Enter);
         assert_eq!(menu.path, [0]);
         assert_eq!(menu.key(MenuKey::Escape), Outcome::Open);
@@ -434,7 +457,7 @@ mod tests {
     }
 
     fn browsing(home: &Path, typed: &str) -> Menu {
-        let mut menu = Menu::new(Vec::new(), home.to_path_buf(), 0, "decade");
+        let mut menu = Menu::new(Vec::new(), home.to_path_buf(), 0, "decade", 0);
         for ch in "new".chars() {
             menu.key(MenuKey::Char(ch));
         }
@@ -494,7 +517,13 @@ mod tests {
         assert_eq!(menu.query, "");
         assert_eq!(
             labels(&menu),
-            ["Launch", "New workspace", "Close workspace", "Settings"]
+            [
+                "Launch",
+                "New workspace",
+                "Close tab",
+                "Close workspace",
+                "Settings"
+            ]
         );
         std::fs::remove_dir_all(home).unwrap();
     }

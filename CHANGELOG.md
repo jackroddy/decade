@@ -56,6 +56,21 @@ command line and what the tool writes.
   pane in the workspace. The workspace goes once its last client has, and
   viewers showing it move to the first one left. Closing the last workspace
   starts a new one in the home directory.
+- A workspace holds tabs, each its own split tree of panes. Super+T opens a
+  tab with one terminal in the workspace's directory and shows it. Super+[
+  and Super+] show the previous and next tab. They wrap at the ends. The
+  top bar shows a numbered button for each tab after the workspace name,
+  with the shown tab highlighted, and a `+` button that opens a tab. A
+  click on a number shows that tab. Programs in hidden tabs keep running at
+  the size of the pane area. decade sends them no frame callbacks until
+  their tab is shown. A pane name stays unique across a workspace's tabs.
+  Focusing a pane over the socket or MCP shows its tab.
+- Close tab in the palette asks for a second Enter, then closes every pane
+  in the shown tab. The tab goes once its last client has. Closing the last
+  tab closes the workspace.
+- `workspaces.toml` is now version 2. It holds each workspace's tabs, the
+  tab each workspace shows, and whether the sidebar is open. decade still
+  reads a version 1 file, as one tab per workspace with the sidebar open.
 - Panes are a split tree. A new window with no anchor of its own, or
   Super+Shift+Return, splits the focused pane along its longer side; a pane
   made that way closes when its client exits.

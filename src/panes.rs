@@ -366,16 +366,6 @@ impl Layout {
             .map(|pane| pane.id)
     }
 
-    pub fn unique_name(&self, base: &str) -> String {
-        if self.by_name(base).is_none() {
-            return base.to_string();
-        }
-        (2..)
-            .map(|n| format!("{base}{n}"))
-            .find(|name| self.by_name(name).is_none())
-            .unwrap()
-    }
-
     pub fn add_transient(&mut self, name: String) -> usize {
         let id = self.next_id;
         self.next_id += 1;
@@ -1203,8 +1193,7 @@ pub(crate) mod tests {
     #[test]
     fn a_transient_pane_is_placed_by_the_app_id_of_the_terminal_started_for_it() {
         let mut layout = three_anchors();
-        let name = layout.unique_name("terminal");
-        let id = layout.add_transient(name);
+        let id = layout.add_transient("terminal2".to_string());
         assert_eq!(
             layout.place(Some("decade.w0.terminal2"), "decade.w0."),
             Some(id)
@@ -1331,13 +1320,6 @@ pub(crate) mod tests {
         let terminal = layout.pane(1).unwrap().rect.rows;
         layout.resize_toward(2, Direction::Up, 2);
         assert_eq!(layout.pane(1).unwrap().rect.rows, terminal - 2);
-    }
-
-    #[test]
-    fn names_are_made_unique_by_counting() {
-        let layout = three_anchors();
-        assert_eq!(layout.unique_name("terminal"), "terminal2");
-        assert_eq!(layout.unique_name("nautilus"), "nautilus");
     }
 
     fn texts(scene: &Scene) -> Vec<String> {

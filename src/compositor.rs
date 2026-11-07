@@ -157,6 +157,9 @@ enum Key {
     Move(Direction),
     Resize(Direction),
     NewPane,
+    NewTab,
+    PreviousTab,
+    NextTab,
     Palette,
     Picker,
     Restart,
@@ -405,7 +408,7 @@ pub fn run() {
         size.w as u32 / font.cell_width,
         size.h as u32 / font.cell_height,
     );
-    let (workspaces, save_path) = restore(frame::pane_area(columns, rows, true));
+    let (workspaces, sidebar_open, save_path) = restore(columns, rows);
 
     let handle = event_loop.handle();
     let socket = ListeningSocketSource::new_auto().unwrap();
@@ -518,7 +521,7 @@ pub fn run() {
         unplaced: Vec::new(),
         menu: None,
         picker: None,
-        sidebar_open: true,
+        sidebar_open,
         picker_tick: None,
         panel: None,
         settings,
@@ -535,9 +538,7 @@ pub fn run() {
     for workspace in 0..state.workspaces.len() {
         state.listen(workspace);
         let terminals: Vec<(String, PathBuf)> = state.workspaces[workspace]
-            .layout
-            .panes
-            .iter()
+            .panes()
             .filter_map(|pane| Some((pane.name.clone(), pane.cwd.clone()?)))
             .collect();
         for (pane, cwd) in terminals {
@@ -573,38 +574,49 @@ pub fn run() {
     let _ = std::fs::remove_file(&viewer_path);
 }
 
-fn restore(area: CellRect) -> (Vec<Workspace>, Option<PathBuf>) {
-    let home = || vec![Workspace::new(0, workspace::home(), area)];
-    let Some(path) = save::path() else {
-        return (home(), None);
+/// The saved workspaces and whether the sidebar is open, for a window of
+/// `columns` by `rows` cells.
+fn restore(columns: u32, rows: u32) -> (Vec<Workspace>, bool, Option<PathBuf>) {
+    let home = |open: bool| {
+        let area = frame::pane_area(columns, rows, open);
+        vec![Workspace::new(0, workspace::home(), area)]
     };
-    let restored = save::load(&path).and_then(|saved| {
-        saved
-            .unwrap_or_default()
+    let Some(path) = save::path() else {
+        return (home(true), true, None);
+    };
+    let restored = save::load(&path).and_then(|file| {
+        let Some(file) = file else {
+            return Ok((Vec::new(), true));
+        };
+        let area = frame::pane_area(columns, rows, file.sidebar_open);
+        let workspaces = file
+            .workspaces
             .iter()
             .enumerate()
             .map(|(id, saved)| {
                 let id = id as u32;
                 let prefix = format!("decade.w{id}.");
-                let layout = saved.layout(area, &prefix)?;
-                Ok(Workspace::with_layout(
+                let layouts = saved.layouts(area, &prefix)?;
+                Ok(Workspace::with_tabs(
                     id,
                     saved.name.clone(),
                     saved.cwd.clone(),
-                    layout,
+                    layouts,
+                    saved.active_tab,
                 ))
             })
-            .collect::<Result<Vec<_>, String>>()
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok((workspaces, file.sidebar_open))
     });
     match restored {
-        Ok(workspaces) if workspaces.is_empty() => (home(), Some(path)),
-        Ok(workspaces) => (workspaces, Some(path)),
+        Ok((workspaces, open)) if workspaces.is_empty() => (home(open), open, Some(path)),
+        Ok((workspaces, open)) => (workspaces, open, Some(path)),
         Err(error) => {
             eprintln!(
                 "decade: {} could not be read, so decade starts fresh and will not save over it: {error}",
                 path.display()
             );
-            (home(), None)
+            (home(true), true, None)
         }
     }
 }
@@ -666,9 +678,9 @@ impl State {
             .arg(format!("--class={prefix}{pane}"));
         match ghostty.spawn() {
             Ok(child) => {
-                let layout = &mut self.workspaces[workspace].layout;
-                if let Some(id) = layout.by_name(pane)
-                    && let Some(pane) = layout.pane_mut(id)
+                let shown = &mut self.workspaces[workspace];
+                if let Some((tab, id)) = shown.by_name(pane)
+                    && let Some(pane) = shown.tabs[tab].layout.pane_mut(id)
                 {
                     pane.pid = Some(child.id());
                 }
@@ -865,25 +877,28 @@ impl State {
     }
 
     fn layout(&self) -> &Layout {
-        &self.workspaces[self.current()].layout
+        self.workspaces[self.current()].layout()
     }
 
     fn layout_mut(&mut self) -> &mut Layout {
         let current = self.current();
-        &mut self.workspaces[current].layout
+        self.workspaces[current].layout_mut()
     }
 
-    fn pane_of_surface(&self, surface: &WlSurface) -> Option<(usize, usize)> {
+    /// The workspace, tab and id of the pane showing `surface`.
+    fn pane_of_surface(&self, surface: &WlSurface) -> Option<(usize, usize, usize)> {
         self.workspaces
             .iter()
             .enumerate()
             .find_map(|(index, workspace)| {
-                let pane = workspace.layout.panes.iter().find(|pane| {
-                    pane.toplevel
-                        .as_ref()
-                        .is_some_and(|toplevel| toplevel.wl_surface() == surface)
-                })?;
-                Some((index, pane.id))
+                workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
+                    let pane = entry.layout.panes.iter().find(|pane| {
+                        pane.toplevel
+                            .as_ref()
+                            .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+                    })?;
+                    Some((index, tab, pane.id))
+                })
             })
     }
 
@@ -953,7 +968,7 @@ impl State {
         };
         let workspace = &mut self.workspaces[index];
         workspace.closing = true;
-        for pane in &workspace.layout.panes {
+        for pane in workspace.panes() {
             if let Some(toplevel) = &pane.toplevel {
                 toplevel.send_close();
             }
@@ -963,11 +978,7 @@ impl State {
 
     fn finish_closing(&mut self, index: usize) {
         let workspace = &self.workspaces[index];
-        let clients = workspace
-            .layout
-            .panes
-            .iter()
-            .any(|pane| pane.toplevel.is_some());
+        let clients = workspace.panes().any(|pane| pane.toplevel.is_some());
         if !workspace.closing || clients {
             return;
         }
@@ -1042,7 +1053,7 @@ impl State {
             if shown {
                 continue;
             }
-            for pane in &workspace.layout.panes {
+            for pane in &workspace.layout().panes {
                 if let Some(toplevel) = &pane.toplevel {
                     send_frames_surface_tree(toplevel.wl_surface(), time);
                 }
@@ -1063,11 +1074,10 @@ impl State {
             }
             picker::Outcome::New => {
                 self.close_picker();
-                let shown = &self.workspaces[self.current()];
-                let (id, name) = (shown.id, shown.name.clone());
-                let mut menu = Menu::new(apps::installed(), workspace::home(), id, &name);
-                menu.start_new_workspace();
-                self.menu = Some(menu);
+                self.open_palette();
+                if let Some(menu) = &mut self.menu {
+                    menu.start_new_workspace();
+                }
             }
             picker::Outcome::CloseWorkspace(id) => self.close_workspace(id),
             picker::Outcome::Move { from, to } => {
@@ -1364,7 +1374,7 @@ impl State {
                         id: workspace.id,
                         name: workspace.name.clone(),
                         cwd: workspace.cwd.display().to_string(),
-                        panes: workspace.layout.panes.len() as u32,
+                        panes: workspace.panes().count() as u32,
                     })
                     .collect();
                 self.send(id, ServerMessage::Listing { workspaces });
@@ -1832,7 +1842,7 @@ impl State {
             for pane in self
                 .workspaces
                 .iter()
-                .flat_map(|workspace| &workspace.layout.panes)
+                .flat_map(|workspace| workspace.panes())
             {
                 if let Some(toplevel) = &pane.toplevel {
                     self.send_scale(toplevel.wl_surface());
@@ -1866,8 +1876,12 @@ impl State {
 
     fn resize_layouts(&mut self) {
         let area = self.pane_area();
-        for workspace in &mut self.workspaces {
-            workspace.layout.resize(area);
+        for tab in self
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| &mut workspace.tabs)
+        {
+            tab.layout.resize(area);
         }
     }
 
@@ -1886,6 +1900,7 @@ impl State {
         self.sidebar_open = !self.sidebar_open;
         self.resize_layouts();
         self.relayout_all();
+        self.schedule_save();
     }
 
     fn frame_hit(&mut self, hit: Hit) {
@@ -1908,14 +1923,22 @@ impl State {
             }
             Hit::Palette => self.open_palette(),
             Hit::Sidebar => self.toggle_sidebar(),
+            Hit::Tab(tab) => self.show_tab(tab),
+            Hit::NewTab => self.new_tab(),
         }
         self.request_redraw();
     }
 
     fn open_palette(&mut self) {
         let shown = &self.workspaces[self.current()];
-        let (id, name) = (shown.id, shown.name.clone());
-        self.menu = Some(Menu::new(apps::installed(), workspace::home(), id, &name));
+        let (id, name, tab) = (shown.id, shown.name.clone(), shown.active_tab);
+        self.menu = Some(Menu::new(
+            apps::installed(),
+            workspace::home(),
+            id,
+            &name,
+            tab,
+        ));
         self.request_redraw();
     }
 
@@ -1964,23 +1987,28 @@ impl State {
         let Some(path) = &self.save_path else {
             return;
         };
-        if let Err(error) = save::save(path, &self.workspaces) {
+        if let Err(error) = save::save(path, &self.workspaces, self.sidebar_open) {
             eprintln!("decade: could not save to {}: {error}", path.display());
         }
     }
 
     fn relayout_workspace(&mut self, workspace: usize) {
-        let layout = &self.workspaces[workspace].layout;
-        let ids: Vec<usize> = layout.panes.iter().map(|pane| pane.id).collect();
-        for id in ids {
-            self.configure(workspace, id);
+        let panes: Vec<(usize, usize)> = self.workspaces[workspace]
+            .tabs
+            .iter()
+            .enumerate()
+            .flat_map(|(tab, entry)| entry.layout.panes.iter().map(move |pane| (tab, pane.id)))
+            .collect();
+        for (tab, id) in panes {
+            self.configure(workspace, tab, id);
         }
         self.request_redraw();
         self.schedule_save();
     }
 
-    fn configure(&mut self, workspace: usize, id: usize) {
-        let layout = &self.workspaces[workspace].layout;
+    fn configure(&mut self, workspace: usize, tab: usize, id: usize) {
+        let shown = &self.workspaces[workspace];
+        let layout = &shown.tabs[tab].layout;
         let Some(pane) = layout.pane(id) else {
             return;
         };
@@ -1991,7 +2019,8 @@ impl State {
         if size.w <= 0 || size.h <= 0 {
             return;
         }
-        let focused = workspace == self.current() && layout.focused == id;
+        let focused =
+            workspace == self.current() && tab == shown.active_tab && layout.focused == id;
         toplevel.with_pending_state(|state| {
             state.size = Some(size);
             if focused {
@@ -2021,8 +2050,9 @@ impl State {
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
         let current = self.current();
-        self.configure(current, previous);
-        self.configure(current, id);
+        let tab = self.workspaces[current].active_tab;
+        self.configure(current, tab, previous);
+        self.configure(current, tab, id);
         self.chrome_changed();
         self.schedule_save();
     }
@@ -2032,32 +2062,116 @@ impl State {
     }
 
     fn focus_named(&mut self, workspace: usize, name: &str) {
-        let Some(id) = self.workspaces[workspace].layout.by_name(name) else {
+        let Some((tab, id)) = self.workspaces[workspace].by_name(name) else {
             return;
         };
         if workspace == self.current() {
+            self.show_tab(tab);
             self.focus(id);
         } else {
-            self.workspaces[workspace].layout.focused = id;
+            let shown = &mut self.workspaces[workspace];
+            shown.active_tab = tab;
+            shown.tabs[tab].layout.focused = id;
+            self.schedule_save();
         }
     }
 
     fn new_terminal_pane(&mut self) {
-        let name = self.layout().unique_name("terminal");
         let current = self.current();
-        let cwd = self.workspaces[current].cwd.clone();
-        let id = self.workspaces[current].layout.add_transient(name.clone());
-        if let Some(pane) = self.workspaces[current].layout.pane_mut(id) {
+        let shown = &mut self.workspaces[current];
+        let name = shown.unique_pane_name("terminal");
+        let cwd = shown.cwd.clone();
+        let layout = shown.layout_mut();
+        let id = layout.add_transient(name.clone());
+        if let Some(pane) = layout.pane_mut(id) {
             pane.cwd = Some(cwd.clone());
         }
-        self.workspaces[current].router.add_pane(name.clone());
+        shown.router.add_pane(name.clone());
         self.spawn_terminal(current, &name, &cwd);
         self.relayout();
         self.focus(id);
     }
 
+    fn new_tab(&mut self) {
+        let current = self.current();
+        let area = self.pane_area();
+        let (tab, name) = self.workspaces[current].add_tab(area);
+        let cwd = self.workspaces[current].cwd.clone();
+        self.spawn_terminal(current, &name, &cwd);
+        self.show_tab(tab);
+    }
+
+    /// Make tab `tab` of the current workspace the one drawn.
+    fn show_tab(&mut self, tab: usize) {
+        let current = self.current();
+        let shown = &mut self.workspaces[current];
+        if tab >= shown.tabs.len() || tab == shown.active_tab {
+            return;
+        }
+        let hidden = shown.layout_mut();
+        hidden.dragging = None;
+        hidden.bar = false;
+        hidden.hover = None;
+        shown.active_tab = tab;
+        self.workspace_shown();
+    }
+
+    fn close_tab(&mut self, workspace: u32, tab: usize) {
+        let Some(index) = self.workspace_index(workspace) else {
+            return;
+        };
+        let shown = &mut self.workspaces[index];
+        if tab >= shown.tabs.len() {
+            return;
+        }
+        let others_closing = shown
+            .tabs
+            .iter()
+            .enumerate()
+            .all(|(other, entry)| other == tab || entry.closing);
+        if others_closing {
+            self.close_workspace(workspace);
+            return;
+        }
+        let closed = &mut shown.tabs[tab];
+        closed.closing = true;
+        for pane in &closed.layout.panes {
+            if let Some(toplevel) = &pane.toplevel {
+                toplevel.send_close();
+            }
+        }
+        self.finish_closing_tab(index, tab);
+    }
+
+    fn finish_closing_tab(&mut self, workspace: usize, tab: usize) {
+        let shown = &mut self.workspaces[workspace];
+        let closed = &shown.tabs[tab];
+        let clients = closed
+            .layout
+            .panes
+            .iter()
+            .any(|pane| pane.toplevel.is_some());
+        if !closed.closing || clients {
+            return;
+        }
+        let removed = shown.tabs.remove(tab);
+        for pane in &removed.layout.panes {
+            shown.router.remove_pane(&pane.name);
+            shown.agents.remove(&pane.name);
+        }
+        let was_active = shown.active_tab == tab;
+        if shown.active_tab > tab || shown.active_tab == shown.tabs.len() {
+            shown.active_tab -= 1;
+        }
+        if was_active && workspace == self.current() {
+            self.workspace_shown();
+        } else {
+            self.relayout_workspace(workspace);
+        }
+    }
+
     fn restart_pane(&mut self, workspace: usize, id: usize) {
-        let Some(pane) = self.workspaces[workspace].layout.pane(id) else {
+        let Some(pane) = self.workspaces[workspace].layout().pane(id) else {
             return;
         };
         if !pane.restartable() {
@@ -2076,21 +2190,26 @@ impl State {
         self.spawn_terminal(workspace, &name, &cwd);
     }
 
-    fn remove_pane(&mut self, workspace: usize, id: usize) {
-        let layout = &mut self.workspaces[workspace].layout;
+    fn remove_pane(&mut self, workspace: usize, tab: usize, id: usize) {
+        let shown = &mut self.workspaces[workspace];
+        let layout = &mut shown.tabs[tab].layout;
         let Some(pane) = layout.pane(id) else {
             return;
         };
         let name = pane.name.clone();
         layout.remove(id);
-        self.workspaces[workspace].router.remove_pane(&name);
-        self.workspaces[workspace].agents.remove(&name);
-        if self.workspaces[workspace].closing {
+        shown.router.remove_pane(&name);
+        shown.agents.remove(&name);
+        if shown.closing {
             self.finish_closing(workspace);
             return;
         }
+        if shown.tabs[tab].closing {
+            self.finish_closing_tab(workspace, tab);
+            return;
+        }
         self.relayout_workspace(workspace);
-        if workspace == self.current() {
+        if workspace == self.current() && tab == self.workspaces[workspace].active_tab {
             let focused = self.layout().focused;
             self.focus(focused);
         }
@@ -2102,7 +2221,11 @@ impl State {
         };
         match (&pane.toplevel, &pane.kind) {
             (Some(toplevel), _) => toplevel.send_close(),
-            (None, PaneKind::Transient) => self.remove_pane(self.current(), id),
+            (None, PaneKind::Transient) => {
+                let current = self.current();
+                let tab = self.workspaces[current].active_tab;
+                self.remove_pane(current, tab, id);
+            }
             (None, PaneKind::Anchor { .. }) => {}
         }
     }
@@ -2437,6 +2560,13 @@ impl State {
                 self.relayout();
             }
             Key::NewPane => self.new_terminal_pane(),
+            Key::NewTab => self.new_tab(),
+            Key::PreviousTab | Key::NextTab => {
+                let shown = &self.workspaces[self.current()];
+                let count = shown.tabs.len();
+                let step = if key == Key::NextTab { 1 } else { count - 1 };
+                self.show_tab((shown.active_tab + step) % count);
+            }
             Key::Palette => self.open_palette(),
             Key::Sidebar => self.toggle_sidebar(),
             Key::NextNeeding => {
@@ -2479,6 +2609,10 @@ impl State {
                         Some(Outcome::Run(Action::CloseWorkspace(id))) => {
                             self.menu = None;
                             self.close_workspace(id);
+                        }
+                        Some(Outcome::Run(Action::CloseTab { workspace, tab })) => {
+                            self.menu = None;
+                            self.close_tab(workspace, tab);
                         }
                         Some(Outcome::Run(Action::Settings)) => {
                             self.menu = None;
@@ -2566,7 +2700,9 @@ impl State {
             PaneKind::Anchor { .. } => {
                 self.layout_mut().unpin(id);
                 if client.is_none() {
-                    self.remove_pane(self.current(), id);
+                    let current = self.current();
+                    let tab = self.workspaces[current].active_tab;
+                    self.remove_pane(current, tab, id);
                 }
             }
             PaneKind::Transient => {
@@ -2684,7 +2820,7 @@ impl State {
             sidebar_open,
             ..
         } = self;
-        let layout = &workspaces[workspace].layout;
+        let layout = workspaces[workspace].layout();
         let (menu, panel, drag, picker) = if workspace == current {
             (
                 menu.as_ref(),
@@ -2903,12 +3039,21 @@ fn build_frame(
             }
         })
         .collect();
-    let layout = &workspaces[shown].layout;
+    let shown = &workspaces[shown];
+    let layout = shown.layout();
     let pane = layout
         .pane(layout.focused)
         .map(|pane| pane.name.clone())
         .unwrap_or_default();
-    frame::Frame::new(columns, rows, open, entries, pane, layout.zoom.is_some())
+    frame::Frame::new(
+        columns,
+        rows,
+        open,
+        entries,
+        (shown.tabs.len(), shown.active_tab),
+        pane,
+        layout.zoom.is_some(),
+    )
 }
 
 fn paint_picker(
@@ -2990,7 +3135,7 @@ fn paint_picker(
             icon_color,
         );
 
-        let layout = &workspace.layout;
+        let layout = workspace.layout();
         for pane in layout.visible() {
             let Some(toplevel) = &pane.toplevel else {
                 continue;
@@ -3192,6 +3337,9 @@ fn repeats(key: Key) -> bool {
         Key::Menu(key) => !matches!(key, MenuKey::Enter | MenuKey::Escape),
         Key::Zoom
         | Key::NewPane
+        | Key::NewTab
+        | Key::PreviousTab
+        | Key::NextTab
         | Key::Palette
         | Key::Picker
         | Key::Restart
@@ -3231,6 +3379,9 @@ fn super_key(sym: u32, shift: bool) -> Option<Key> {
         keysyms::KEY_Tab if !shift => Some(Key::Picker),
         keysyms::KEY_b if !shift => Some(Key::Sidebar),
         keysyms::KEY_a if !shift => Some(Key::NextNeeding),
+        keysyms::KEY_t if !shift => Some(Key::NewTab),
+        keysyms::KEY_bracketleft if !shift => Some(Key::PreviousTab),
+        keysyms::KEY_bracketright if !shift => Some(Key::NextTab),
         _ => None,
     }
 }
@@ -3327,22 +3478,25 @@ impl CompositorHandler for State {
                 .enumerate()
                 .find_map(|(index, workspace)| {
                     let prefix = workspace.app_id_prefix();
-                    let id = workspace.layout.place(app_id.as_deref(), &prefix)?;
-                    Some((index, id))
+                    workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
+                        let id = entry.layout.place(app_id.as_deref(), &prefix)?;
+                        Some((index, tab, id))
+                    })
                 });
-            let (workspace, id) = match placed {
+            let (workspace, tab, id) = match placed {
                 Some(placed) => placed,
                 None => {
                     let workspace = self.current();
-                    let layout = &mut self.workspaces[workspace].layout;
-                    let name = layout.unique_name(app_id.as_deref().unwrap_or("window"));
-                    let id = layout.add_transient(name.clone());
-                    self.workspaces[workspace].router.add_pane(name);
+                    let shown = &mut self.workspaces[workspace];
+                    let name = shown.unique_pane_name(app_id.as_deref().unwrap_or("window"));
+                    let id = shown.layout_mut().add_transient(name.clone());
+                    shown.router.add_pane(name);
+                    let tab = shown.active_tab;
                     self.relayout_workspace(workspace);
-                    (workspace, id)
+                    (workspace, tab, id)
                 }
             };
-            if let Some(pane) = self.workspaces[workspace].layout.pane_mut(id) {
+            if let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane_mut(id) {
                 pane.toplevel = Some(toplevel);
                 pane.app_id = app_id;
             }
@@ -3355,11 +3509,11 @@ impl CompositorHandler for State {
             let focused = self.layout().focused;
             self.focus(focused);
         }
-        if let Some((workspace, id)) = self.pane_of_surface(surface)
-            && let Some(pane) = self.workspaces[workspace].layout.pane(id)
+        if let Some((workspace, tab, id)) = self.pane_of_surface(surface)
+            && let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane(id)
             && !pane.toplevel.as_ref().unwrap().is_initial_configure_sent()
         {
-            self.configure(workspace, id);
+            self.configure(workspace, tab, id);
         }
     }
 }
@@ -3375,18 +3529,22 @@ impl XdgShellHandler for State {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.unplaced.retain(|toplevel| toplevel != &surface);
-        let Some((workspace, id)) = self.pane_of_surface(surface.wl_surface()) else {
+        let Some((workspace, tab, id)) = self.pane_of_surface(surface.wl_surface()) else {
             return;
         };
-        let Some(pane) = self.workspaces[workspace].layout.pane_mut(id) else {
+        let current = self.current();
+        let shown = &mut self.workspaces[workspace];
+        let Some(pane) = shown.tabs[tab].layout.pane_mut(id) else {
             return;
         };
         pane.toplevel = None;
         if matches!(pane.kind, PaneKind::Transient) {
-            self.remove_pane(workspace, id);
-        } else if self.workspaces[workspace].closing {
+            self.remove_pane(workspace, tab, id);
+        } else if shown.closing {
             self.finish_closing(workspace);
-        } else if workspace == self.current() {
+        } else if shown.tabs[tab].closing {
+            self.finish_closing_tab(workspace, tab);
+        } else if workspace == current && tab == shown.active_tab {
             let focused = self.layout().focused;
             self.focus(focused);
         }
