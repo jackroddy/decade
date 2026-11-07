@@ -47,6 +47,9 @@ is the command line, the socket protocol and what the tool writes; for
 breaking axis, a change that breaks one of those moves that crate's minor.
 Anything else moves the patch. A protocol change moves both.
 
+**Closing panes.** No keybind closes a pane. A pane closes only through the
+x on its bar or when the program in it exits.
+
 **Text.** decade rasterizes text at its physical pixel size and draws each
 texture at that size, on whole pixels. Text is never scaled. Anything drawn
 scaled, such as the drag ghost, leaves its text out.
