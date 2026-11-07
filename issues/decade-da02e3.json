@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:23:04.063048522Z",
-  "updated_at": "2026-11-07T08:23:04.063048522Z",
+  "updated_at": "2026-11-07T08:29:58.359436521Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "50cf918d",
+      "at": "2026-11-07T08:29:58.359435621Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "Jack's design, 2026-11-07:\n\n- One decade server holds every workspace. A workspace is a project, with its own split tree and default cwd. A viewer shows one workspace at a time and switches between them with a key or the palette.\n- The viewer is built into the same decade binary as the server. Code the viewer does not need is compiled only on Linux, so the binary can be built for macOS (or another OS) as a viewer alone. Jack's only other machine is a MacBook, so remote viewing is only worth having if the viewer runs on macOS.\n- decade uses its own protocol between server and viewer. No outside server protocol or client app (RDP, VNC, WebRTC and the like) is adopted. If decade cannot do it well itself, it is not done.",
+      "commit": "60ddbe2",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "60ddbe2",
