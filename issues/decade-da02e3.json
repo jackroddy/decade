@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:23:04.063048522Z",
-  "updated_at": "2026-11-07T08:29:58.359436521Z",
+  "updated_at": "2026-11-07T21:22:12.530181284Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -25,6 +25,14 @@
       "text": "Jack's design, 2026-11-07:\n\n- One decade server holds every workspace. A workspace is a project, with its own split tree and default cwd. A viewer shows one workspace at a time and switches between them with a key or the palette.\n- The viewer is built into the same decade binary as the server. Code the viewer does not need is compiled only on Linux, so the binary can be built for macOS (or another OS) as a viewer alone. Jack's only other machine is a MacBook, so remote viewing is only worth having if the viewer runs on macOS.\n- decade uses its own protocol between server and viewer. No outside server protocol or client app (RDP, VNC, WebRTC and the like) is adopted. If decade cannot do it well itself, it is not done.",
       "commit": "60ddbe2",
       "branch": "dev"
+    },
+    {
+      "id": "e4425236",
+      "at": "2026-11-07T21:22:12.530180484Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "Where things stand at the end of the 2026-11-07 session.\n\n## Branches\n\n- All sessions work is on the `sessions` branch, which is checked out. It is not merged into `dev` and not pushed. `dev` is at 60ddbe2.\n- Jack's launcher (`scripts/launch`, linked as `decade-dev` and `decade`) builds whatever branch is checked out. On `sessions`, `decade-dev` is the viewer, and it starts `decade server` if none answers.\n- A server and a viewer from the latest build were running on Jack's screen at the end of the session. Stop the server with `kill -TERM` on its pid. Avoid `pkill -f \"decade server\"` from a shell whose own command line contains that text, because the pattern matches the shell itself.\n\n## Done on sessions, in order\n\n| commit | what |\n|---|---|\n| d57b917 | CLAUDE.md: Claude may run decade on headless-dev for its own checks |\n| 0ead4ad | `docs/viewer.md`, the server–viewer protocol |\n| 09458e5 | `src/wire.rs`, the protocol's messages and fd passing |\n| b2b90c7 | the split: `decade server` and the `decade` viewer |\n| ec6041f | SIGTERM handling, keys held at focus |\n| 2cae090 | Linux-only code gated, so the crate checks for macOS |\n| 5c77da3 | fixes from an independent review of the split |\n| 1a65d76 | frames fitted to the window, non-blocking fence wait, one server per user through a lock |\n| a55626a | clipboard and primary selection |\n| d1be0b5 | Super+C, Super+V and Super+X copy, paste and cut |\n\n## Layout of the code\n\n- `src/compositor.rs`: the server. `run` builds the state. `viewer_connected`, `viewer_message` and `render_to` serve viewers. `render` draws one frame into a dmabuf.\n- `src/gpu.rs`: the render node, the GLES renderer and dmabuf allocation.\n- `src/viewer.rs` and `src/viewer/clipboard.rs`: the viewer. It also holds the shortcuts inhibitor and the Hyprland watcher.\n- `src/wire.rs`: the protocol.\n- `src/panes.rs`: `Layout`, the split tree, which is still one per server.\n- `src/menu.rs`, `src/panel.rs`, `src/draw.rs`: the palette, the settings panel and the drawing primitives.\n- Sockets are in `$XDG_RUNTIME_DIR/decade/`: `viewer.sock` and `server.lock`, plus `server.log` when a viewer started the server.\n\n## Next\n\ndecade-4c2624 (workspaces) has a detailed implementation proposal in its notes, then decade-d2f047 (the picker), then decade-59930c (templates). decade-cc25be (anchors) still blocks decade-2cb484 (save and restore).",
+      "commit": "d1be0b5",
+      "branch": "sessions"
     }
   ],
   "stamps": {
