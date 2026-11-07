@@ -3,7 +3,7 @@
   "title": "Does a pane talk to the host over a pty, a socket, or both?",
   "body": "A pane is a program, built in or separate, that the host shows and the agent\nharness can address. Two kinds of traffic cross between a pane and the host:\nwhat the pane draws, and structured messages in both directions, such as\n\"scroll to line 120\", \"the user clicked cell (3, 40)\", or \"I can show files\".\nThis decision is which channel carries which.\n\n## Options\n\n| Option | Drawing | Structured messages | Existing TUI tools |\n|---|---|---|---|\n| pty only | Terminal output over the pty | Escape sequences the host and pane both extend | Work unchanged; decade-aware tools emit the extensions |\n| socket only | Frames over a unix socket in a decade format | Same socket | Need a terminal pane that bridges a pty to the socket |\n| pty plus socket | Terminal output over the pty | A unix socket the host opens per pane, which a plain TUI tool never touches | Work unchanged |\n| In-process plugin | A Rust API | The same API | Need a terminal pane |\n\npty only. One channel, and every terminal program is already a pane. The\ncost is that structured, two-way, out-of-band messages go through escape\nsequences. Terminal protocols grew their ugliest parts this way: replies\nthat interleave with keyboard input, no framing, no types.\n\nsocket only. One clean channel with framing and types. Every pane, the\nterminal included, has to be a decade-native program, and an existing TUI\ntool is reachable only through a bridge. That throws away the migration\npath the cell-grid primitive buys.\n\npty plus socket. The pty carries cells and pixel regions, parsed by\nlibghostty-vt, with ordinary terminal semantics. A second channel, a unix\nsocket whose path the host puts in the pane's environment, carries structured\nmessages in both directions. A program that never opens the socket is a\nplain terminal pane and still works. A decade-aware tool opens it and gains\nthe agent channel. Remote operation multiplexes both over ssh, the way herdr\ndoes.\n\nIn-process plugin. Fastest possible, no serialisation. But the point of the\nproject is to mould existing tools and write new ones as decade integrations,\nand a crash in one takes the host down. Could sit beside the socket later for\nbuilt-in panes, behind the same message types.\n\n## Lean\n\npty plus socket. The pty gets existing tools for free and the socket keeps\nthe structured channel out of the escape-sequence swamp. Performance does not\nseparate the options: a cell diff and a few messages per interaction are\nsmall on any of them.\n\n## Cost\n\n- Two channels to document and two to keep in step when a pane resizes.\n- The socket format is a new thing to design: framing, a version, a\n  capability handshake, message types.\n\n## Open\n\n- Whether the socket's message encoding is JSON lines, for tools in any\n  language, or a binary format. JSON lines until a measurement says\n  otherwise.\n- Whether built-in panes go through the socket too, so the host has one\n  code path, or call the Rust side directly.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-71e626",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T02:23:01.649675119Z",
-  "updated_at": "2026-11-06T02:23:01.649675119Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T01:05:07.969710584Z",
+  "closed_at": "2026-11-07T01:05:07.969710584Z",
+  "close_reason": "Resolved on 2026-11-06. A pane's drawing and input go over Wayland, as for any client. Structured messages go over a unix socket that decade opens per decade-aware app, and a plain app never opens it. No pty is involved; a terminal is ghostty as a client. The message encoding is still open and gets its own issue after the spike.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "none",
       "branch": "main"
     },
-    "closed": null
+    "closed": {
+      "commit": "a822d1e",
+      "branch": "dev"
+    }
   }
 }
