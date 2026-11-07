@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-07T21:53:05.997790027Z",
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.946868295Z",
-  "updated_at": "2026-11-07T21:38:05.997790027Z",
+  "updated_at": "2026-11-07T21:42:01.912063037Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "0f3e0d38",
+      "at": "2026-11-07T21:42:01.912062487Z",
+      "author": "Jack Roddy/6b9cbed5",
+      "text": "`decade start`, `stop`, `restart` and `status` landed in ce0862d. The server writes its pid into `server.lock`, and `control::running` trusts that pid only while the lock is held. Attach and list are still open here.\n\n`running` takes a shared lock for a moment when the lock is free. A server starting at that instant would see the lock held and exit with status 3. This has not been seen.",
+      "commit": "ce0862d",
+      "branch": "sessions"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "60ddbe2",
