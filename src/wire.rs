@@ -30,9 +30,26 @@ pub const MAX_FDS_PER_SEND: usize = 28;
 const FD_SPACE: usize = rustix::cmsg_space!(ScmRights(MAX_FDS_PER_SEND));
 const RECEIVE_CHUNK: usize = 64 * 1024;
 
-// rustix 0.38 has no name for MSG_CTRUNC; this is its
-// value in <bits/socket.h> on every Linux architecture
+// rustix 0.38 has no name for MSG_CTRUNC; these are its
+// values in <bits/socket.h> on every Linux architecture
+// and in <sys/socket.h> on macOS
+#[cfg(target_os = "linux")]
 const MSG_CTRUNC: u32 = 0x8;
+#[cfg(target_os = "macos")]
+const MSG_CTRUNC: u32 = 0x20;
+
+#[cfg(target_os = "linux")]
+const SEND_FLAGS: SendFlags = SendFlags::DONTWAIT.union(SendFlags::NOSIGNAL);
+#[cfg(target_os = "linux")]
+const RECEIVE_FLAGS: RecvFlags = RecvFlags::DONTWAIT.union(RecvFlags::CMSG_CLOEXEC);
+
+// macOS has neither MSG_NOSIGNAL nor MSG_CMSG_CLOEXEC; a
+// viewer there talks to a server on another machine and
+// passes no fds
+#[cfg(target_os = "macos")]
+const SEND_FLAGS: SendFlags = SendFlags::DONTWAIT;
+#[cfg(target_os = "macos")]
+const RECEIVE_FLAGS: RecvFlags = RecvFlags::DONTWAIT;
 
 /// A message from a viewer to the server.
 #[derive(Debug)]
@@ -697,7 +714,7 @@ impl Outbox {
                 stream,
                 &[IoSlice::new(&self.bytes[self.written..end])],
                 &mut control,
-                SendFlags::DONTWAIT | SendFlags::NOSIGNAL,
+                SEND_FLAGS,
             );
             drop(fds);
             match result {
@@ -757,7 +774,7 @@ impl Decoder {
                 stream,
                 &mut [IoSliceMut::new(&mut self.bytes[self.end..])],
                 &mut control,
-                RecvFlags::DONTWAIT | RecvFlags::CMSG_CLOEXEC,
+                RECEIVE_FLAGS,
             ) {
                 Err(Errno::INTR) => {}
                 result => break result,
