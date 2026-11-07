@@ -16,7 +16,7 @@
   "lease_expires": "2026-11-07T22:29:00.15981106Z",
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.929300384Z",
-  "updated_at": "2026-11-07T22:14:00.15981106Z",
+  "updated_at": "2026-11-07T22:14:00.170431367Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -27,6 +27,14 @@
       "author": "Jack Roddy/6b9cbed5",
       "text": "decade-cc25be is decided. A saved pane holds a name, a command or a plain shell, and a cwd. GUI apps are not relaunched, which is decade-15e5eb. Whether a GUI pane comes back as an empty slot is open here.",
       "commit": "31d801e",
+      "branch": "sessions"
+    },
+    {
+      "id": "a46439d4",
+      "at": "2026-11-07T22:14:00.170430607Z",
+      "author": "Jack Roddy/6b9cbed5",
+      "text": "Jack approved the proposal Claude made for this issue:\n\n- The file is `~/.local/state/decade/workspaces.toml`, with `version = 1`. A version key satisfies the version-byte rule in CLAUDE.md.\n- It holds each workspace in picker order (name, cwd, focused pane, zoom, split tree with ratios) and each pane (name, pinned, cwd for a terminal, app id for a GUI app).\n- A terminal pane's cwd is the live cwd of the shell under its ghostty, read from `/proc/<shell pid>/cwd`. The shell is a child of the ghostty process.\n- decade saves 1 s after a change, every 60 s, and on SIGTERM before it kills its children.\n- At start, decade rebuilds each workspace and starts a plain shell in ghostty in each terminal pane's cwd. Running programs such as coax or nvim are not resumed.\n- A GUI pane comes back as an empty slot, which a window with its app id fills again. Relaunching is decade-15e5eb.\n- A file decade cannot read is logged and left alone, and decade starts fresh without saving over it.\n- There is no flag to start without restoring.\n- The pin change (decade-7c65be) stays separate. The file records only whether a pane is pinned.",
+      "commit": "5118c09",
       "branch": "sessions"
     }
   ],
