@@ -3,26 +3,29 @@
   "title": "Dragging a pane's bar onto another pane swaps them",
   "body": "Later. With the Ctrl bar up, a press on a bar and a drag moves an outline of the pane; dropping it on another pane swaps the two leaves in the tree. Dropping on an edge to split there is a refinement after that.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": "decade-1b6bb6",
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/575e4e76",
-  "lease_expires": "2026-11-07T06:15:53.055200216Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:07:44.979143876Z",
-  "updated_at": "2026-11-07T06:00:53.055200216Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T06:01:21.193675073Z",
+  "closed_at": "2026-11-07T06:01:21.193675073Z",
+  "close_reason": "3ee6949 swaps two panes when one is dropped on the other. The dragged pane follows the pointer as a small faded copy of itself, not the moving outline this body describes, because Jack asked for that. Dropping on an edge to split is decade-e00603.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "9494070",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "3ee6949",
+      "branch": "dev"
+    }
   }
 }
