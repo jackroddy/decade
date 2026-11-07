@@ -1,3 +1,5 @@
+mod clipboard;
+
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -29,7 +31,7 @@ use smithay_client_toolkit::{
 };
 use wayland_client::globals::{GlobalList, registry_queue_init};
 use wayland_client::protocol::{
-    wl_buffer::WlBuffer, wl_keyboard, wl_keyboard::WlKeyboard, wl_output, wl_pointer,
+    wl_buffer::WlBuffer, wl_data_device_manager::WlDataDeviceManager, wl_keyboard, wl_keyboard::WlKeyboard, wl_output, wl_pointer,
     wl_pointer::WlPointer, wl_region::WlRegion, wl_seat, wl_seat::WlSeat, wl_shm, wl_shm::WlShm,
     wl_shm_pool::WlShmPool, wl_subsurface::WlSubsurface, wl_surface::WlSurface,
 };
@@ -50,6 +52,7 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1::{self, ZwpLinuxBufferParamsV1},
     zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
 };
+use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_device_manager_v1::ZwpPrimarySelectionDeviceManagerV1;
 use wayland_protocols::wp::single_pixel_buffer::v1::client::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
 use wayland_protocols::wp::viewporter::client::{
     wp_viewport::WpViewport, wp_viewporter::WpViewporter,
@@ -60,6 +63,7 @@ use crate::hypr::{self, Hyprland};
 use crate::inhibit::Shortcuts;
 use crate::palette::BACKGROUND;
 use crate::wire::{Decoder, Format, Outbox, Plane, ServerMessage, ViewerMessage};
+use clipboard::Clipboard;
 
 const PROTOCOL_VERSION: u32 = 1;
 const LOCAL: u32 = 0;
@@ -381,6 +385,7 @@ struct Viewer {
 
     keyboard: Option<WlKeyboard>,
     keys: Keys,
+    clipboard: Clipboard,
 
     shortcuts: Option<Shortcuts>,
     hyprland: Option<Hyprland>,
@@ -452,6 +457,7 @@ impl Viewer {
         let seat: WlSeat = globals
             .bind(&qh, 1..=9, ())
             .unwrap_or_else(|_| missing("wl_seat"));
+        let clipboard = Clipboard::bind(globals, &qh, &seat);
         let dmabuf_state = DmabufState::new(globals, &qh);
         let fractional_scale: Option<WpFractionalScaleManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
@@ -524,6 +530,7 @@ impl Viewer {
             scroll_source: 0,
             keyboard: None,
             keys: Keys::default(),
+            clipboard,
             shortcuts,
             hyprland: Hyprland::find(),
             exit: None,
@@ -622,6 +629,7 @@ impl Viewer {
                 self.welcomed = true;
                 self.sync_size();
                 self.send_keys();
+                self.send_selections();
             }
             ServerMessage::Buffer {
                 id,
@@ -643,10 +651,20 @@ impl Viewer {
                 self.set_cursor(Some(Shape::Default))
             }
             ServerMessage::CursorHidden => self.set_cursor(None),
+            ServerMessage::Offer {
+                selection,
+                serial,
+                mimes,
+                ..
+            } => self.server_offer(selection, serial, mimes),
+            ServerMessage::Cleared { selection, serial } => self.server_cleared(selection, serial),
+            ServerMessage::Request {
+                selection,
+                serial,
+                mime,
+                fd,
+            } => self.server_request(selection, serial, mime, fd),
             ServerMessage::Output { .. }
-            | ServerMessage::Offer { .. }
-            | ServerMessage::Cleared { .. }
-            | ServerMessage::Request { .. }
             | ServerMessage::Workspaces { .. }
             | ServerMessage::Showing { .. } => {}
         }
@@ -888,12 +906,13 @@ impl Viewer {
                 self.input(ViewerMessage::Pointer { time, x, y });
             }
             wl_pointer::Event::Button {
+                serial,
                 time,
                 button,
                 state,
-                ..
             } => {
                 self.pointer_time = time;
+                self.input_serial(serial);
                 let pressed = state == WEnum::Value(wl_pointer::ButtonState::Pressed);
                 self.input(ViewerMessage::Button {
                     time,
@@ -970,7 +989,8 @@ impl Viewer {
 
     fn keyboard_event(&mut self, event: wl_keyboard::Event) {
         match event {
-            wl_keyboard::Event::Enter { keys, .. } => {
+            wl_keyboard::Event::Enter { serial, keys, .. } => {
+                self.keyboard_entered(serial);
                 self.keys.focused = true;
                 self.keys.sent = false;
                 self.keys.held = keys
@@ -995,8 +1015,12 @@ impl Viewer {
                 self.send_keys();
             }
             wl_keyboard::Event::Key {
-                time, key, state, ..
+                serial,
+                time,
+                key,
+                state,
             } => {
+                self.input_serial(serial);
                 self.send_keys();
                 let pressed = state == WEnum::Value(wl_keyboard::KeyState::Pressed);
                 if pressed {
@@ -1321,6 +1345,8 @@ no_events!(
     WpCursorShapeDeviceV1,
     ZwpKeyboardShortcutsInhibitManagerV1,
     ZwpKeyboardShortcutsInhibitorV1,
+    WlDataDeviceManager,
+    ZwpPrimarySelectionDeviceManagerV1,
 );
 
 delegate_compositor!(Viewer);

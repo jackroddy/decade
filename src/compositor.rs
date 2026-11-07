@@ -46,7 +46,7 @@ use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_seat};
-use smithay::reexports::wayland_server::{Client, Display, DisplayHandle};
+use smithay::reexports::wayland_server::{Client, Display, DisplayHandle, Resource};
 use smithay::utils::{
     Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Serial, Size, Transform,
 };
@@ -62,10 +62,17 @@ use smithay::wayland::fractional_scale::{
     FractionalScaleHandler, FractionalScaleManagerState, with_fractional_scale,
 };
 use smithay::wayland::output::OutputHandler;
-use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{
     ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
+    clear_data_device_selection, current_data_device_selection_userdata,
+    request_data_device_client_selection, set_data_device_focus, set_data_device_selection,
 };
+use smithay::wayland::selection::primary_selection::{
+    PrimarySelectionHandler, PrimarySelectionState, clear_primary_selection,
+    current_primary_selection_userdata, request_primary_client_selection, set_primary_focus,
+    set_primary_selection,
+};
+use smithay::wayland::selection::{SelectionHandler, SelectionSource, SelectionTarget};
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
     XdgToplevelSurfaceData,
@@ -75,8 +82,8 @@ use smithay::wayland::socket::ListeningSocketSource;
 use smithay::wayland::viewporter::ViewporterState;
 use smithay::{
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_fractional_scale,
-    delegate_output, delegate_seat, delegate_shm, delegate_viewporter, delegate_xdg_shell,
-    render_elements,
+    delegate_output, delegate_primary_selection, delegate_seat, delegate_shm, delegate_viewporter,
+    delegate_xdg_shell, render_elements,
 };
 
 use crate::apps;
@@ -108,6 +115,8 @@ const MAX_SCALE: u32 = 120 * 8;
 const FORMATS_WAIT: Duration = Duration::from_secs(1);
 const OUTBOX_RETRY: Duration = Duration::from_millis(5);
 const CLOSE_TIMEOUT_MS: i32 = 1000;
+const CLIPBOARD: u32 = 0;
+const PRIMARY: u32 = 1;
 
 enum Drag {
     Boundary(Boundary),
@@ -154,6 +163,10 @@ pub struct State {
     shm_state: ShmState,
     seat_state: SeatState<State>,
     data_device_state: DataDeviceState,
+    primary_selection_state: PrimarySelectionState,
+
+    /// What viewers last heard about each selection, clipboard first.
+    offered: [Offered; 2],
     dmabuf_state: DmabufState,
     _fractional_scale_state: FractionalScaleManagerState,
     _viewporter_state: ViewporterState,
@@ -210,6 +223,25 @@ struct Viewer {
     wants_frame: bool,
     keys: Vec<u32>,
     buttons: Vec<u32>,
+
+    /// Per selection, the serial of this viewer's newest offer or clear.
+    seen: [u32; 2],
+}
+
+#[derive(Default)]
+struct Offered {
+    /// The serial of the server's newest offer or clear.
+    serial: u32,
+
+    /// The MIME types of a client's selection, while the newest offer stands.
+    mimes: Option<Vec<String>>,
+}
+
+/// The viewer offer that a selection the server holds for its clients came from.
+#[derive(Clone)]
+pub struct ViewerOffer {
+    viewer: usize,
+    serial: u32,
 }
 
 struct Slot {
@@ -439,6 +471,8 @@ pub fn run(commands: Commands) {
         shm_state: ShmState::new::<State>(&dh, vec![]),
         seat_state,
         data_device_state: DataDeviceState::new::<State>(&dh),
+        primary_selection_state: PrimarySelectionState::new::<State>(&dh),
+        offered: Default::default(),
         dmabuf_state,
         _fractional_scale_state: FractionalScaleManagerState::new::<State>(&dh),
         _viewporter_state: ViewporterState::new::<State>(&dh),
@@ -645,6 +679,7 @@ impl State {
                 wants_frame: true,
                 keys: Vec::new(),
                 buttons: Vec::new(),
+                seen: [0; 2],
             },
         );
         let mut decoder = Decoder::new();
@@ -712,6 +747,11 @@ impl State {
         }
         for keycode in viewer.keys {
             self.keyboard(keycode, false, now);
+        }
+        for selection in [CLIPBOARD, PRIMARY] {
+            if self.viewer_owns(selection, id) {
+                self.clear_selection(selection);
+            }
         }
         if self.active == Some(id) {
             self.active = self
@@ -847,6 +887,11 @@ impl State {
                 self.active = Some(id);
                 self.apply_active_size();
                 self.send_cursor(id);
+                for selection in [CLIPBOARD, PRIMARY] {
+                    if self.offered[selection as usize].mimes.is_some() {
+                        self.tell_selection(id, selection);
+                    }
+                }
                 self.request_redraw();
             }
             ViewerMessage::Formats { formats, .. } => {
@@ -1004,15 +1049,113 @@ impl State {
                 stop,
                 inverted,
             }),
-            ViewerMessage::Offer { .. }
-            | ViewerMessage::Cleared { .. }
-            | ViewerMessage::Request { .. } => {}
+            ViewerMessage::Offer {
+                selection,
+                serial,
+                seen,
+                mimes,
+            } => self.viewer_offer(id, selection, serial, seen, mimes),
+            ViewerMessage::Cleared { selection, serial } => {
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.seen[selection as usize] = serial;
+                }
+                if self.viewer_owns(selection, id) {
+                    self.clear_selection(selection);
+                }
+            }
+            ViewerMessage::Request {
+                selection,
+                serial,
+                mime,
+                fd,
+            } => {
+                let offered = &self.offered[selection as usize];
+                if offered.serial != serial || offered.mimes.is_none() {
+                    return;
+                }
+                // an Err drops the fd, which closes the pipe
+                // and tells the viewer there is no data
+                if selection == CLIPBOARD {
+                    let _ = request_data_device_client_selection(&self.seat, mime, fd);
+                } else {
+                    let _ = request_primary_client_selection(&self.seat, mime, fd);
+                }
+            }
             ViewerMessage::Show { .. } => self.send(id, ServerMessage::Showing { id: 0 }),
             ViewerMessage::Error { message, .. } => {
                 eprintln!("decade: a viewer reported an error: {message}");
                 self.viewer_gone(id);
             }
         }
+    }
+
+    fn viewer_offer(
+        &mut self,
+        id: usize,
+        selection: u32,
+        serial: u32,
+        seen: u32,
+        mimes: Vec<String>,
+    ) {
+        if let Some(viewer) = self.viewers.get_mut(&id) {
+            viewer.seen[selection as usize] = serial;
+        }
+        let offered = &mut self.offered[selection as usize];
+        if crossed(seen, offered.serial) {
+            return;
+        }
+        offered.mimes = None;
+        let owner = ViewerOffer { viewer: id, serial };
+        let dh = &self.display_handle;
+        match selection {
+            CLIPBOARD => set_data_device_selection(dh, &self.seat, mimes, owner),
+            _ => set_primary_selection(dh, &self.seat, mimes, owner),
+        }
+    }
+
+    fn viewer_owns(&self, selection: u32, id: usize) -> bool {
+        match selection {
+            CLIPBOARD => current_data_device_selection_userdata(&self.seat)
+                .is_some_and(|owner| owner.viewer == id),
+            _ => current_primary_selection_userdata(&self.seat)
+                .is_some_and(|owner| owner.viewer == id),
+        }
+    }
+
+    fn clear_selection(&mut self, selection: u32) {
+        match selection {
+            CLIPBOARD => clear_data_device_selection(&self.display_handle, &self.seat),
+            _ => clear_primary_selection(&self.display_handle, &self.seat),
+        }
+    }
+
+    fn client_selection(&mut self, target: SelectionTarget, mimes: Option<Vec<String>>) {
+        let selection = selection_number(target);
+        let offered = &mut self.offered[selection as usize];
+        offered.serial += 1;
+        offered.mimes = mimes;
+        let ids: Vec<usize> = self.welcomed().collect();
+        for id in ids {
+            self.tell_selection(id, selection);
+        }
+    }
+
+    fn tell_selection(&mut self, id: usize, selection: u32) {
+        let Some(viewer) = self.viewers.get(&id) else {
+            return;
+        };
+        let offered = &self.offered[selection as usize];
+        let serial = offered.serial;
+        let message = match &offered.mimes {
+            Some(mimes) => ServerMessage::Offer {
+                selection,
+                serial,
+                seen: viewer.seen[selection as usize],
+                mimes: mimes.clone(),
+            },
+            None => ServerMessage::Cleared { selection, serial },
+        };
+        self.send(id, message);
     }
 
     fn render_viewers(&mut self) {
@@ -2143,9 +2286,25 @@ fn out_of_range(message: &ViewerMessage) -> Option<&'static str> {
         ViewerMessage::Keys { keycodes, .. } => {
             keycodes.iter().all(|&keycode| keycode <= MAX_KEYCODE)
         }
+        ViewerMessage::Offer { selection, .. }
+        | ViewerMessage::Cleared { selection, .. }
+        | ViewerMessage::Request { selection, .. } => *selection <= PRIMARY,
         _ => true,
     };
-    (!fits).then_some("a size, scale or keycode is out of range")
+    (!fits).then_some("a size, scale, keycode or selection is out of range")
+}
+
+/// Whether a viewer offer crossed a server offer: the viewer
+/// sent it before it had seen the server's newest offer.
+fn crossed(seen: u32, newest: u32) -> bool {
+    seen < newest
+}
+
+fn selection_number(target: SelectionTarget) -> u32 {
+    match target {
+        SelectionTarget::Clipboard => CLIPBOARD,
+        SelectionTarget::Primary => PRIMARY,
+    }
 }
 
 fn repeats(key: Key) -> bool {
@@ -2366,7 +2525,12 @@ impl SeatHandler for State {
         &mut self.seat_state
     }
 
-    fn focus_changed(&mut self, _: &Seat<State>, _: Option<&WlSurface>) {}
+    fn focus_changed(&mut self, seat: &Seat<State>, focused: Option<&WlSurface>) {
+        let dh = &self.display_handle;
+        let client = focused.and_then(|surface| dh.get_client(surface.id()).ok());
+        set_data_device_focus(dh, seat, client.clone());
+        set_primary_focus(dh, seat, client);
+    }
     fn cursor_image(&mut self, _: &Seat<State>, image: CursorImageStatus) {
         self.cursor = image;
         let ids: Vec<usize> = self.welcomed().collect();
@@ -2377,7 +2541,41 @@ impl SeatHandler for State {
 }
 
 impl SelectionHandler for State {
-    type SelectionUserData = ();
+    type SelectionUserData = ViewerOffer;
+
+    fn new_selection(
+        &mut self,
+        target: SelectionTarget,
+        source: Option<SelectionSource>,
+        _: Seat<State>,
+    ) {
+        self.client_selection(target, source.map(|source| source.mime_types()));
+    }
+
+    fn send_selection(
+        &mut self,
+        target: SelectionTarget,
+        mime: String,
+        fd: OwnedFd,
+        _: Seat<State>,
+        owner: &ViewerOffer,
+    ) {
+        self.send(
+            owner.viewer,
+            ServerMessage::Request {
+                selection: selection_number(target),
+                serial: owner.serial,
+                mime,
+                fd,
+            },
+        );
+    }
+}
+
+impl PrimarySelectionHandler for State {
+    fn primary_selection_state(&self) -> &PrimarySelectionState {
+        &self.primary_selection_state
+    }
 }
 
 impl DataDeviceHandler for State {
@@ -2406,6 +2604,7 @@ delegate_shm!(State);
 delegate_dmabuf!(State);
 delegate_seat!(State);
 delegate_data_device!(State);
+delegate_primary_selection!(State);
 delegate_output!(State);
 delegate_fractional_scale!(State);
 delegate_viewporter!(State);
@@ -2439,5 +2638,24 @@ mod tests {
             keycodes: vec![30, u32::MAX],
         };
         assert!(out_of_range(&keys).is_some());
+    }
+
+    #[test]
+    fn a_selection_past_the_primary_selection_is_out_of_range() {
+        let cleared = |selection| ViewerMessage::Cleared {
+            selection,
+            serial: 1,
+        };
+        assert!(out_of_range(&cleared(CLIPBOARD)).is_none());
+        assert!(out_of_range(&cleared(PRIMARY)).is_none());
+        assert!(out_of_range(&cleared(2)).is_some());
+    }
+
+    #[test]
+    fn a_viewer_offer_crosses_only_a_server_offer_it_had_not_seen() {
+        assert!(!crossed(0, 0));
+        assert!(!crossed(3, 3));
+        assert!(crossed(2, 3));
+        assert!(!crossed(4, 3));
     }
 }
