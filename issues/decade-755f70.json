@@ -1,0 +1,28 @@
+{
+  "id": "decade-755f70",
+  "title": "Anchors can be listed, created and changed over MCP",
+  "body": "Later, and the reason anchors exist in this form: Jack wants agents to be\nable to set up and change the layout, on 2026-11-06. Tools on decade's MCP\nserver to list panes with their kind and rule, create an anchor with a name\nand a rule by splitting a pane, change a rule, and remove an anchor. The\nsocket gets the same verbs for pane programs. Not exposed until the layout\nmodel has settled.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:07:44.996516309Z",
+  "updated_at": "2026-11-07T05:07:44.996516309Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "9494070",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
