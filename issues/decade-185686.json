@@ -3,7 +3,7 @@
   "title": "Is a pane a cell grid with pixel regions, or free pixels?",
   "body": "Nothing in the code defines a pane yet. The project rule is that the UI\npretends it has a TUI's limits, and uses pixels only where nothing else would\ndo. That rule is the main input to this decision.\n\nA pane program produces output the host shows. What that output is made of\ndecides the protocol's vocabulary, what the host renderer has to draw, and\nhow an existing terminal program becomes a pane.\n\n## Options\n\n| Option | What a pane sends | What the host draws | Existing TUI tools |\n|---|---|---|---|\n| Cell grid with pixel regions | Cells with attributes, plus a pixel region anchored to a cell rectangle | One glyph atlas pass and one texture pass | Work unchanged |\n| Free pixels | A surface the pane renders into, as a Wayland client does | Composites surfaces | Need a terminal pane wrapped around them |\n| Scene description | Text runs, rectangles, paths, images, in pane coordinates | A small 2D renderer | Need a terminal pane that converts cells to a scene |\n\nCell grid with pixel regions. The cell is the unit of layout, input and\nscrolling. A pixel region is a rectangle of cells that a pane paints with\nimage data, in the way kitty's graphics protocol places an image over cells.\nHighlighting lines of code, drawing a box around a block, and showing three\nfiles side by side are all cell operations. A diagram is a pixel region.\nThe host needs one renderer, and it is the renderer every terminal emulator\nalready has.\n\nFree pixels. Any language and any toolkit can be a pane, and the host is a\ncompositor. The cost is that the host knows nothing about what is in a pane,\nso \"highlight lines 40 to 60\" has to be reinvented by every pane program with\nits own channel and its own meaning. The TUI rule would be a convention\nrather than something the protocol enforces.\n\nScene description. The pane sends shapes and text runs and the host draws\nthem. Richer than cells, poorer than pixels, and it needs a renderer the host\nwould otherwise not have. The TUI rule makes most of that richness\nunavailable, so the extra cost buys little.\n\n## Lean\n\nCell grid with pixel regions. It is the only option where the TUI rule is a\nproperty of the protocol rather than a request to pane authors, and the only\none where a terminal program is already a pane.\n\n## Cost\n\n- The pixel region needs rules for scrolling, resizing and overlap. kitty's\n  answers are a starting point: anchor to a cell, clip to the region, drop on\n  scroll unless the pane says otherwise.\n- The host cannot show anything a cell grid cannot express, by design.\n\n## Open\n\n- Whether a pane can declare a region as \"cells only\" so the host can\n  guarantee it never needs the texture pass for ordinary panes.\n- The cell attribute set: colours, weight, underline styles, and whether\n  a cell can carry an opaque id that the agent channel can refer to.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-71e626",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T02:23:01.641817141Z",
-  "updated_at": "2026-11-06T02:23:01.641817141Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T01:05:07.961372033Z",
+  "closed_at": "2026-11-07T01:05:07.961372033Z",
+  "close_reason": "Resolved on 2026-11-06 by making decade a nested Wayland compositor. An app pane is the client's own buffer, which is the free-pixels option, and only decade's chrome and native panes are a cell grid. No pixel-region protocol of decade's own is needed, since Wayland is the pixel channel. The cell-grid code stays for the chrome. The milestone decade-71e626 carries the full description.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "none",
       "branch": "main"
     },
-    "closed": null
+    "closed": {
+      "commit": "a822d1e",
+      "branch": "dev"
+    }
   }
 }
