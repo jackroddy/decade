@@ -15,7 +15,7 @@
   "lease_expires": "2026-11-07T09:13:06.824738705Z",
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.909931087Z",
-  "updated_at": "2026-11-07T09:10:41.274452499Z",
+  "updated_at": "2026-11-07T09:22:34.70813556Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -34,6 +34,14 @@
       "author": "Jack Roddy/575e4e76",
       "text": "b2b90c7 splits decade on the sessions branch, and ec6041f follows up.\n\n- `decade server` is the headless compositor. `decade` is the viewer: it starts a server when none answers, opens the window, and shows the server's dmabufs.\n- A run on headless-dev showed the chrome upright and sharp, with ghostty live in the terminal pane. A second viewer reattached to the running server after the first was killed.\n- SIGTERM and SIGINT stop the server cleanly. It kills its children and removes its sockets.\n- `keys` on focus now presses held keys without decade's bindings or repeat.\n\nStill open:\n\n- Keyboard, pointer and scroll input have not been checked, because no script can type into the window. Jack has to check them.\n- The viewer stretches frames when sizes differ, without keeping the aspect ratio, and ignores damage.\n- Clipboard, release fences, client cursor images, lock state from `keys`, and the `formats` device.",
       "commit": "2cae090",
+      "branch": "sessions"
+    },
+    {
+      "id": "8b3abde9",
+      "at": "2026-11-07T09:22:34.70813495Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "An independent review of the split found nine defects and several smaller problems. The fixes landed in the commit after 2cae090 on sessions. Four findings are recorded here and not fixed:\n\n- The server ignores the `device` in `formats` and renders on the first GPU with a render node. On a laptop with two GPUs it can allocate on one the host cannot import from.\n- Frames of another size are stretched to the window, not fitted with their aspect ratio as `docs/viewer.md` says.\n- The viewer waits on each frame's fence by blocking its event loop, for up to 500 ms.\n- Two viewers started at the same moment can both start a server, and the second can unlink the first one's socket.",
+      "commit": "5c77da3",
       "branch": "sessions"
     }
   ],
