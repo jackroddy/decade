@@ -3,7 +3,7 @@
   "title": "A saved session is a tree of anchors with their rules",
   "body": "Later. Save the split tree with each anchor's name and rule, and restore it at start so the same programs land in the same places. Where the sessionizer part of decade begins.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": "decade-1b6bb6",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:07:45.004819695Z",
-  "updated_at": "2026-11-07T05:07:45.004819695Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T21:03:27.665933307Z",
+  "closed_at": "2026-11-07T21:03:27.665933307Z",
+  "close_reason": "Absorbed by the persistent sessions milestone decade-da02e3. decade-2cb484 covers saving and restoring, and decade-4c2624 covers workspaces.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "9494070",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "d1be0b5",
+      "branch": "sessions"
+    }
   }
 }
