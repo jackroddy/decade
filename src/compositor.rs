@@ -8,6 +8,7 @@ use std::process::{Child, Command};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use rustix::event::{PollFd, PollFlags};
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::allocator::{Buffer as _, Fourcc, Modifier};
 use smithay::backend::input::{
@@ -97,6 +98,14 @@ const AGENT_CLIENT: usize = usize::MAX;
 const BTN_LEFT: u32 = 0x110;
 const POOL_SIZE: usize = 3;
 const RESIZE_STEP: u32 = 2;
+const KEY_CAPSLOCK: u32 = 58;
+const KEY_NUMLOCK: u32 = 69;
+const MAX_KEYCODE: u32 = 0xffff;
+const MAX_LOGICAL: u32 = 16384;
+const MAX_SCALE: u32 = 120 * 8;
+const FORMATS_WAIT: Duration = Duration::from_secs(1);
+const OUTBOX_RETRY: Duration = Duration::from_millis(5);
+const CLOSE_TIMEOUT_MS: i32 = 1000;
 
 enum Drag {
     Boundary(Boundary),
@@ -154,6 +163,8 @@ pub struct State {
     next_viewer: usize,
     active: Option<usize>,
     wants_redraw: bool,
+    render_failing: bool,
+    stopping: bool,
     cursor: CursorImageStatus,
     display_handle: DisplayHandle,
     loop_handle: LoopHandle<'static, State>,
@@ -181,11 +192,15 @@ pub struct State {
 
 struct Viewer {
     stream: UnixStream,
+    source: Option<RegistrationToken>,
     outbox: Outbox,
     welcomed: bool,
     logical: (u32, u32),
     scale: u32,
     formats: Vec<(Fourcc, Modifier)>,
+
+    /// When a local viewer whose `formats` has not arrived gets its first frame anyway.
+    formats_due: Option<Instant>,
     linear: bool,
     pool: Vec<Slot>,
     next_buffer: u32,
@@ -338,11 +353,10 @@ pub fn run(commands: Commands) {
             },
         )
         .unwrap();
-    let stop = event_loop.get_signal();
     handle
         .insert_source(
             Signals::new(&[Signal::SIGTERM, Signal::SIGINT]).unwrap(),
-            move |_, _, _| stop.stop(),
+            |_, _, state| state.stopping = true,
         )
         .unwrap();
 
@@ -439,6 +453,8 @@ pub fn run(commands: Commands) {
         next_viewer: 0,
         active: None,
         wants_redraw: true,
+        render_failing: false,
+        stopping: false,
         cursor: CursorImageStatus::default_named(),
         display_handle: dh,
         loop_handle: handle.clone(),
@@ -475,13 +491,19 @@ pub fn run(commands: Commands) {
     if let Some(code) = &commands.code {
         state.spawn_terminal("code", code);
     }
-    event_loop
-        .run(None, &mut state, |state| {
-            state.render_viewers();
-            state.flush_viewers();
-            state.display_handle.flush_clients().unwrap();
-        })
-        .unwrap();
+    while !state.stopping {
+        let backlog = state
+            .viewers
+            .values()
+            .any(|viewer| !viewer.outbox.is_empty());
+        event_loop
+            .dispatch(backlog.then_some(OUTBOX_RETRY), &mut state)
+            .unwrap();
+        state.render_viewers();
+        state.flush_viewers();
+        state.display_handle.flush_clients().unwrap();
+    }
+    state.close_viewers();
 
     for child in &mut state.children {
         let _ = child.kill();
@@ -580,11 +602,13 @@ impl State {
             id,
             Viewer {
                 stream,
+                source: None,
                 outbox: Outbox::new(),
                 welcomed: false,
                 logical: (0, 0),
                 scale: 120,
                 formats: Vec::new(),
+                formats_due: None,
                 linear: false,
                 pool: Vec::new(),
                 next_buffer: 0,
@@ -605,7 +629,7 @@ impl State {
                         return Ok(PostAction::Remove);
                     }
                 };
-                loop {
+                while state.viewers.contains_key(&id) {
                     match decoder.next_viewer_message() {
                         Ok(Some(message)) => state.viewer_message(id, message),
                         Ok(None) => break,
@@ -622,8 +646,15 @@ impl State {
                 Ok(PostAction::Continue)
             },
         );
-        if inserted.is_err() {
-            self.viewers.remove(&id);
+        match inserted {
+            Ok(token) => {
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.source = Some(token);
+                }
+            }
+            Err(_) => {
+                self.viewers.remove(&id);
+            }
         }
     }
 
@@ -643,12 +674,43 @@ impl State {
         let Some(viewer) = self.viewers.remove(&id) else {
             return;
         };
+        if let Some(token) = viewer.source {
+            self.loop_handle.remove(token);
+        }
+        let now = self.start.elapsed().as_millis() as u32;
+        for button in viewer.buttons {
+            self.pointer_button(button, false, now);
+        }
         for keycode in viewer.keys {
-            self.keyboard(keycode, false, self.start.elapsed().as_millis() as u32);
+            self.keyboard(keycode, false, now);
         }
         if self.active == Some(id) {
-            self.active = self.viewers.keys().next().copied();
+            self.active = self
+                .viewers
+                .iter()
+                .find(|(_, viewer)| viewer.welcomed)
+                .map(|(&id, _)| id);
             self.apply_active_size();
+        }
+    }
+
+    fn close_viewers(&mut self) {
+        for viewer in self.viewers.values_mut().filter(|viewer| viewer.welcomed) {
+            let _ = viewer.outbox.push_server_message(ServerMessage::Close {
+                reason: 1,
+                message: "the server is shutting down".to_string(),
+            });
+            let deadline = Instant::now() + Duration::from_millis(CLOSE_TIMEOUT_MS as u64);
+            while let Ok(false) = viewer.outbox.send(&viewer.stream) {
+                let left = deadline
+                    .saturating_duration_since(Instant::now())
+                    .as_millis() as i32;
+                if left == 0 {
+                    break;
+                }
+                let mut fds = [PollFd::new(&viewer.stream, PollFlags::OUT)];
+                let _ = rustix::event::poll(&mut fds, left);
+            }
         }
     }
 
@@ -672,6 +734,13 @@ impl State {
         }
     }
 
+    fn welcomed(&self) -> impl Iterator<Item = usize> + '_ {
+        self.viewers
+            .iter()
+            .filter(|(_, viewer)| viewer.welcomed)
+            .map(|(&id, _)| id)
+    }
+
     fn make_active(&mut self, id: usize) {
         if self.active != Some(id) {
             self.active = Some(id);
@@ -690,7 +759,7 @@ impl State {
         }
         let physical = |logical: u32| (logical as f64 * scale as f64 / 120.0).round() as u32;
         self.resized(physical(width), physical(height), scale as f64 / 120.0);
-        let ids: Vec<usize> = self.viewers.keys().copied().collect();
+        let ids: Vec<usize> = self.welcomed().collect();
         for id in ids {
             self.send(
                 id,
@@ -704,14 +773,18 @@ impl State {
     }
 
     fn viewer_message(&mut self, id: usize, message: ViewerMessage) {
+        if let Some(problem) = out_of_range(&message) {
+            self.viewer_failed(id, problem);
+            return;
+        }
         let now = self.start.elapsed().as_millis() as u32;
         match message {
             ViewerMessage::Hello {
                 version,
+                transport,
                 width,
                 height,
                 scale,
-                ..
             } => {
                 if version < 1 {
                     self.viewer_failed(id, "decade speaks protocol version 1");
@@ -722,6 +795,14 @@ impl State {
                     viewer.logical = (width, height);
                     viewer.scale = scale;
                     viewer.ready = true;
+                    if transport == 0 && viewer.formats.is_empty() {
+                        viewer.formats_due = Some(Instant::now() + FORMATS_WAIT);
+                        let _ = self
+                            .loop_handle
+                            .insert_source(Timer::from_duration(FORMATS_WAIT), |_, _, _| {
+                                TimeoutAction::Drop
+                            });
+                    }
                 }
                 self.send(id, ServerMessage::Welcome { version: 1 });
                 self.send(
@@ -741,6 +822,7 @@ impl State {
             }
             ViewerMessage::Formats { formats, .. } => {
                 if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.formats_due = None;
                     viewer.formats = formats
                         .iter()
                         .filter_map(|format| {
@@ -767,6 +849,7 @@ impl State {
                     viewer.linear = true;
                     viewer.pool.retain(|slot| slot.id != buffer);
                     viewer.ready = true;
+                    viewer.wants_frame = true;
                 }
                 self.send(id, ServerMessage::Forget { id: buffer });
             }
@@ -805,8 +888,28 @@ impl State {
                 }
                 self.keyboard(keycode, pressed, time);
             }
-            ViewerMessage::Keys { keycodes, .. } => {
+            ViewerMessage::Keys { locked, keycodes } => {
                 let keyboard = self.seat.get_keyboard().unwrap();
+                let modifiers = keyboard.modifier_state();
+                let locks = [
+                    (modifiers.caps_lock, locked & 1 != 0, KEY_CAPSLOCK),
+                    (modifiers.num_lock, locked & 2 != 0, KEY_NUMLOCK),
+                ];
+                for (on, wanted, keycode) in locks {
+                    if on == wanted {
+                        continue;
+                    }
+                    for state in [KeyState::Pressed, KeyState::Released] {
+                        keyboard.input::<(), _>(
+                            self,
+                            Keycode::new(keycode + 8),
+                            state,
+                            SERIAL_COUNTER.next_serial(),
+                            now,
+                            |_, _, _| FilterResult::Forward,
+                        );
+                    }
+                }
                 for keycode in keycodes {
                     let Some(viewer) = self.viewers.get_mut(&id) else {
                         return;
@@ -890,10 +993,16 @@ impl State {
                 viewer.wants_frame = true;
             }
         }
+        let now = Instant::now();
         let ids: Vec<usize> = self
             .viewers
             .iter()
-            .filter(|(_, viewer)| viewer.welcomed && viewer.ready && viewer.wants_frame)
+            .filter(|(_, viewer)| {
+                viewer.welcomed
+                    && viewer.ready
+                    && viewer.wants_frame
+                    && viewer.formats_due.is_none_or(|due| now >= due)
+            })
             .map(|(&id, _)| id)
             .collect();
         for id in ids {
@@ -921,7 +1030,16 @@ impl State {
                 let allocated = if viewer.linear || viewer.formats.is_empty() {
                     self.gpu.allocate_linear(width, height)
                 } else {
-                    self.gpu.allocate(width, height, &viewer.formats)
+                    match self.gpu.allocate(width, height, &viewer.formats) {
+                        Ok(dmabuf) => Ok(dmabuf),
+                        Err(error) => {
+                            eprintln!(
+                                "decade: allocating a frame buffer failed, so decade falls back to LINEAR: {error}"
+                            );
+                            viewer.linear = true;
+                            self.gpu.allocate_linear(width, height)
+                        }
+                    }
                 };
                 let dmabuf = match allocated {
                     Ok(dmabuf) => dmabuf,
@@ -968,7 +1086,17 @@ impl State {
         };
         let mut dmabuf = viewer.pool[index].dmabuf.clone();
         let buffer = viewer.pool[index].id;
-        let fence = self.render(&mut dmabuf);
+        let fence = match self.render(&mut dmabuf) {
+            Ok(fence) => fence,
+            Err(error) => {
+                if !self.render_failing {
+                    eprintln!("decade: rendering a frame failed: {error}");
+                    self.render_failing = true;
+                }
+                return;
+            }
+        };
+        self.render_failing = false;
         let Some(viewer) = self.viewers.get_mut(&id) else {
             return;
         };
@@ -1085,6 +1213,7 @@ impl State {
 
     fn resized(&mut self, width: u32, height: u32, scale: f64) {
         self.size = (width as i32, height as i32).into();
+        self.forget_stale();
         let rescaled = scale != self.scale;
         if rescaled {
             self.scale = scale;
@@ -1109,6 +1238,24 @@ impl State {
             None,
         );
         self.relayout();
+    }
+
+    fn forget_stale(&mut self) {
+        let size = self.size;
+        for viewer in self.viewers.values_mut() {
+            let stale: Vec<u32> = viewer
+                .pool
+                .iter()
+                .filter(|slot| !slot.lent && slot.size != size)
+                .map(|slot| slot.id)
+                .collect();
+            viewer.pool.retain(|slot| slot.lent || slot.size == size);
+            for buffer in stale {
+                let _ = viewer
+                    .outbox
+                    .push_server_message(ServerMessage::Forget { id: buffer });
+            }
+        }
     }
 
     fn relayout(&mut self) {
@@ -1640,7 +1787,7 @@ impl State {
         });
     }
 
-    fn render(&mut self, target: &mut Dmabuf) -> Option<OwnedFd> {
+    fn render(&mut self, target: &mut Dmabuf) -> Result<Option<OwnedFd>, String> {
         let State {
             gpu,
             size,
@@ -1662,7 +1809,10 @@ impl State {
         let scale = *scale;
         let size = *size;
         let damage = Rectangle::from_size(size);
-        let mut framebuffer = gpu.renderer.bind(target).ok()?;
+        let mut framebuffer = gpu
+            .renderer
+            .bind(target)
+            .map_err(|error| error.to_string())?;
         let mut paint = Paint {
             renderer: &mut gpu.renderer,
             texts,
@@ -1795,16 +1945,16 @@ impl State {
         let mut frame = paint
             .renderer
             .render(&mut framebuffer, size, Transform::Normal)
-            .ok()?;
+            .map_err(|error| error.to_string())?;
         frame
             .clear(
                 Color32F::new(BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 1.0),
                 &[damage],
             )
-            .unwrap();
+            .map_err(|error| error.to_string())?;
         draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &elements, &[damage])
-            .unwrap();
-        let sync = frame.finish().ok()?;
+            .map_err(|error| error.to_string())?;
+        let sync = frame.finish().map_err(|error| error.to_string())?;
         drop(framebuffer);
         texts.end_frame();
         if animating {
@@ -1817,7 +1967,7 @@ impl State {
                 send_frames_surface_tree(toplevel.wl_surface(), time);
             }
         }
-        sync.export()
+        Ok(sync.export())
     }
 }
 
@@ -1940,6 +2090,33 @@ impl Paint<'_> {
             }
         }
     }
+}
+
+fn out_of_range(message: &ViewerMessage) -> Option<&'static str> {
+    let size_fits = |width: u32, height: u32, scale: u32| {
+        (1..=MAX_LOGICAL).contains(&width)
+            && (1..=MAX_LOGICAL).contains(&height)
+            && (1..=MAX_SCALE).contains(&scale)
+    };
+    let fits = match message {
+        ViewerMessage::Hello {
+            width,
+            height,
+            scale,
+            ..
+        }
+        | ViewerMessage::Resize {
+            width,
+            height,
+            scale,
+        } => size_fits(*width, *height, *scale),
+        ViewerMessage::Key { keycode, .. } => *keycode <= MAX_KEYCODE,
+        ViewerMessage::Keys { keycodes, .. } => {
+            keycodes.iter().all(|&keycode| keycode <= MAX_KEYCODE)
+        }
+        _ => true,
+    };
+    (!fits).then_some("a size, scale or keycode is out of range")
 }
 
 fn repeats(key: Key) -> bool {
@@ -2163,7 +2340,7 @@ impl SeatHandler for State {
     fn focus_changed(&mut self, _: &Seat<State>, _: Option<&WlSurface>) {}
     fn cursor_image(&mut self, _: &Seat<State>, image: CursorImageStatus) {
         self.cursor = image;
-        let ids: Vec<usize> = self.viewers.keys().copied().collect();
+        let ids: Vec<usize> = self.welcomed().collect();
         for id in ids {
             self.send_cursor(id);
         }
@@ -2203,3 +2380,35 @@ delegate_data_device!(State);
 delegate_output!(State);
 delegate_fractional_scale!(State);
 delegate_viewporter!(State);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sizes_scales_and_keycodes_past_their_limits_are_out_of_range() {
+        let resize = |width, height, scale| ViewerMessage::Resize {
+            width,
+            height,
+            scale,
+        };
+        assert!(out_of_range(&resize(1280, 800, 120)).is_none());
+        assert!(out_of_range(&resize(MAX_LOGICAL, MAX_LOGICAL, MAX_SCALE)).is_none());
+        assert!(out_of_range(&resize(0, 800, 120)).is_some());
+        assert!(out_of_range(&resize(1280, MAX_LOGICAL + 1, 120)).is_some());
+        assert!(out_of_range(&resize(1280, 800, 0)).is_some());
+        assert!(out_of_range(&resize(1280, 800, MAX_SCALE + 1)).is_some());
+        let key = |keycode| ViewerMessage::Key {
+            time: 0,
+            keycode,
+            pressed: true,
+        };
+        assert!(out_of_range(&key(30)).is_none());
+        assert!(out_of_range(&key(u32::MAX)).is_some());
+        let keys = ViewerMessage::Keys {
+            locked: 0,
+            keycodes: vec![30, u32::MAX],
+        };
+        assert!(out_of_range(&keys).is_some());
+    }
+}

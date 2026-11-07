@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::io::{self, Read};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
@@ -180,13 +181,20 @@ fn connect_or_start(server_args: &[String]) -> Result<UnixStream, String> {
         return Ok(stream);
     }
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let log_path = path.with_file_name("server.log");
+    let log = log_path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| OpenOptions::new().create(true).append(true).open(&log_path))
+        .map_err(|error| format!("{}: {error}", log_path.display()))?;
+    let log_out = log.try_clone().map_err(|error| error.to_string())?;
     let mut child = Command::new(exe)
         .arg("server")
         .args(server_args)
         .process_group(0)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stdout(log_out)
+        .stderr(log)
         .spawn()
         .map_err(|error| format!("decade server did not start: {error}"))?;
     let start = Instant::now();
@@ -237,6 +245,7 @@ struct Viewer {
 
     /// The window's scale, in 120ths.
     scale: u32,
+    fractional: bool,
     configured: bool,
 
     /// The host's main device and the formats it imports for the window.
@@ -246,6 +255,9 @@ struct Viewer {
     sent: Option<(u32, u32, u32)>,
     welcomed: bool,
     buffers: HashMap<u32, Imported>,
+
+    /// A frame whose buffer the host has not yet created, with its fence.
+    held: Option<(u32, Option<OwnedFd>)>,
 
     /// The size of the frame on screen.
     shown: Option<(u32, u32)>,
@@ -275,7 +287,8 @@ struct Viewer {
 }
 
 struct Imported {
-    buffer: WlBuffer,
+    /// The host's buffer, once it has created it.
+    buffer: Option<WlBuffer>,
     params: ZwpLinuxBufferParamsV1,
     width: u32,
     height: u32,
@@ -283,7 +296,9 @@ struct Imported {
 
 impl Imported {
     fn destroy(self) {
-        self.buffer.destroy();
+        if let Some(buffer) = self.buffer {
+            buffer.destroy();
+        }
         self.params.destroy();
     }
 }
@@ -362,11 +377,13 @@ impl Viewer {
             outbox: Outbox::new(),
             size: DEFAULT_SIZE,
             scale: 120,
+            fractional: fractional_scale.is_some(),
             configured: false,
             formats: None,
             sent: None,
             welcomed: false,
             buffers: HashMap::new(),
+            held: None,
             shown: None,
             seat,
             pointer: None,
@@ -465,8 +482,12 @@ impl Viewer {
                 eprintln!("decade: the server reported an error: {message}");
                 self.exit = Some(1);
             }
-            ServerMessage::Close { message, .. } => {
-                eprintln!("decade: the server closed this viewer: {message}");
+            ServerMessage::Close { reason, message } => {
+                if reason == 1 {
+                    eprintln!("decade: the server is shutting down");
+                } else {
+                    eprintln!("decade: the server closed this viewer: {message}");
+                }
                 self.exit = Some(0);
             }
             ServerMessage::Welcome { .. } => {
@@ -488,7 +509,7 @@ impl Viewer {
                     imported.destroy();
                 }
             }
-            ServerMessage::Frame { id, fence, .. } => self.show(id, fence),
+            ServerMessage::Frame { id, fence, .. } => self.frame(id, fence),
             ServerMessage::CursorShape { shape: name } => self.set_cursor(Some(shape(&name))),
             ServerMessage::CursorImage { .. } | ServerMessage::Cursor { .. } => {
                 self.set_cursor(Some(Shape::Default))
@@ -525,15 +546,14 @@ impl Viewer {
                 modifier,
             );
         }
-        let (buffer, params) = params.create_immed(
+        let params = params.create(
             width as i32,
             height as i32,
             format,
             zwp_linux_buffer_params_v1::Flags::empty(),
-            &self.qh,
         );
         let imported = Imported {
-            buffer,
+            buffer: None,
             params,
             width,
             height,
@@ -543,16 +563,40 @@ impl Viewer {
         }
     }
 
+    fn frame(&mut self, id: u32, fence: Option<OwnedFd>) {
+        let created = match self.buffers.get(&id) {
+            Some(imported) => imported.buffer.is_some(),
+            None => {
+                self.send(ViewerMessage::Release { id, fence: None });
+                return;
+            }
+        };
+        let superseded = if created {
+            self.show(id, fence);
+            self.held.take()
+        } else {
+            self.held.replace((id, fence))
+        };
+        if let Some((old, _)) = superseded {
+            self.send(ViewerMessage::Release {
+                id: old,
+                fence: None,
+            });
+        }
+    }
+
     fn show(&mut self, id: u32, fence: Option<OwnedFd>) {
         let Some(imported) = self.buffers.get(&id) else {
-            self.send(ViewerMessage::Release { id, fence: None });
+            return;
+        };
+        let Some(buffer) = &imported.buffer else {
             return;
         };
         if let Some(fence) = fence {
             wait_for(&fence);
         }
         let surface = self.window.wl_surface();
-        surface.attach(Some(&imported.buffer), 0, 0);
+        surface.attach(Some(buffer), 0, 0);
         surface.damage_buffer(0, 0, imported.width as i32, imported.height as i32);
         self.viewport
             .set_destination(self.size.0 as i32, self.size.1 as i32);
@@ -818,8 +862,12 @@ impl CompositorHandler for Viewer {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &WlSurface,
-        _: i32,
+        factor: i32,
     ) {
+        if !self.fractional {
+            self.scale = factor.max(1) as u32 * 120;
+            self.sync_size();
+        }
     }
 
     fn transform_changed(
@@ -926,9 +974,23 @@ impl DmabufHandler for Viewer {
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &ZwpLinuxBufferParamsV1,
-        _: WlBuffer,
+        params: &ZwpLinuxBufferParamsV1,
+        buffer: WlBuffer,
     ) {
+        let Some((&id, imported)) = self
+            .buffers
+            .iter_mut()
+            .find(|(_, imported)| &imported.params == params)
+        else {
+            buffer.destroy();
+            return;
+        };
+        imported.buffer = Some(buffer);
+        if self.held.as_ref().is_some_and(|&(held, _)| held == id)
+            && let Some((id, fence)) = self.held.take()
+        {
+            self.show(id, fence);
+        }
     }
 
     fn failed(&mut self, _: &Connection, _: &QueueHandle<Self>, params: &ZwpLinuxBufferParamsV1) {
@@ -937,11 +999,16 @@ impl DmabufHandler for Viewer {
             .iter()
             .find(|(_, imported)| &imported.params == params)
             .map(|(&id, _)| id);
-        if let Some(id) = failed {
-            if let Some(imported) = self.buffers.remove(&id) {
-                imported.destroy();
-            }
-            self.send(ViewerMessage::BufferFailed { id });
+        let Some(id) = failed else {
+            return;
+        };
+        if let Some(imported) = self.buffers.remove(&id) {
+            imported.destroy();
+        }
+        self.send(ViewerMessage::BufferFailed { id });
+        if self.held.as_ref().is_some_and(|&(held, _)| held == id) {
+            self.held = None;
+            self.send(ViewerMessage::Ready);
         }
     }
 
@@ -949,7 +1016,7 @@ impl DmabufHandler for Viewer {
         let released = self
             .buffers
             .iter()
-            .find(|(_, imported)| &imported.buffer == buffer)
+            .find(|(_, imported)| imported.buffer.as_ref() == Some(buffer))
             .map(|(&id, _)| id);
         if let Some(id) = released {
             self.send(ViewerMessage::Release { id, fence: None });
