@@ -1,0 +1,28 @@
+{
+  "id": "decade-35f82d",
+  "title": "The Ctrl bar pushes each pane's contents down a row",
+  "body": "Jack's design for the Ctrl bar is that it is drawn over the top row of each pane and moves nothing. As of 2026-11-06 it pushes each pane's contents down a row.\n\n`Layout::client_rect` in `src/panes.rs` takes the bar row out of the client's rect while `layout.bar` is set, and `show_bar` in `src/compositor.rs` calls `relayout`, which reconfigures every client one row shorter. `Layout::draw` paints the bars into the chrome grid. `render` pushes the chrome texture last in the element list, and smithay draws the first element on top, so the chrome sits under the clients.\n\n## Proposal\n\n- `client_rect` ignores the bar. `show_bar` requests a redraw and reconfigures nothing.\n- `Layout::draw` stops painting the bars. A new `Layout::draw_bars` paints them into a transparent full-window grid, as `overlay_grid` does for the palette.\n- `render` rasterizes that grid into a bar texture and pushes it ahead of the pane surfaces. The texture is kept until the layout or the bar state changes.",
+  "type": "bug",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:36:49.11866846Z",
+  "updated_at": "2026-11-07T05:36:49.11866846Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "93a5286",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
