@@ -1,0 +1,28 @@
+{
+  "id": "decade-2e11ee",
+  "title": "Holding Ctrl shows a bar on each pane with zoom and close",
+  "body": "There is no way to close a pane except from inside its client, and no zoom.\n\n## Proposal\n\nWhen Ctrl has been held alone for 300 ms, every pane's client is pushed down\none row and that row shows a bar: the pane's name on the left, `zoom` and\n`x` on the right. Releasing Ctrl removes the bars. The delay keeps ordinary\nchords such as Ctrl+c from moving clients. Ctrl+h, j, k, l keep working\nwhile bars show.\n\nClicking `x` asks the client to close through xdg-shell; a pane with no\nclient is removed if transient and left as a slot if anchored. Clicking\n`zoom` gives the pane the whole body and hides the rest until clicked again.\n\n## Open\n\n- Whether the bar should also carry the pin toggle once pins exist.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:07:44.944180628Z",
+  "updated_at": "2026-11-07T05:07:44.944180628Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "9494070",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
