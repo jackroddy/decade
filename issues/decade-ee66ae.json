@@ -1,0 +1,30 @@
+{
+  "id": "decade-ee66ae",
+  "title": "The sidebar orders workspaces by what their agents need",
+  "body": "Once agents report their state (see the blocking issue), Jack wants a simple, text-only way to see which workspaces need him, with no thumbnails. The Super+Tab picker shows workspaces as scaled-down panes, in Jack's order.\n\n## Proposal\n\nThe sidebar from the frame issue lists every workspace by agent state: attention first, then done, then working, then idle, then none. Within a state the picker's order holds. The top bar shows the count in each state. A key jumps to the next workspace in attention.\n\n## Open\n\n- Which key jumps to the next workspace in attention.\n- Keyboard navigation inside the sidebar.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-492261",
+  "blocked_by": [
+    "decade-a9af06"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T23:31:39.69742212Z",
+  "updated_at": "2026-11-07T23:31:39.69742212Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "bc045c7",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
