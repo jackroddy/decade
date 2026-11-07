@@ -51,12 +51,14 @@ Anything else moves the patch. A protocol change moves both.
 The reader keeps an arm for the old layout by default. A breaking release may
 drop that arm, listed under `### Removed`.
 
-**Windows during development.** A decade window opens on a headless Hyprland
-output named `headless-dev`, kept off the real monitors by rules in Jack's
-Hyprland config. Run `scripts/devscreen` before starting decade so the output
-exists, and take screenshots with `scripts/devscreen shot FILE`. Keys cannot
-be sent to that window from a script, so anything that needs typing is checked
-by Jack.
+**Windows during development.** A decade window whose class is `decade-dev`
+opens on a headless Hyprland output named `headless-dev`, kept off the real
+monitors by rules in Jack's Hyprland config; a plain `cargo run` opens on
+Jack's screen like any window. Start decade with `scripts/devscreen run
+ARGS...`, which builds it, creates the output if needed, and passes
+`--class decade-dev`. Take screenshots with `scripts/devscreen shot FILE`. Keys
+cannot be sent to that window from a script, so anything that needs typing is
+checked by Jack.
 
 ## checks
 

@@ -115,6 +115,7 @@ pub struct State {
 pub struct Commands {
     pub chat: Option<Vec<String>>,
     pub code: Option<Vec<String>>,
+    pub class: String,
 }
 
 pub fn run(commands: Commands) {
@@ -124,7 +125,7 @@ pub fn run(commands: Commands) {
 
     let attributes = Window::default_attributes()
         .with_title("decade")
-        .with_name("decade", "decade");
+        .with_name(&commands.class, &commands.class);
     let (mut backend, winit) = winit::init_from_attributes::<GlesRenderer>(attributes).unwrap();
 
     let mut dmabuf_state = DmabufState::new();

@@ -17,6 +17,8 @@ command line and what the tool writes.
   a hello that claims a pane, messages addressed to a pane and forwarded to
   its occupant, `focus` and `panes` for decade itself, and an error line for
   anything else. `docs/protocol.md` has the details.
+- `--class <app id>` sets the window's app id, for window rules. The default
+  is `decade`.
 - `--chat "<command>"` and `--code "<command>"` run a command in a terminal
   inside the chat pane or the code pane, in addition to the shell in the
   terminal pane.

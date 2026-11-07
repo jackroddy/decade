@@ -3,9 +3,11 @@
 # development. The monitor, workspace and window rules for it live in
 # ~/.config/hypr; this only makes the output exist.
 #
-#   scripts/devscreen        create headless-dev if it is missing
-#   scripts/devscreen off    remove it
+#   scripts/devscreen             create headless-dev if it is missing
+#   scripts/devscreen off         remove it
 #   scripts/devscreen shot FILE   screenshot it to FILE
+#   scripts/devscreen run ARGS... build decade and run it there, with the
+#                                 window class decade-dev that the rules match
 
 set -eu
 
@@ -25,8 +27,13 @@ off)
 shot)
     grim -o "$name" "$2"
     ;;
+run)
+    shift
+    exists || hyprctl output create headless "$name"
+    cargo build -q -j4 && exec target/debug/decade --class decade-dev "$@"
+    ;;
 *)
-    echo "usage: scripts/devscreen [on|off|shot FILE]" >&2
+    echo "usage: scripts/devscreen [on|off|shot FILE|run ARGS...]" >&2
     exit 2
     ;;
 esac
