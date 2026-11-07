@@ -24,12 +24,15 @@ use smithay::input::keyboard::{FilterResult, keysyms};
 use smithay::input::pointer::{ButtonEvent, CursorImageStatus, MotionEvent};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
+use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::{
+    EventLoop, Interest, LoopSignal, Mode as CalloopMode, PostAction,
+};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_seat};
-use smithay::reexports::wayland_server::{Client, Display, ListeningSocket};
-use smithay::reexports::winit::platform::pump_events::PumpStatus;
+use smithay::reexports::wayland_server::{Client, Display, DisplayHandle};
 use smithay::reexports::winit::window::Window;
 use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Transform};
 use smithay::wayland::buffer::BufferHandler;
@@ -47,6 +50,7 @@ use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
+use smithay::wayland::socket::ListeningSocketSource;
 use smithay::{
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat,
     delegate_shm, delegate_xdg_shell, render_elements,
@@ -75,21 +79,23 @@ pub struct State {
     seat: Seat<State>,
     output: Output,
     backend: WinitGraphicsBackend<GlesRenderer>,
+    display_handle: DisplayHandle,
+    loop_signal: LoopSignal,
     font: Font,
     glyphs: Glyphs,
     layout: Layout,
     chrome: Option<GlesTexture>,
     pointer: Point<f64, Logical>,
     start: Instant,
-    quit: bool,
 }
 
 pub fn run() {
-    let mut display: Display<State> = Display::new().unwrap();
+    let mut event_loop: EventLoop<State> = EventLoop::try_new().unwrap();
+    let display: Display<State> = Display::new().unwrap();
     let dh = display.handle();
 
     let attributes = Window::default_attributes().with_title("decade");
-    let (mut backend, mut winit) = winit::init_from_attributes::<GlesRenderer>(attributes).unwrap();
+    let (mut backend, winit) = winit::init_from_attributes::<GlesRenderer>(attributes).unwrap();
 
     let mut dmabuf_state = DmabufState::new();
     let formats = backend.renderer().dmabuf_formats();
@@ -129,6 +135,36 @@ pub fn run() {
         size.h as u32 / font.cell_height,
     );
 
+    let handle = event_loop.handle();
+    let socket = ListeningSocketSource::new_auto().unwrap();
+    let socket_name = socket.socket_name().to_os_string();
+    handle
+        .insert_source(socket, |stream, _, state| {
+            state
+                .display_handle
+                .insert_client(stream, Arc::new(ClientState::default()))
+                .unwrap();
+        })
+        .unwrap();
+    handle
+        .insert_source(
+            Generic::new(display, Interest::READ, CalloopMode::Level),
+            |_, display, state| {
+                unsafe { display.get_mut().dispatch_clients(state).unwrap() };
+                Ok(PostAction::Continue)
+            },
+        )
+        .unwrap();
+    handle
+        .insert_source(winit, |event, _, state| match event {
+            WinitEvent::Resized { size, .. } => state.resized(size.w as u32, size.h as u32),
+            WinitEvent::Input(event) => state.input(event),
+            WinitEvent::Redraw => state.redraw(),
+            WinitEvent::CloseRequested => state.loop_signal.stop(),
+            WinitEvent::Focus(_) => {}
+        })
+        .unwrap();
+
     let mut state = State {
         compositor_state: CompositorState::new::<State>(&dh),
         xdg_shell_state: XdgShellState::new::<State>(&dh),
@@ -139,51 +175,23 @@ pub fn run() {
         seat,
         output,
         backend,
+        display_handle: dh,
+        loop_signal: event_loop.get_signal(),
         font,
         glyphs: Glyphs::new(),
         layout,
         chrome: None,
         pointer: (0.0, 0.0).into(),
         start: Instant::now(),
-        quit: false,
     };
 
-    let listener = ListeningSocket::bind_auto("decade", 1..32).unwrap();
-    let socket = listener.socket_name().unwrap().to_os_string();
-    let mut child = spawn_terminal(&socket);
-    let mut clients: Vec<Client> = Vec::new();
-
-    loop {
-        let status = winit.dispatch_new_events(|event| match event {
-            WinitEvent::Resized { size, .. } => {
-                state.resized(size.w as u32, size.h as u32);
-            }
-            WinitEvent::Input(event) => state.input(event),
-            WinitEvent::CloseRequested => state.quit = true,
-            _ => {}
-        });
-        if state.quit || matches!(status, PumpStatus::Exit(_)) {
-            break;
-        }
-
-        state.render();
-
-        if let Ok(Some(stream)) = listener.accept() {
-            let client = display
-                .handle()
-                .insert_client(stream, Arc::new(ClientState::default()))
-                .unwrap();
-            clients.push(client);
-        }
-        display.dispatch_clients(&mut state).unwrap();
-        display.flush_clients().unwrap();
-
-        let size = state.backend.window_size();
-        state
-            .backend
-            .submit(Some(&[Rectangle::from_size(size)]))
-            .unwrap();
-    }
+    let mut child = spawn_terminal(&socket_name);
+    state.backend.window().request_redraw();
+    event_loop
+        .run(None, &mut state, |state| {
+            state.display_handle.flush_clients().unwrap();
+        })
+        .unwrap();
 
     if let Some(child) = &mut child {
         let _ = child.kill();
@@ -222,6 +230,7 @@ impl State {
         for pane in 0..self.layout.panes.len() {
             self.configure(pane);
         }
+        self.backend.window().request_redraw();
     }
 
     fn configure(&mut self, pane: usize) {
@@ -264,6 +273,7 @@ impl State {
         for pane in 0..self.layout.panes.len() {
             self.configure(pane);
         }
+        self.backend.window().request_redraw();
     }
 
     fn input(&mut self, event: InputEvent<WinitInput>) {
@@ -350,6 +360,15 @@ impl State {
         let column = (self.pointer.x / self.font.cell_width as f64) as u32;
         let row = (self.pointer.y / self.font.cell_height as f64) as u32;
         self.layout.pane_at(column, row)
+    }
+
+    fn redraw(&mut self) {
+        self.render();
+        self.display_handle.flush_clients().unwrap();
+        let size = self.backend.window_size();
+        self.backend
+            .submit(Some(&[Rectangle::from_size(size)]))
+            .unwrap();
     }
 
     fn render(&mut self) {
@@ -478,6 +497,7 @@ impl CompositorHandler for State {
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<State>(surface);
+        self.backend.window().request_redraw();
         let pane = self.layout.panes.iter().position(|pane| {
             pane.toplevel
                 .as_ref()
