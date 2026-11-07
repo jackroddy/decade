@@ -58,9 +58,10 @@ scaled, such as the drag ghost, leaves its text out.
 The reader keeps an arm for the old layout by default. A breaking release may
 drop that arm, listed under `### Removed`.
 
-**Running decade.** Claude never starts decade, on Jack's screen or on
-`headless-dev`. Claude builds it, asks Jack to run it, and waits for his
-report. `decade-dev` runs the debug build and `decade` the release build.
+**Running decade.** Claude never starts decade expecting Jack to test it.
+When Jack has to look at something or press keys, Claude builds decade, asks
+him to run it, and waits for his report. For its own checks, Claude may run
+decade on `headless-dev`. `decade-dev` runs the debug build and `decade` the release build.
 Both are links to `scripts/launch`, which rebuilds first. Claude never asks
 Jack for a screenshot. When Claude needs to know how something looks, Claude
 asks him to describe it.
