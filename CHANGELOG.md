@@ -26,10 +26,12 @@ command line and what the tool writes.
   small copy of it under the pointer. Dropping it on a target drawn over
   another pane swaps the two or splits that pane on one side. Dropping it
   on a window edge makes it span that side.
-- Ctrl+Space opens a command palette with Launch, Layout and Settings
-  menus. Typing filters the list, the arrow keys move, and Esc goes back or
-  closes it. Launch lists the installed GUI apps and starts the chosen one
-  as a new pane. Layout and Settings are empty for now.
+- Ctrl+Space opens a command palette with Launch and Settings. Typing
+  filters the list, the arrow keys move, and Esc goes back or closes it.
+  Launch lists the installed GUI apps and starts the chosen one as a new
+  pane.
+- Settings live in `~/.config/decade/config.toml`. Settings in the palette
+  opens a panel that changes them and saves the file.
 - Scroll wheel events reach clients.
 - decade is an MCP server over streamable HTTP, at the address in
   `DECADE_MCP` in the environment of everything it starts. Its tools are

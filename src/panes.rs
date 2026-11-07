@@ -1138,7 +1138,7 @@ mod tests {
         let mut layout = Layout::new(100, 41);
         layout.bar = true;
         layout.dragging = Some(0);
-        let font = crate::text::Font::load(crate::text::FONT_PX);
+        let font = crate::text::Font::load(14.0);
         let mut chrome = Scene::new(&font);
         layout.draw(&mut chrome);
         let waiting = chrome.shapes.iter().any(|shape| {
