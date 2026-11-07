@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+use std::io::{self, Read, Write};
 use std::os::unix::io::OwnedFd;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::Arc;
 use std::time::Instant;
@@ -26,7 +30,7 @@ use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{
-    EventLoop, Interest, LoopSignal, Mode as CalloopMode, PostAction,
+    EventLoop, Interest, LoopHandle, LoopSignal, Mode as CalloopMode, PostAction,
 };
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
@@ -65,6 +69,7 @@ use smithay::{
     render_elements,
 };
 
+use crate::channel::{Host, Out, Router};
 use crate::chrome;
 use crate::grid::Grid;
 use crate::panes::{BACKGROUND, Direction, FOREGROUND, Layout, Pane};
@@ -92,6 +97,11 @@ pub struct State {
     backend: WinitGraphicsBackend<GlesRenderer>,
     display_handle: DisplayHandle,
     loop_signal: LoopSignal,
+    loop_handle: LoopHandle<'static, State>,
+    router: Router,
+    sockets: HashMap<usize, UnixStream>,
+    next_client: usize,
+    channel_path: PathBuf,
     font: Font,
     glyphs: Glyphs,
     layout: Layout,
@@ -107,7 +117,7 @@ pub struct Commands {
 }
 
 pub fn run(commands: Commands) {
-    let mut event_loop: EventLoop<State> = EventLoop::try_new().unwrap();
+    let mut event_loop: EventLoop<'static, State> = EventLoop::try_new().unwrap();
     let display: Display<State> = Display::new().unwrap();
     let dh = display.handle();
 
@@ -187,6 +197,36 @@ pub fn run(commands: Commands) {
         })
         .unwrap();
 
+    let channel_path = channel_path();
+    let _ = std::fs::remove_file(&channel_path);
+    let listener = UnixListener::bind(&channel_path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    handle
+        .insert_source(
+            Generic::new(listener, Interest::READ, CalloopMode::Level),
+            |_, listener, state| {
+                loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => state.channel_connected(stream),
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(error) => {
+                            eprintln!("decade: accepting a channel client failed: {error}");
+                            break;
+                        }
+                    }
+                }
+                Ok(PostAction::Continue)
+            },
+        )
+        .unwrap();
+
+    let router = Router::new(
+        layout
+            .panes
+            .iter()
+            .map(|pane| pane.title.to_string())
+            .collect(),
+    );
     let mut state = State {
         compositor_state: CompositorState::new::<State>(&dh),
         xdg_shell_state: XdgShellState::new::<State>(&dh),
@@ -201,6 +241,11 @@ pub fn run(commands: Commands) {
         backend,
         display_handle: dh,
         loop_signal: event_loop.get_signal(),
+        loop_handle: handle.clone(),
+        router,
+        sockets: HashMap::new(),
+        next_client: 0,
+        channel_path,
         font,
         glyphs: Glyphs::new(),
         layout,
@@ -211,9 +256,19 @@ pub fn run(commands: Commands) {
         start: Instant::now(),
     };
 
-    let mut children = vec![spawn_terminal(&socket_name, "decade.terminal", &[])];
+    let mut children = vec![spawn_terminal(
+        &socket_name,
+        &state.channel_path,
+        "terminal",
+        &[],
+    )];
     if let Some(chat) = &commands.chat {
-        children.push(spawn_terminal(&socket_name, "decade.chat", chat));
+        children.push(spawn_terminal(
+            &socket_name,
+            &state.channel_path,
+            "chat",
+            chat,
+        ));
     }
     state.backend.window().request_redraw();
     event_loop
@@ -225,15 +280,51 @@ pub fn run(commands: Commands) {
     for child in children.iter_mut().flatten() {
         let _ = child.kill();
     }
+    let _ = std::fs::remove_file(&state.channel_path);
 }
 
-fn spawn_terminal(socket: &std::ffi::OsStr, class: &str, command: &[String]) -> Option<Child> {
+fn channel_path() -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    remove_stale_sockets(&dir);
+    dir.join(format!("decade-{}.sock", std::process::id()))
+}
+
+fn remove_stale_sockets(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("decade-"))
+            .and_then(|rest| rest.strip_suffix(".sock"))
+            .and_then(|pid| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if !Path::new(&format!("/proc/{pid}")).exists() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn spawn_terminal(
+    socket: &std::ffi::OsStr,
+    channel: &Path,
+    pane: &str,
+    command: &[String],
+) -> Option<Child> {
     let mut ghostty = Command::new("ghostty");
     ghostty
         .env("WAYLAND_DISPLAY", socket)
+        .env("DECADE_SOCKET", channel)
+        .env("DECADE_PANE", pane)
         .env_remove("DISPLAY")
         .args(["--window-decoration=none", "--gtk-titlebar=false"])
-        .arg(format!("--class={class}"));
+        .arg(format!("--class=decade.{pane}"));
     if !command.is_empty() {
         ghostty.arg("-e").args(command);
     }
@@ -247,6 +338,82 @@ fn spawn_terminal(socket: &std::ffi::OsStr, class: &str, command: &[String]) -> 
 }
 
 impl State {
+    fn channel_connected(&mut self, stream: UnixStream) {
+        if stream.set_nonblocking(true).is_err() {
+            return;
+        }
+        let Ok(writer) = stream.try_clone() else {
+            return;
+        };
+        let id = self.next_client;
+        self.next_client += 1;
+        self.router.connected(id);
+        self.sockets.insert(id, writer);
+        let mut buffer: Vec<u8> = Vec::new();
+        let inserted = self.loop_handle.insert_source(
+            Generic::new(stream, Interest::READ, CalloopMode::Level),
+            move |_, stream, state| {
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match (&**stream).read(&mut chunk) {
+                        Ok(0) => {
+                            state.channel_disconnected(id);
+                            return Ok(PostAction::Remove);
+                        }
+                        Ok(n) => {
+                            buffer.extend_from_slice(&chunk[..n]);
+                            while let Some(end) = buffer.iter().position(|&b| b == b'\n') {
+                                let line: Vec<u8> = buffer.drain(..=end).collect();
+                                let line = String::from_utf8_lossy(&line[..end]);
+                                if !line.trim().is_empty() {
+                                    state.channel_line(id, &line);
+                                }
+                            }
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            return Ok(PostAction::Continue);
+                        }
+                        Err(_) => {
+                            state.channel_disconnected(id);
+                            return Ok(PostAction::Remove);
+                        }
+                    }
+                }
+            },
+        );
+        if inserted.is_err() {
+            self.channel_disconnected(id);
+        }
+    }
+
+    fn channel_disconnected(&mut self, id: usize) {
+        self.router.disconnected(id);
+        self.sockets.remove(&id);
+    }
+
+    fn channel_line(&mut self, id: usize, line: &str) {
+        for out in self.router.handle(id, line) {
+            match out {
+                Out::Line(to, text) => self.channel_send(to, &text),
+                Out::Host(Host::Focus(pane)) => self.focus(pane),
+            }
+        }
+    }
+
+    fn channel_send(&mut self, to: usize, text: &str) {
+        let Some(stream) = self.sockets.get(&to) else {
+            return;
+        };
+        let mut stream = stream;
+        if stream
+            .write_all(text.as_bytes())
+            .and_then(|_| stream.write_all(b"\n"))
+            .is_err()
+        {
+            self.channel_disconnected(to);
+        }
+    }
+
     fn resized(&mut self, width: u32, height: u32, scale: f64) {
         let rescaled = scale != self.scale;
         if rescaled {

@@ -1,3 +1,4 @@
+mod channel;
 mod chrome;
 mod compositor;
 mod grid;

@@ -90,7 +90,7 @@ impl Layout {
                     toplevel: None,
                 },
                 Pane {
-                    title: "empty",
+                    title: "code",
                     app_id: None,
                     rect: empty,
                     toplevel: None,
