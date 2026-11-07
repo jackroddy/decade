@@ -15,7 +15,7 @@
   "lease_expires": "2026-11-07T09:13:06.824738705Z",
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.909931087Z",
-  "updated_at": "2026-11-07T08:58:06.835166638Z",
+  "updated_at": "2026-11-07T09:10:41.274452499Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -26,6 +26,14 @@
       "author": "Jack Roddy/575e4e76",
       "text": "Progress on 2026-11-07, overnight on the sessions branch.\n\n- 09458e5 adds `src/wire.rs`, which encodes and decodes every message in `docs/viewer.md`.\n- `src/gpu.rs` opens the first EGL device with a render node, builds a windowless `GlesRenderer` on it, and allocates dmabufs through GBM. It picks the first of XRGB8888, ARGB8888, XBGR8888 and ABGR8888 that both the renderer and the viewer's host accept, with the modifiers they share, and falls back to LINEAR.\n- `decade server` runs the compositor without winit. It listens for viewers at `$XDG_RUNTIME_DIR/decade/viewer.sock` and refuses to start when a server already answers there. Each viewer gets its own pool of up to three buffers at the output size. A frame is rendered only when that viewer has sent `ready` and something changed. The active viewer's window sets the output size.\n- A smoke test ran the server alone for four seconds. It opened the GPU, created the socket, and ghostty connected with no Mesa warnings.\n\nNot done yet in the server:\n\n- `keys` on focus is ignored, so keys already held when a viewer gains focus are not pressed.\n- Release fences are ignored. The server relies on implicit sync.\n- The clipboard messages are ignored.\n- A cursor set from a client's surface is sent as the named `default` cursor.\n- The `device` in `formats` is ignored. The server always renders on the first GPU with a render node.\n- The server does not handle SIGTERM, so killing it leaves its ghostty children to exit on their own when the Wayland socket closes.",
       "commit": "09458e5",
+      "branch": "sessions"
+    },
+    {
+      "id": "25788c22",
+      "at": "2026-11-07T09:10:41.274451839Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "b2b90c7 splits decade on the sessions branch, and ec6041f follows up.\n\n- `decade server` is the headless compositor. `decade` is the viewer: it starts a server when none answers, opens the window, and shows the server's dmabufs.\n- A run on headless-dev showed the chrome upright and sharp, with ghostty live in the terminal pane. A second viewer reattached to the running server after the first was killed.\n- SIGTERM and SIGINT stop the server cleanly. It kills its children and removes its sockets.\n- `keys` on focus now presses held keys without decade's bindings or repeat.\n\nStill open:\n\n- Keyboard, pointer and scroll input have not been checked, because no script can type into the window. Jack has to check them.\n- The viewer stretches frames when sizes differ, without keeping the aspect ratio, and ignores damage.\n- Clipboard, release fences, client cursor images, lock state from `keys`, and the `formats` device.",
+      "commit": "2cae090",
       "branch": "sessions"
     }
   ],
