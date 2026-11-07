@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T02:23:01.665279304Z",
-  "updated_at": "2026-11-06T02:23:01.665279304Z",
+  "updated_at": "2026-11-07T01:05:07.986717693Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "94085c0e",
+      "at": "2026-11-07T01:05:07.986717083Z",
+      "author": "Jack Roddy/618aab71",
+      "text": "Still open after the compositor change on 2026-11-06. The pty-program option now reads as a Wayland client that also opens the socket. The lean holds: a native stand-in during the prototype, replaced by a client once the socket exists.",
+      "commit": "a822d1e",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "none",
