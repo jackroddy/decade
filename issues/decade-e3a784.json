@@ -15,11 +15,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.965791301Z",
-  "updated_at": "2026-11-07T08:33:59.965791301Z",
+  "updated_at": "2026-11-07T08:44:09.479419101Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "6034272b",
+      "at": "2026-11-07T08:44:09.479418391Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "The review of the viewer protocol spec on 2026-11-07 left these for the remote step:\n\n- Heartbeats, so a viewer and a server notice a dead link.\n- Timestamps taken when the server receives input, since clocks differ across machines.\n- Server-side key repeat that keeps going when a key-up arrives late over the network.\n- Remote clipboard transfers. Locally they go through a pipe fd, which cannot cross a network, so remote needs data messages with flow control.\n\nThese input kinds are missing from version 1 for every viewer, local or remote: pointer lock and relative motion, touch, gestures, tablets, IME and text input, and drag and drop between the host and panes.",
+      "commit": "60ddbe2",
+      "branch": "sessions"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "60ddbe2",
