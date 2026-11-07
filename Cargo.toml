@@ -12,7 +12,5 @@ repository = "https://github.com/jackroddy/decade"
 
 [dependencies]
 fontdb = "0.24.0"
-pollster = "1"
+smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "renderer_gl", "wayland_frontend", "desktop"] }
 swash = "0.2.10"
-wgpu = "30"
-winit = "0.30"

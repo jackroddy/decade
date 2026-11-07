@@ -5,7 +5,6 @@ use swash::{CacheKey, FontRef};
 
 pub const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 pub const FONT_PX: f32 = 14.0;
-const ATLAS_PX: u32 = 2048;
 
 pub struct Font {
     data: Vec<u8>,
@@ -60,113 +59,51 @@ impl Font {
     }
 }
 
-pub struct Atlas {
-    pub texture: wgpu::Texture,
-    pub slots_per_row: u32,
-    capacity: u32,
-    slots: HashMap<char, u32>,
-    next: u32,
+pub struct Glyphs {
+    cache: HashMap<char, Vec<u8>>,
     context: ScaleContext,
-    pixels: Vec<u8>,
 }
 
-impl Atlas {
-    pub fn new(device: &wgpu::Device, font: &Font) -> Atlas {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("atlas"),
-            size: wgpu::Extent3d {
-                width: ATLAS_PX,
-                height: ATLAS_PX,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let slots_per_row = ATLAS_PX / font.cell_width;
-        Atlas {
-            texture,
-            slots_per_row,
-            capacity: slots_per_row * (ATLAS_PX / font.cell_height),
-            slots: HashMap::new(),
-            next: 1,
+impl Glyphs {
+    pub fn new() -> Glyphs {
+        Glyphs {
+            cache: HashMap::new(),
             context: ScaleContext::new(),
-            pixels: vec![0; (font.cell_width * font.cell_height) as usize],
         }
     }
 
-    pub fn slot(&mut self, queue: &wgpu::Queue, font: &Font, ch: char) -> u32 {
-        if ch == ' ' {
-            return 0;
+    pub fn coverage(&mut self, font: &Font, ch: char) -> &[u8] {
+        if !self.cache.contains_key(&ch) {
+            let pixels = rasterize(&mut self.context, font, ch);
+            self.cache.insert(ch, pixels);
         }
-        if let Some(&slot) = self.slots.get(&ch) {
-            return slot;
-        }
-        if self.next >= self.capacity {
-            return 0;
-        }
-        let slot = self.next;
-        self.next += 1;
-        self.slots.insert(ch, slot);
-        self.rasterize(font, ch);
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: (slot % self.slots_per_row) * font.cell_width,
-                    y: (slot / self.slots_per_row) * font.cell_height,
-                    z: 0,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            &self.pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(font.cell_width),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d {
-                width: font.cell_width,
-                height: font.cell_height,
-                depth_or_array_layers: 1,
-            },
-        );
-        slot
+        &self.cache[&ch]
     }
+}
 
-    fn rasterize(&mut self, font: &Font, ch: char) {
-        self.pixels.fill(0);
-        let font_ref = font.as_ref();
-        let glyph = font_ref.charmap().map(ch);
-        let mut scaler = self
-            .context
-            .builder(font_ref)
-            .size(font.px)
-            .hint(true)
-            .build();
-        let Some(image) = Render::new(&[Source::Outline]).render(&mut scaler, glyph) else {
-            return;
-        };
-        let width = font.cell_width as i32;
-        let height = font.cell_height as i32;
-        let image_width = image.placement.width as i32;
-        for y in 0..image.placement.height as i32 {
-            let cy = font.baseline - image.placement.top + y;
-            if cy < 0 || cy >= height {
+fn rasterize(context: &mut ScaleContext, font: &Font, ch: char) -> Vec<u8> {
+    let width = font.cell_width as i32;
+    let height = font.cell_height as i32;
+    let mut pixels = vec![0; (width * height) as usize];
+    let font_ref = font.as_ref();
+    let glyph = font_ref.charmap().map(ch);
+    let mut scaler = context.builder(font_ref).size(font.px).hint(true).build();
+    let Some(image) = Render::new(&[Source::Outline]).render(&mut scaler, glyph) else {
+        return pixels;
+    };
+    let image_width = image.placement.width as i32;
+    for y in 0..image.placement.height as i32 {
+        let cy = font.baseline - image.placement.top + y;
+        if cy < 0 || cy >= height {
+            continue;
+        }
+        for x in 0..image_width {
+            let cx = image.placement.left + x;
+            if cx < 0 || cx >= width {
                 continue;
             }
-            for x in 0..image_width {
-                let cx = image.placement.left + x;
-                if cx < 0 || cx >= width {
-                    continue;
-                }
-                self.pixels[(cy * width + cx) as usize] =
-                    image.data[(y * image_width + x) as usize];
-            }
+            pixels[(cy * width + cx) as usize] = image.data[(y * image_width + x) as usize];
         }
     }
+    pixels
 }
