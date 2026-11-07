@@ -29,7 +29,7 @@ use smithay::backend::renderer::utils::{
 };
 use smithay::backend::renderer::{Color32F, Frame, ImportDma, Renderer};
 use smithay::backend::winit::{self, WinitEvent, WinitGraphicsBackend, WinitInput};
-use smithay::input::keyboard::{FilterResult, Keysym, keysyms};
+use smithay::input::keyboard::{FilterResult, Keysym, ModifiersState, keysyms};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, CursorImageStatus, MotionEvent};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
@@ -79,17 +79,22 @@ use smithay::{
 use crate::apps;
 use crate::channel::{Host, Out, Router};
 use crate::draw::{Face, Scene, Shape, TextCache};
+use crate::hypr::{self, Hyprland};
+use crate::inhibit::{self, Shortcuts};
 use crate::mcp;
 use crate::menu::{Action, Menu, MenuKey, Outcome};
 use crate::palette::ACCENT;
 use crate::panel::{Panel, PanelOutcome};
-use crate::panes::{BACKGROUND, BarButton, Boundary, Direction, Kind as PaneKind, Layout, Pane};
+use crate::panes::{
+    BACKGROUND, BarButton, Boundary, Direction, Drop, Kind as PaneKind, Layout, Pane,
+};
 use crate::settings::{self, Settings};
 use crate::text::Font;
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
 const BTN_LEFT: u32 = 0x110;
+const RESIZE_STEP: u32 = 2;
 
 enum Drag {
     Boundary(Boundary),
@@ -112,6 +117,8 @@ render_elements! {
 
 enum Key {
     Focus(Direction),
+    Move(Direction),
+    Resize(Direction),
     NewPane,
     Palette,
     Menu(MenuKey),
@@ -125,6 +132,8 @@ struct ChildEnv {
 }
 
 pub struct State {
+    shortcuts: Option<Shortcuts>,
+    hyprland: Option<Hyprland>,
     compositor_state: CompositorState,
     xdg_shell_state: XdgShellState,
     shm_state: ShmState,
@@ -267,7 +276,12 @@ pub fn run(commands: Commands) {
                 state.resized(size.w as u32, size.h as u32, scale_factor)
             }
             WinitEvent::Input(event) => state.input(event),
-            WinitEvent::Redraw => state.redraw(),
+            WinitEvent::Redraw => {
+                if let Some(shortcuts) = &mut state.shortcuts {
+                    shortcuts.dispatch();
+                }
+                state.redraw();
+            }
             WinitEvent::CloseRequested => state.loop_signal.stop(),
             WinitEvent::Focus(_) => {}
         })
@@ -314,7 +328,17 @@ pub fn run(commands: Commands) {
             None
         }
     };
+    let shortcuts = match inhibit::inhibit(backend.window()) {
+        Ok(shortcuts) => Some(shortcuts),
+        Err(error) => {
+            eprintln!("decade: Hyprland keeps its shortcuts while decade has focus: {error}");
+            None
+        }
+    };
+    let hyprland = Hyprland::find();
     let mut state = State {
+        shortcuts,
+        hyprland,
         compositor_state: CompositorState::new::<State>(&dh),
         xdg_shell_state: XdgShellState::new::<State>(&dh),
         shm_state: ShmState::new::<State>(&dh, vec![]),
@@ -355,6 +379,7 @@ pub fn run(commands: Commands) {
         start: Instant::now(),
     };
 
+    state.watch_hyprland();
     state.spawn_terminal("terminal", &[]);
     if let Some(chat) = &commands.chat {
         state.spawn_terminal("chat", chat);
@@ -438,6 +463,56 @@ impl State {
         match ghostty.spawn() {
             Ok(child) => self.children.push(child),
             Err(error) => eprintln!("decade: could not start ghostty: {error}"),
+        }
+    }
+
+    fn watch_hyprland(&mut self) {
+        let Some(hyprland) = &self.hyprland else {
+            return;
+        };
+        let stream = match hyprland.events() {
+            Ok(stream) => stream,
+            Err(error) => {
+                eprintln!("decade: Hyprland's event socket did not open: {error}");
+                return;
+            }
+        };
+        let mut buffer: Vec<u8> = Vec::new();
+        let inserted = self.loop_handle.insert_source(
+            Generic::new(stream, Interest::READ, CalloopMode::Level),
+            move |_, stream, state| {
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match (&**stream).read(&mut chunk) {
+                        Ok(0) => return Ok(PostAction::Remove),
+                        Ok(n) => {
+                            buffer.extend_from_slice(&chunk[..n]);
+                            let mut recount = false;
+                            while let Some(end) = buffer.iter().position(|&b| b == b'\n') {
+                                let line: Vec<u8> = buffer.drain(..=end).collect();
+                                recount |= hypr::wants_recount(&String::from_utf8_lossy(&line));
+                            }
+                            if recount {
+                                state.recount_alone();
+                            }
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            return Ok(PostAction::Continue);
+                        }
+                        Err(_) => return Ok(PostAction::Remove),
+                    }
+                }
+            },
+        );
+        if inserted.is_ok() {
+            self.recount_alone();
+        }
+    }
+
+    fn recount_alone(&mut self) {
+        let alone = self.hyprland.as_ref().and_then(Hyprland::alone);
+        if let (Some(alone), Some(shortcuts)) = (alone, &mut self.shortcuts) {
+            shortcuts.set(alone);
         }
     }
 
@@ -802,21 +877,16 @@ impl State {
                 if palette {
                     return FilterResult::Intercept(menu_key(
                         pressed,
-                        modifiers.ctrl,
+                        modifiers,
                         handle.modified_sym(),
                     ));
                 }
-                if !pressed || !modifiers.ctrl {
+                if !pressed || !modifiers.logo {
                     return FilterResult::Forward;
                 }
-                match sym {
-                    keysyms::KEY_h => FilterResult::Intercept(Key::Focus(Direction::Left)),
-                    keysyms::KEY_j => FilterResult::Intercept(Key::Focus(Direction::Down)),
-                    keysyms::KEY_k => FilterResult::Intercept(Key::Focus(Direction::Up)),
-                    keysyms::KEY_l => FilterResult::Intercept(Key::Focus(Direction::Right)),
-                    keysyms::KEY_space => FilterResult::Intercept(Key::Palette),
-                    keysyms::KEY_Return if modifiers.shift => FilterResult::Intercept(Key::NewPane),
-                    _ => FilterResult::Forward,
+                match super_key(sym, modifiers.shift) {
+                    Some(key) => FilterResult::Intercept(key),
+                    None => FilterResult::Forward,
                 }
             },
         );
@@ -832,6 +902,18 @@ impl State {
                 if let Some(id) = self.layout.neighbour(direction) {
                     self.focus(id);
                 }
+            }
+            Some(Key::Move(direction)) => {
+                let focused = self.layout.focused;
+                if let Some(id) = self.layout.neighbour(direction) {
+                    self.layout.apply_drop(focused, Drop::Swap(id));
+                    self.relayout();
+                }
+            }
+            Some(Key::Resize(direction)) => {
+                let focused = self.layout.focused;
+                self.layout.resize_toward(focused, direction, RESIZE_STEP);
+                self.relayout();
             }
             Some(Key::NewPane) => self.new_terminal_pane(),
             Some(Key::Palette) => {
@@ -1339,13 +1421,40 @@ impl Paint<'_> {
     }
 }
 
-fn menu_key(pressed: bool, ctrl: bool, sym: Keysym) -> Key {
+fn super_key(sym: u32, shift: bool) -> Option<Key> {
+    let direction = match sym {
+        keysyms::KEY_h | keysyms::KEY_H => Some(Direction::Left),
+        keysyms::KEY_j | keysyms::KEY_J => Some(Direction::Down),
+        keysyms::KEY_k | keysyms::KEY_K => Some(Direction::Up),
+        keysyms::KEY_l | keysyms::KEY_L => Some(Direction::Right),
+        _ => None,
+    };
+    if let Some(direction) = direction {
+        return Some(if shift {
+            Key::Move(direction)
+        } else {
+            Key::Focus(direction)
+        });
+    }
+    match sym {
+        keysyms::KEY_Left => Some(Key::Resize(Direction::Left)),
+        keysyms::KEY_Right => Some(Key::Resize(Direction::Right)),
+        keysyms::KEY_Up => Some(Key::Resize(Direction::Up)),
+        keysyms::KEY_Down => Some(Key::Resize(Direction::Down)),
+        keysyms::KEY_Return if shift => Some(Key::NewPane),
+        keysyms::KEY_space if shift => Some(Key::Palette),
+        _ => None,
+    }
+}
+
+fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Key {
     if !pressed {
         return Key::Swallow;
     }
+    let ctrl = modifiers.ctrl;
     let key = match sym.raw() {
         keysyms::KEY_Escape => MenuKey::Escape,
-        keysyms::KEY_space if ctrl => MenuKey::Escape,
+        keysyms::KEY_space if modifiers.logo => MenuKey::Escape,
         keysyms::KEY_Return | keysyms::KEY_KP_Enter => MenuKey::Enter,
         keysyms::KEY_BackSpace => MenuKey::Backspace,
         keysyms::KEY_Up => MenuKey::Up,
@@ -1356,7 +1465,7 @@ fn menu_key(pressed: bool, ctrl: bool, sym: Keysym) -> Key {
         keysyms::KEY_l if ctrl => MenuKey::Right,
         keysyms::KEY_k if ctrl => MenuKey::Up,
         keysyms::KEY_j if ctrl => MenuKey::Down,
-        _ if ctrl => return Key::Swallow,
+        _ if ctrl || modifiers.logo => return Key::Swallow,
         _ => match sym.key_char().filter(|ch| !ch.is_control()) {
             Some(ch) => MenuKey::Char(ch),
             None => return Key::Swallow,

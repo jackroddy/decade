@@ -437,6 +437,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "fontdb",
+ "raw-window-handle",
  "rmcp",
  "serde",
  "serde_json",
@@ -444,6 +445,9 @@ dependencies = [
  "swash",
  "tokio",
  "toml",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

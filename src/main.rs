@@ -2,6 +2,8 @@ mod apps;
 mod channel;
 mod compositor;
 mod draw;
+mod hypr;
+mod inhibit;
 mod mcp;
 mod menu;
 mod palette;

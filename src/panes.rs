@@ -285,6 +285,37 @@ impl Layout {
         best.map(|(_, id)| id)
     }
 
+    pub fn resize_toward(&mut self, id: usize, direction: Direction, cells: u32) {
+        if self.zoom.is_some() {
+            return;
+        }
+        let axis = match direction {
+            Direction::Left | Direction::Right => Axis::Horizontal,
+            Direction::Up | Direction::Down => Axis::Vertical,
+        };
+        let mut path = Vec::new();
+        let mut found = None;
+        split_path(&self.root, id, axis, &mut path, &mut found);
+        let Some(path) = found else {
+            return;
+        };
+        let area = node_area(&self.root, self.body(), &path);
+        let Some(Node::Split { ratio, .. }) = node_at(&mut self.root, &path) else {
+            return;
+        };
+        let (start, length) = match axis {
+            Axis::Horizontal => (area.column, area.columns),
+            Axis::Vertical => (area.row, area.rows),
+        };
+        let edge = start + (length as f32 * *ratio).round() as u32;
+        let edge = match direction {
+            Direction::Right | Direction::Down => edge + cells,
+            Direction::Left | Direction::Up => edge.saturating_sub(cells),
+        };
+        let boundary = Boundary { path, axis };
+        self.drag_boundary(&boundary, edge, edge);
+    }
+
     pub fn place(&self, app_id: Option<&str>) -> Option<usize> {
         let app_id = app_id?;
         self.panes
@@ -557,7 +588,7 @@ impl Layout {
             .map(|pane| pane.name.as_str())
             .unwrap_or("");
         let zoom = if self.zoom.is_some() { "  zoom" } else { "" };
-        let status = format!(" decade  {focused}{zoom}  Ctrl+Space palette");
+        let status = format!(" decade  {focused}{zoom}  Super+Shift+Space palette");
         scene.text(0, status_row, &status, FOREGROUND);
     }
 
@@ -742,6 +773,36 @@ fn split_leaf(node: &mut Node, at: usize, axis: Axis, new: usize) -> bool {
             split_leaf(first, at, axis, new) || split_leaf(second, at, axis, new)
         }
     }
+}
+
+fn split_path(
+    node: &Node,
+    id: usize,
+    axis: Axis,
+    path: &mut Vec<bool>,
+    found: &mut Option<Vec<bool>>,
+) -> bool {
+    let Node::Split {
+        axis: here,
+        first,
+        second,
+        ..
+    } = node
+    else {
+        return matches!(node, Node::Leaf(leaf) if *leaf == id);
+    };
+    for (side, child) in [(false, first), (true, second)] {
+        path.push(side);
+        let inside = split_path(child, id, axis, path, found);
+        path.pop();
+        if inside {
+            if *here == axis && found.is_none() {
+                *found = Some(path.clone());
+            }
+            return true;
+        }
+    }
+    false
 }
 
 fn swap_leaves(node: &mut Node, a: usize, b: usize) {
@@ -1212,6 +1273,17 @@ mod tests {
         assert_eq!((code.column, code.row), (0, 0));
         assert_eq!(code.rows, 40);
         assert_eq!(code.columns, 33);
+    }
+
+    #[test]
+    fn resizing_moves_the_nearest_divider_on_that_axis() {
+        let mut layout = Layout::new(100, 41);
+        let chat = layout.pane(0).unwrap().rect.columns;
+        layout.resize_toward(0, Direction::Right, 2);
+        assert_eq!(layout.pane(0).unwrap().rect.columns, chat + 2);
+        let terminal = layout.pane(1).unwrap().rect.rows;
+        layout.resize_toward(2, Direction::Up, 2);
+        assert_eq!(layout.pane(1).unwrap().rect.rows, terminal - 2);
     }
 
     #[test]

@@ -13,7 +13,7 @@ command line and what the tool writes.
 ### Added
 
 - Panes are a split tree. A new window with no anchor of its own, or
-  Ctrl+Shift+Enter, splits the focused pane along its longer side; a pane
+  Super+Shift+Return, splits the focused pane along its longer side; a pane
   made that way closes when its client exits. The three original panes are
   anchors: they stay as empty slots, saying what they wait for, when their
   client goes, and take it back when it returns.
@@ -26,7 +26,7 @@ command line and what the tool writes.
   small copy of it under the pointer. Dropping it on a target drawn over
   another pane swaps the two or splits that pane on one side. Dropping it
   on a window edge makes it span that side.
-- Ctrl+Space opens a command palette with Launch and Settings. Typing
+- Super+Shift+Space opens a command palette with Launch and Settings. Typing
   filters the list, the arrow keys move, and Esc goes back or closes it.
   Launch lists the installed GUI apps and starts the chosen one as a new
   pane.
@@ -47,8 +47,13 @@ command line and what the tool writes.
 - `--chat "<command>"` and `--code "<command>"` run a command in a terminal
   inside the chat pane or the code pane, in addition to the shell in the
   terminal pane.
-- Ctrl with h, j, k or l moves focus between panes by direction; a click
-  focuses the pane under the pointer.
+- Super with h, j, k or l moves focus between panes by direction,
+  Super+Shift swaps the focused pane with its neighbour, and Super with an
+  arrow key moves the nearest divider. A click focuses the pane under the
+  pointer.
+- Under Hyprland, while decade's window is the only one on its workspace,
+  Hyprland passes decade the keys it would otherwise take. Binds marked
+  `dont_inhibit` keep working in Hyprland.
 
 ### Changed
 
@@ -57,8 +62,7 @@ command line and what the tool writes.
   gone. Colours come from a palette copied from the Omarchy theme.
 - decade is a Wayland compositor nested in a window, on smithay. Any Wayland
   client is a pane; the terminal pane runs ghostty. Clients are told the
-  host's scale and render at it. The window chrome is a grid of character
-  cells.
+  host's scale and render at it. decade draws its own chrome on the GPU.
 - The window opens on a headless Hyprland output during development; see
   `scripts/devscreen`.
 
