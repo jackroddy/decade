@@ -1,0 +1,28 @@
+{
+  "id": "decade-3079aa",
+  "title": "A ghostty window runs inside a decade pane",
+  "body": "Today decade is a winit window with a wgpu cell grid, in `src/gpu.rs`,\n`src/grid.rs` and `src/text.rs`, and three empty panes laid out in\n`src/panes.rs`. It is not a Wayland server. Nothing can connect to it.\n\n## Proposal\n\nA smithay compositor on its winit backend. decade opens a Wayland socket,\nsets `WAYLAND_DISPLAY` for the children it spawns, implements xdg-shell and a\nseat, and draws each client's surface into the rectangle of the pane it was\nassigned. ghostty, launched by decade, appears in the terminal pane, takes\nthe keyboard when its pane is focused, and resizes with the pane.\n\nWhat the spike has to show:\n\n- ghostty's window at the pane rectangle, at the right scale\n- typed keys reaching the shell, with Ctrl+h, j, k and l intercepted by\n  decade to move focus between panes\n- a resize of the decade window re-laying out the pane and the client with it\n- the cell chrome drawn in the same frame as the client buffers, with the\n  renderer smithay's backend provides\n\n## Out of scope\n\n- Pointer input, clipboard and cursor images beyond not crashing.\n- XWayland.\n- The agent socket.\n- More than one client.\n\n## Open\n\n- GL or wgpu for the cells, decade-1c11b4.\n- Whether smithay's winit backend takes a window decade already created, or\n  decade's window becomes smithay's.",
+  "type": "spike",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-71e626",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T01:05:07.995242382Z",
+  "updated_at": "2026-11-07T01:05:07.995242382Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "a822d1e",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
