@@ -1,3 +1,7 @@
+[workspace]
+resolver = "3"
+members = ["decade-channel"]
+
 [package]
 name = "decade"
 version = "0.1.0"

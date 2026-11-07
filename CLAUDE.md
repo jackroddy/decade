@@ -1,6 +1,10 @@
 # decade
 
-A single-crate cargo project: the `decade` command-line tool.
+A cargo workspace. The root package is `decade`, a Wayland compositor nested
+in a window whose panes are other programs; `decade-channel` is the client
+side of its socket as a library, for programs that run in those panes and
+speak the protocol in `docs/protocol.md`. The pane programs themselves live in
+the decade-apps repository.
 
 Design rationale that the code does not state lives in foam's memories, and
 pending work lives in foam's issues. `foam prime` prints both at session start.
@@ -16,10 +20,10 @@ plans and decisions go to foam, never to this file.
 editing a comment rather than reconstructing the rules from memory. The default
 is no comment.
 
-**Tests.** Unit tests stay inline in the file they cover. `tests/cli.rs`, once
-it exists, drives the real binary so that argv parsing, exit codes and stderr
-are pinned alongside the output. Test names are full sentences describing the
-property, not `test_foo`.
+**Tests.** Unit tests stay inline in the file they cover. `decade-channel`'s
+socket test runs a fake decade end in the test; nothing needs the compositor
+running. Test names are full sentences describing the property, not
+`test_foo`.
 
 **Branches.** Work is committed on `dev`, in batches. A milestone or issue that
 changes the command line or an on-disk format, and will not be finished before
@@ -33,13 +37,15 @@ version in `Cargo.toml` stays where it is and changelog entries accumulate
 under `## [Unreleased]` with `### Added` / `### Changed` / `### Removed`
 headings and no date. The version heading, the date, the `Cargo.toml` bump and
 the compare link at the foot of the changelog are all part of the release
-commit. Release tags are annotated and named `v<version>`. Publish from `main`
-after `dev` merges in, with a clean tree.
+commit. Release tags are annotated and named `v<version>` for `decade` and
+`decade-channel-v<version>` for the library. Publish from `main` after `dev`
+merges in, with a clean tree.
 
-**Versions.** What is versioned is the command line and what the tool writes.
-Under cargo's rule that 0.x's minor is the breaking axis, a change that breaks
-either moves the minor. Anything else moves the patch. `tests/cli.rs` is what
-says whether the interface moved.
+**Versions.** Each crate is versioned by what changed in it. For `decade` that
+is the command line, the socket protocol and what the tool writes; for
+`decade-channel` its public API. Under cargo's rule that 0.x's minor is the
+breaking axis, a change that breaks one of those moves that crate's minor.
+Anything else moves the patch. A protocol change moves both.
 
 **Formats.** A change to an on-disk layout bumps that format's version byte.
 The reader keeps an arm for the old layout by default. A breaking release may
@@ -57,6 +63,6 @@ by Jack.
 ```console
 $ cargo fmt --all
 $ cargo fmt --all --check
-$ cargo clippy --all-targets --all-features
-$ cargo test --all-features
+$ cargo clippy --workspace --all-targets --all-features
+$ cargo test --workspace --all-features
 ```

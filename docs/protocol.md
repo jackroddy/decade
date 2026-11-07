@@ -1,5 +1,8 @@
 # The decade socket
 
+The `decade-channel` crate in this repository is the client side of this
+protocol for Rust programs. What follows is the wire itself.
+
 decade listens on a unix socket while it runs. Programs it starts find the
 path in `DECADE_SOCKET` and the name of the pane they were started in, if
 any, in `DECADE_PANE`. Each direction carries one JSON object per line.
