@@ -10,6 +10,22 @@ command line and what the tool writes.
 
 ## [Unreleased]
 
+### Added
+
+- `--chat <command> [args...]` runs the command in a terminal inside the chat
+  pane, in addition to the shell in the terminal pane.
+- Ctrl with h, j, k or l moves focus between panes by direction; a click
+  focuses the pane under the pointer.
+
+### Changed
+
+- decade is a Wayland compositor nested in a window, on smithay. Any Wayland
+  client is a pane; the terminal pane runs ghostty. Clients are told the
+  host's scale and render at it. The window chrome is a grid of character
+  cells.
+- The window opens on a headless Hyprland output during development; see
+  `scripts/devscreen`.
+
 ## [0.1.0] - 2026-11-05
 
 The name on crates.io, and a window.

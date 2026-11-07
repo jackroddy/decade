@@ -54,6 +54,7 @@ use smithay::wayland::selection::data_device::{
 };
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+    XdgToplevelSurfaceData,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::socket::ListeningSocketSource;
@@ -94,13 +95,18 @@ pub struct State {
     font: Font,
     glyphs: Glyphs,
     layout: Layout,
+    unplaced: Vec<ToplevelSurface>,
     chrome: Option<GlesTexture>,
     pointer: Point<f64, Logical>,
     scale: f64,
     start: Instant,
 }
 
-pub fn run() {
+pub struct Commands {
+    pub chat: Option<Vec<String>>,
+}
+
+pub fn run(commands: Commands) {
     let mut event_loop: EventLoop<State> = EventLoop::try_new().unwrap();
     let display: Display<State> = Display::new().unwrap();
     let dh = display.handle();
@@ -198,13 +204,17 @@ pub fn run() {
         font,
         glyphs: Glyphs::new(),
         layout,
+        unplaced: Vec::new(),
         chrome: None,
         pointer: (0.0, 0.0).into(),
         scale,
         start: Instant::now(),
     };
 
-    let mut child = spawn_terminal(&socket_name);
+    let mut children = vec![spawn_terminal(&socket_name, "decade.terminal", &[])];
+    if let Some(chat) = &commands.chat {
+        children.push(spawn_terminal(&socket_name, "decade.chat", chat));
+    }
     state.backend.window().request_redraw();
     event_loop
         .run(None, &mut state, |state| {
@@ -212,18 +222,22 @@ pub fn run() {
         })
         .unwrap();
 
-    if let Some(child) = &mut child {
+    for child in children.iter_mut().flatten() {
         let _ = child.kill();
     }
 }
 
-fn spawn_terminal(socket: &std::ffi::OsStr) -> Option<Child> {
-    match Command::new("ghostty")
+fn spawn_terminal(socket: &std::ffi::OsStr, class: &str, command: &[String]) -> Option<Child> {
+    let mut ghostty = Command::new("ghostty");
+    ghostty
         .env("WAYLAND_DISPLAY", socket)
         .env_remove("DISPLAY")
         .args(["--window-decoration=none", "--gtk-titlebar=false"])
-        .spawn()
-    {
+        .arg(format!("--class={class}"));
+    if !command.is_empty() {
+        ghostty.arg("-e").args(command);
+    }
+    match ghostty.spawn() {
         Ok(child) => Some(child),
         Err(error) => {
             eprintln!("decade: could not start ghostty: {error}");
@@ -548,6 +562,29 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<State>(surface);
         self.backend.window().request_redraw();
+        if let Some(i) = self
+            .unplaced
+            .iter()
+            .position(|toplevel| toplevel.wl_surface() == surface)
+        {
+            let app_id = with_states(surface, |states| {
+                states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|data| data.lock().unwrap().app_id.clone())
+            });
+            match self.layout.place(app_id.as_deref()) {
+                Some(pane) => {
+                    let toplevel = self.unplaced.remove(i);
+                    self.layout.panes[pane].toplevel = Some(toplevel);
+                    self.configure(pane);
+                }
+                None => eprintln!(
+                    "decade: no pane for a window with app id {}",
+                    app_id.as_deref().unwrap_or("(none)")
+                ),
+            }
+        }
         let pane = self.layout.panes.iter().position(|pane| {
             pane.toplevel
                 .as_ref()
@@ -572,17 +609,14 @@ impl XdgShellHandler for State {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        let Some(pane) = self.layout.free_pane() else {
-            eprintln!("decade: no free pane for a new window");
-            return;
-        };
-        self.layout.panes[pane].toplevel = Some(surface);
+        self.unplaced.push(surface);
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(pane) = self.layout.pane_of(&surface) {
             self.layout.panes[pane].toplevel = None;
         }
+        self.unplaced.retain(|toplevel| toplevel != &surface);
     }
 
     fn new_popup(&mut self, _: PopupSurface, _: PositionerState) {}

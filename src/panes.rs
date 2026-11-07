@@ -42,7 +42,7 @@ pub enum Direction {
 
 pub struct Pane {
     pub title: &'static str,
-    pub hosts_client: bool,
+    pub app_id: Option<&'static str>,
     pub rect: CellRect,
     pub toplevel: Option<ToplevelSurface>,
 }
@@ -79,19 +79,19 @@ impl Layout {
             panes: vec![
                 Pane {
                     title: "chat",
-                    hosts_client: false,
+                    app_id: Some("decade.chat"),
                     rect: empty,
                     toplevel: None,
                 },
                 Pane {
                     title: "terminal",
-                    hosts_client: true,
+                    app_id: Some("decade.terminal"),
                     rect: empty,
                     toplevel: None,
                 },
                 Pane {
                     title: "empty",
-                    hosts_client: true,
+                    app_id: None,
                     rect: empty,
                     toplevel: None,
                 },
@@ -145,10 +145,17 @@ impl Layout {
             .position(|pane| pane.rect.contains(column, row))
     }
 
-    pub fn free_pane(&self) -> Option<usize> {
-        self.panes
+    pub fn place(&self, app_id: Option<&str>) -> Option<usize> {
+        let free = |pane: &&Pane| pane.toplevel.is_none();
+        let wanted = self
+            .panes
             .iter()
-            .position(|pane| pane.hosts_client && pane.toplevel.is_none())
+            .position(|pane| free(&pane) && pane.app_id.is_some() && pane.app_id == app_id);
+        wanted.or_else(|| {
+            self.panes
+                .iter()
+                .position(|pane| free(&pane) && pane.app_id.is_none())
+        })
     }
 
     pub fn pane_of(&self, toplevel: &ToplevelSurface) -> Option<usize> {
