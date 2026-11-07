@@ -34,6 +34,7 @@ use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::channel::{self as calloop_channel, Event as ChannelEvent};
 use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::signals::{Signal, Signals};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{
     EventLoop, Interest, LoopHandle, Mode as CalloopMode, PostAction, RegistrationToken,
@@ -337,6 +338,14 @@ pub fn run(commands: Commands) {
             },
         )
         .unwrap();
+    let stop = event_loop.get_signal();
+    handle
+        .insert_source(
+            Signals::new(&[Signal::SIGTERM, Signal::SIGINT]).unwrap(),
+            move |_, _, _| stop.stop(),
+        )
+        .unwrap();
+
     let viewer_path = viewer_socket_path();
     if let Some(dir) = viewer_path.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -796,7 +805,26 @@ impl State {
                 }
                 self.keyboard(keycode, pressed, time);
             }
-            ViewerMessage::Keys { .. } => {}
+            ViewerMessage::Keys { keycodes, .. } => {
+                let keyboard = self.seat.get_keyboard().unwrap();
+                for keycode in keycodes {
+                    let Some(viewer) = self.viewers.get_mut(&id) else {
+                        return;
+                    };
+                    if viewer.keys.contains(&keycode) {
+                        continue;
+                    }
+                    viewer.keys.push(keycode);
+                    keyboard.input::<(), _>(
+                        self,
+                        Keycode::new(keycode + 8),
+                        KeyState::Pressed,
+                        SERIAL_COUNTER.next_serial(),
+                        now,
+                        |_, _, _| FilterResult::Forward,
+                    );
+                }
+            }
             ViewerMessage::KeysReleased => {
                 let keys = self
                     .viewers
