@@ -1,0 +1,28 @@
+{
+  "id": "decade-1b6bb6",
+  "title": "Layout and panes",
+  "body": "decade's panes are three fixed rectangles in `src/panes.rs`, each with a\ntitle strip, and a client that exits leaves its rectangle empty for good.\nThis milestone makes the layout a tree the user can change, with as few\nkeys as possible, and settles what a pane is for.\n\nDecided with Jack on 2026-11-06:\n\n- Three keys, no more for now: Ctrl+h, j, k, l focus; Ctrl+Space opens the\n  command palette; Ctrl+Shift+Enter makes a new pane. No close, resize, zoom\n  or swap keys. decade is not a keybind-driven program; the TUI inspiration\n  stops at the visuals and the multiplexing.\n- A pane is a rectangle with a one-cell outline and nothing else. Only the\n  focused pane's outline is coloured.\n- Closing is the client's job (Ctrl+d at a shell). The fallback is the Ctrl\n  bar: holding Ctrl alone shows a one-row bar at the top of every pane with\n  the name, a zoom toggle and an X, for the mouse. The bar pushes the client\n  down a row rather than covering it.\n- Anchors: a pane can be a home for a program, matched by a rule, that stays\n  as an empty slot saying what it waits for when the client exits. A\n  transient pane closes with its client. This is the core of the dev loop\n  where a GUI app is opened and closed over and over and should land in the\n  same place each time. Anchors must eventually be set up over MCP so agents\n  can arrange them.\n\n## Pieces\n\n| Issue | Role |\n|---|---|\n| split tree, anchors, new pane | the model: tree, two pane kinds, placement rules, Ctrl+Shift+Enter |\n| Ctrl bar | hold Ctrl alone to show per-pane bars with zoom and close |\n| gutter drag | drag the boundary between two panes to resize |\n| scroll wheel | forward pointer axis events to clients |\n| palette stub | Ctrl+Space opens an empty palette that Esc closes, so the key is claimed |\n| drag to swap | later: drag a bar onto another pane to swap |\n| pin | later: a bar toggle that turns a transient pane into an anchor |\n| anchors over MCP | later: tools to list, create and change anchors |\n| saved sessions | later: a session is a tree of anchors with rules |\n\n## Out of scope\n\n- A visual design beyond the outline. That is Jack's.\n- Workspaces or tabs. One tree per window for now.",
+  "type": "milestone",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:07:44.925896852Z",
+  "updated_at": "2026-11-07T05:07:44.925896852Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "9494070",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
