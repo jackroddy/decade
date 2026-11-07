@@ -51,14 +51,17 @@ Anything else moves the patch. A protocol change moves both.
 The reader keeps an arm for the old layout by default. A breaking release may
 drop that arm, listed under `### Removed`.
 
+**Running decade.** Claude never starts decade, on Jack's screen or on
+`headless-dev`. Claude builds it, asks Jack to run it, and waits for his
+report. `decade-dev` runs the debug build and `decade` the release build.
+Both are links to `scripts/launch`, which rebuilds first.
+
 **Windows during development.** A decade window whose class is `decade-dev`
 opens on a headless Hyprland output named `headless-dev`, kept off the real
 monitors by rules in Jack's Hyprland config; a plain `cargo run` opens on
-Jack's screen like any window. Start decade with `scripts/devscreen run
-ARGS...`, which builds it, creates the output if needed, and passes
-`--class decade-dev`. Take screenshots with `scripts/devscreen shot FILE`. Keys
-cannot be sent to that window from a script, so anything that needs typing is
-checked by Jack.
+Jack's screen like any window. `scripts/devscreen run ARGS...` builds decade,
+creates the output if needed, and passes `--class decade-dev`.
+`scripts/devscreen shot FILE` takes a screenshot of that output.
 
 ## checks
 
