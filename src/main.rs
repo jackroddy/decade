@@ -29,6 +29,8 @@ mod picker;
 #[cfg(target_os = "linux")]
 mod save;
 #[cfg(target_os = "linux")]
+mod script;
+#[cfg(target_os = "linux")]
 mod settings;
 #[cfg(target_os = "linux")]
 mod text;
@@ -41,6 +43,7 @@ mod workspace;
 #[cfg(target_os = "linux")]
 const USAGE: &str = "usage: decade [--class <app id>]
        decade start | stop | restart | status | list
+       decade script FILE
        decade server";
 
 #[cfg(target_os = "linux")]
@@ -56,6 +59,12 @@ fn main() {
         }
         (Some("status"), None, _) => status(),
         (Some("list"), None, _) => list(),
+        (Some("script"), Some(file), None) => {
+            if let Err(error) = script::run(&file) {
+                eprintln!("decade: {error}");
+                std::process::exit(1);
+            }
+        }
         (None, _, _) => viewer::run("decade".to_string()),
         (Some("--class"), Some(class), None) => viewer::run(class),
         _ => {

@@ -80,6 +80,12 @@ command line and what the tool writes.
   prints the server's pid, and exits with 1 when no server is running.
   `decade list` prints each workspace's id, name, number of panes and
   directory.
+- `decade script FILE` drives a running server from a script and saves the
+  frames it draws as PNG files, for checking the UI without a window. It
+  connects as a viewer and runs one command per line: `key super+tab`,
+  `type text`, `press ctrl` and `release ctrl`, `hold ctrl 400`,
+  `move x y`, `click x y`, `drag x1 y1 x2 y2`, `size width height`,
+  `wait ms` and `shot file.png`. Lines starting with `#` are comments.
 - `--class <app id>` sets the window's app id, for window rules. The default
   is `decade`.
 - Super with h, j, k or l moves focus between panes by direction,
