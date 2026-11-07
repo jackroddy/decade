@@ -24,6 +24,10 @@ command line and what the tool writes.
   it, and Open creates a workspace there and shows it. The workspace takes
   the directory's name, with a count after it when that name is taken. The
   status line shows the name of the workspace on screen.
+- Close workspace in the palette asks for a second Enter, then closes every
+  pane in the workspace. The workspace goes once its last client has, and
+  viewers showing it move to the first one left. Closing the last workspace
+  starts a new one in the home directory.
 - Panes are a split tree. A new window with no anchor of its own, or
   Super+Shift+Return, splits the focused pane along its longer side; a pane
   made that way closes when its client exits.

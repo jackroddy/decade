@@ -14,6 +14,9 @@ pub struct Workspace {
 
     /// The event source accepting connections on this workspace's socket.
     pub listener: Option<RegistrationToken>,
+
+    /// Whether the workspace goes once its last client has.
+    pub closing: bool,
 }
 
 pub fn home() -> PathBuf {
@@ -49,6 +52,7 @@ impl Workspace {
             layout,
             router,
             listener: None,
+            closing: false,
         }
     }
 

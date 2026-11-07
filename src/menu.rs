@@ -12,6 +12,7 @@ const BROWSE_WIDTH: i32 = 48;
 const APP_ICON: char = '\u{f08c6}';
 const FOLDER_ICON: char = '\u{f024b}';
 const OPEN_ICON: char = '\u{f0770}';
+const CLOSE_ICON: char = '\u{f0156}';
 const MAX_ROWS: usize = 10;
 pub const BOX: [f32; 4] = palette::DARK_BACKGROUND;
 pub const BORDER: [f32; 4] = palette::ACCENT;
@@ -38,6 +39,7 @@ pub enum Action {
     Launch(Vec<String>),
     Settings,
     NewWorkspace(PathBuf),
+    CloseWorkspace(u32),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -90,14 +92,21 @@ impl Row {
 }
 
 impl Menu {
-    pub fn new(apps: Vec<App>, home: PathBuf) -> Menu {
+    pub fn new(apps: Vec<App>, home: PathBuf, workspace: u32, name: &str) -> Menu {
         let launch = apps
             .into_iter()
             .map(|app| Row::new(APP_ICON, &app.name, Target::Run(Action::Launch(app.argv))))
             .collect();
+        let confirm = format!("Close {name} and its panes");
+        let close = vec![Row::new(
+            CLOSE_ICON,
+            &confirm,
+            Target::Run(Action::CloseWorkspace(workspace)),
+        )];
         let rows = vec![
             Row::new('\u{f003b}', "Launch", Target::Submenu(launch)),
             Row::new(FOLDER_ICON, "New workspace", Target::Directory),
+            Row::new(CLOSE_ICON, "Close workspace", Target::Submenu(close)),
             Row::new('\u{f0493}', "Settings", Target::Run(Action::Settings)),
         ];
         Menu {
@@ -343,7 +352,7 @@ mod tests {
 
     #[test]
     fn typing_filters_the_rows_by_label() {
-        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"));
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade");
         menu.key(MenuKey::Char('l'));
         menu.key(MenuKey::Char('a'));
         assert_eq!(labels(&menu), ["Launch"]);
@@ -355,13 +364,13 @@ mod tests {
 
     #[test]
     fn the_selection_stays_inside_the_list() {
-        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"));
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade");
         menu.key(MenuKey::Up);
         assert_eq!(menu.selected, 0);
         for _ in 0..5 {
             menu.key(MenuKey::Down);
         }
-        assert_eq!(menu.selected, 2);
+        assert_eq!(menu.selected, 3);
     }
 
     #[test]
@@ -370,7 +379,7 @@ mod tests {
             name: "Files".to_string(),
             argv: vec!["nautilus".to_string()],
         };
-        let mut menu = Menu::new(vec![app], PathBuf::from("/"));
+        let mut menu = Menu::new(vec![app], PathBuf::from("/"), 0, "decade");
         menu.key(MenuKey::Enter);
         for ch in "fil".chars() {
             menu.key(MenuKey::Char(ch));
@@ -380,8 +389,20 @@ mod tests {
     }
 
     #[test]
+    fn closing_a_workspace_takes_a_second_enter_on_a_row_naming_it() {
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 4, "decade");
+        for ch in "close".chars() {
+            menu.key(MenuKey::Char(ch));
+        }
+        assert_eq!(menu.key(MenuKey::Enter), Outcome::Open);
+        assert_eq!(labels(&menu), ["Close decade and its panes"]);
+        let close = Action::CloseWorkspace(4);
+        assert_eq!(menu.key(MenuKey::Enter), Outcome::Run(close));
+    }
+
+    #[test]
     fn enter_opens_a_submenu_and_escape_goes_up_then_closes() {
-        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"));
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade");
         menu.key(MenuKey::Enter);
         assert_eq!(menu.path, [0]);
         assert_eq!(menu.key(MenuKey::Escape), Outcome::Open);
@@ -400,7 +421,7 @@ mod tests {
     }
 
     fn browsing(home: &Path, typed: &str) -> Menu {
-        let mut menu = Menu::new(Vec::new(), home.to_path_buf());
+        let mut menu = Menu::new(Vec::new(), home.to_path_buf(), 0, "decade");
         for ch in "new".chars() {
             menu.key(MenuKey::Char(ch));
         }
@@ -458,7 +479,10 @@ mod tests {
         let mut menu = browsing(&home, "projects/");
         assert_eq!(menu.key(MenuKey::Escape), Outcome::Open);
         assert_eq!(menu.query, "");
-        assert_eq!(labels(&menu), ["Launch", "New workspace", "Settings"]);
+        assert_eq!(
+            labels(&menu),
+            ["Launch", "New workspace", "Close workspace", "Settings"]
+        );
         std::fs::remove_dir_all(home).unwrap();
     }
 }

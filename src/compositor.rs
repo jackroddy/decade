@@ -828,7 +828,7 @@ impl State {
         self.request_redraw();
     }
 
-    fn new_workspace(&mut self, cwd: PathBuf) {
+    fn add_workspace(&mut self, cwd: PathBuf) -> u32 {
         let id = self.next_workspace;
         self.next_workspace += 1;
         let columns = self.size.w as u32 / self.font.cell_width;
@@ -840,13 +840,76 @@ impl State {
         let index = self.workspaces.len() - 1;
         self.listen(index);
         self.spawn_terminal(index, "terminal");
+        id
+    }
+
+    fn send_workspace_list(&mut self) {
         let viewers: Vec<usize> = self.welcomed().collect();
         for viewer in viewers {
             self.send(viewer, self.workspace_list());
         }
+    }
+
+    fn new_workspace(&mut self, cwd: PathBuf) {
+        let id = self.add_workspace(cwd);
+        self.send_workspace_list();
         if let Some(active) = self.active {
             self.show(active, id);
         }
+    }
+
+    fn close_workspace(&mut self, id: u32) {
+        let Some(index) = self.workspace_index(id) else {
+            return;
+        };
+        let workspace = &mut self.workspaces[index];
+        workspace.closing = true;
+        for pane in &workspace.layout.panes {
+            if let Some(toplevel) = &pane.toplevel {
+                toplevel.send_close();
+            }
+        }
+        self.finish_closing(index);
+    }
+
+    fn finish_closing(&mut self, index: usize) {
+        let workspace = &self.workspaces[index];
+        let clients = workspace
+            .layout
+            .panes
+            .iter()
+            .any(|pane| pane.toplevel.is_some());
+        if !workspace.closing || clients {
+            return;
+        }
+        let removed = self.workspaces.remove(index);
+        if let Some(token) = removed.listener {
+            self.loop_handle.remove(token);
+        }
+        let _ = std::fs::remove_file(self.socket_path(removed.id));
+        self.sockets
+            .retain(|_, (workspace, _)| *workspace != removed.id);
+        if self.workspaces.is_empty() {
+            self.add_workspace(workspace::home());
+        }
+        let first = self.workspaces[0].id;
+        let moved: Vec<usize> = self
+            .viewers
+            .iter()
+            .filter(|(_, viewer)| viewer.workspace == removed.id)
+            .map(|(&id, _)| id)
+            .collect();
+        self.send_workspace_list();
+        for viewer in &moved {
+            if let Some(entry) = self.viewers.get_mut(viewer) {
+                entry.workspace = first;
+            }
+            self.send(*viewer, ServerMessage::Showing { id: first });
+        }
+        if self.active.is_some_and(|active| moved.contains(&active)) {
+            self.workspace_shown();
+        }
+        self.request_redraw();
     }
 
     fn workspace_shown(&mut self) {
@@ -1657,6 +1720,10 @@ impl State {
         let name = pane.name.clone();
         layout.remove(id);
         self.workspaces[workspace].router.remove_pane(&name);
+        if self.workspaces[workspace].closing {
+            self.finish_closing(workspace);
+            return;
+        }
         self.relayout_workspace(workspace);
         if workspace == self.current() {
             let focused = self.layout().focused;
@@ -1967,7 +2034,9 @@ impl State {
             }
             Key::NewPane => self.new_terminal_pane(),
             Key::Palette => {
-                self.menu = Some(Menu::new(apps::installed(), workspace::home()));
+                let shown = &self.workspaces[self.current()];
+                let (id, name) = (shown.id, shown.name.clone());
+                self.menu = Some(Menu::new(apps::installed(), workspace::home(), id, &name));
                 self.request_redraw();
             }
             Key::Menu(key) => {
@@ -1990,6 +2059,10 @@ impl State {
                         Some(Outcome::Run(Action::NewWorkspace(cwd))) => {
                             self.menu = None;
                             self.new_workspace(cwd);
+                        }
+                        Some(Outcome::Run(Action::CloseWorkspace(id))) => {
+                            self.menu = None;
+                            self.close_workspace(id);
                         }
                         Some(Outcome::Run(Action::Settings)) => {
                             self.menu = None;
@@ -2699,6 +2772,8 @@ impl XdgShellHandler for State {
         pane.toplevel = None;
         if matches!(pane.kind, PaneKind::Transient) {
             self.remove_pane(workspace, id);
+        } else if self.workspaces[workspace].closing {
+            self.finish_closing(workspace);
         } else if workspace == self.current() {
             let focused = self.layout().focused;
             self.focus(focused);
