@@ -47,6 +47,9 @@ is the command line, the socket protocol and what the tool writes; for
 breaking axis, a change that breaks one of those moves that crate's minor.
 Anything else moves the patch. A protocol change moves both.
 
+**One server.** One decade server runs per user, and it holds every
+workspace. There are no named sessions and no multi-user modes.
+
 **Closing panes.** No keybind closes a pane. A pane closes only through the
 x on its bar or when the program in it exits.
 
