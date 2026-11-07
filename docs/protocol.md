@@ -78,6 +78,30 @@ that is not on screen, the pane has focus once the workspace is shown.
 {"panes": [{"name": "chat", "client": "coax"}, {"name": "terminal", "client": null}, {"name": "code", "client": null}]}
 ```
 
+## Agent state
+
+A client that claimed a pane reports what the agent in that pane is doing:
+
+```json
+{"status": {"state": "attention", "message": "which branch should this go on?"}}
+```
+
+| state | meaning |
+|---|---|
+| `attention` | the agent is waiting on the person, with a question or a request |
+| `done` | the agent finished what it was asked to do |
+| `working` | the agent is working |
+| `idle` | an agent is present and doing nothing |
+
+`message` is optional and is shown beside the state. A state holds until
+it is replaced, either by the client that reported it or by the person at
+the screen, who can return `done` and `attention` to `idle`. Focusing the
+pane changes nothing. A pane whose client never reported, or whose client
+has disconnected, has no agent. A workspace shows the most urgent state of
+its panes, in the order of the table. When a pane enters `attention` and no
+focused viewer shows its workspace, decade raises a desktop notification.
+There is no reply. A client that claimed no pane gets an error.
+
 ## Errors
 
 Anything decade cannot act on comes back on the same connection:

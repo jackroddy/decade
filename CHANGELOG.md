@@ -31,6 +31,12 @@ command line and what the tool writes.
   A pane that held another app comes back empty, and a window of that app
   fills it again. decade saves a second after a change, every minute, and
   when it stops.
+- A client on the socket reports the state of the agent in its pane with a
+  `status` message: attention, done, working or idle, with an optional
+  message. A state holds until its client or the person at the screen
+  replaces it, and goes when the client disconnects. A pane entering
+  attention raises a desktop notification unless a focused viewer shows
+  its workspace. `decade-channel` gains `AgentState` and `Channel::status`.
 - Super+Tab opens a picker with a cell for each workspace, showing its
   panes scaled down, and a last cell for a new workspace. Super+Tab, Tab,
   the arrow keys or Ctrl+H/J/K/L move between cells. Enter or a click

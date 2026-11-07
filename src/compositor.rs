@@ -85,7 +85,7 @@ use smithay::{
 };
 
 use crate::apps;
-use crate::channel::{AGENT, Host, Out};
+use crate::channel::{AGENT, AgentState, Host, Out};
 use crate::control::{self, viewer_socket_path};
 use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::gpu::Gpu;
@@ -257,6 +257,9 @@ struct Viewer {
 
     /// Per selection, the serial of this viewer's newest offer or clear.
     seen: [u32; 2],
+
+    /// Whether the viewer's window has keyboard focus on its host.
+    focused: bool,
 }
 
 #[derive(Default)]
@@ -703,6 +706,7 @@ impl State {
                 buttons: Vec::new(),
                 workspace: self.workspaces[0].id,
                 seen: [0; 2],
+                focused: false,
             },
         );
         let mut decoder = Decoder::new();
@@ -1224,6 +1228,9 @@ impl State {
                 self.keyboard(keycode, pressed, time);
             }
             ViewerMessage::Keys { locked, keycodes } => {
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.focused = true;
+                }
                 let keyboard = self.seat.get_keyboard().unwrap();
                 let modifiers = keyboard.modifier_state();
                 let locks = [
@@ -1264,6 +1271,9 @@ impl State {
                 }
             }
             ViewerMessage::KeysReleased => {
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.focused = false;
+                }
                 let keys = self
                     .viewers
                     .get_mut(&id)
@@ -1700,6 +1710,7 @@ impl State {
                 Out::Line(to, text) if to == AGENT => reply.push(text),
                 Out::Line(to, text) => self.channel_send(to, &text),
                 Out::Host(Host::Focus(pane)) => self.focus_named(workspace, &pane),
+                Out::Host(Host::Status { .. }) => {}
             }
         }
         let _ = request.reply.send(reply);
@@ -1710,7 +1721,13 @@ impl State {
             return;
         };
         if let Some(index) = self.workspace_index(workspace) {
-            self.workspaces[index].router.disconnected(id);
+            let workspace = &mut self.workspaces[index];
+            workspace.router.disconnected(id);
+            let before = workspace.agents.len();
+            workspace.agents.retain(|_, agent| agent.client != id);
+            if workspace.agents.len() != before {
+                self.request_redraw();
+            }
         }
     }
 
@@ -1726,8 +1743,64 @@ impl State {
             match out {
                 Out::Line(to, text) => self.channel_send(to, &text),
                 Out::Host(Host::Focus(pane)) => self.focus_named(workspace, &pane),
+                Out::Host(Host::Status {
+                    client,
+                    pane,
+                    state,
+                    message,
+                }) => self.agent_status(workspace, client, pane, state, message),
             }
         }
+    }
+
+    fn agent_status(
+        &mut self,
+        workspace: usize,
+        client: usize,
+        pane: String,
+        state: AgentState,
+        message: Option<String>,
+    ) {
+        let agents = &mut self.workspaces[workspace].agents;
+        let raised = state == AgentState::Attention
+            && agents.get(&pane).map(|agent| agent.state) != Some(AgentState::Attention);
+        let body = message
+            .clone()
+            .unwrap_or_else(|| format!("the agent in {pane}"));
+        agents.insert(
+            pane,
+            workspace::Agent {
+                state,
+                message,
+                client,
+            },
+        );
+        let id = self.workspaces[workspace].id;
+        let watched = self
+            .viewers
+            .values()
+            .any(|viewer| viewer.welcomed && viewer.focused && viewer.workspace == id);
+        if raised && !watched {
+            let title = format!("{} needs you", self.workspaces[workspace].name);
+            let notify = Command::new("notify-send")
+                .args(["--app-name=decade", &title, &body])
+                .spawn();
+            if let Ok(mut child) = notify {
+                std::thread::spawn(move || child.wait());
+            }
+        }
+        self.request_redraw();
+    }
+
+    /// Return every agent in the workspace that is done or needs attention
+    /// to idle, as the person at the screen.
+    fn clear_agents(&mut self, workspace: usize) {
+        for agent in self.workspaces[workspace].agents.values_mut() {
+            if agent.state > AgentState::Working {
+                agent.state = AgentState::Idle;
+            }
+        }
+        self.request_redraw();
     }
 
     fn channel_send(&mut self, to: usize, text: &str) {
@@ -1949,6 +2022,7 @@ impl State {
         let name = pane.name.clone();
         layout.remove(id);
         self.workspaces[workspace].router.remove_pane(&name);
+        self.workspaces[workspace].agents.remove(&name);
         if self.workspaces[workspace].closing {
             self.finish_closing(workspace);
             return;

@@ -22,11 +22,29 @@ pub struct Focus {
     pub pane: String,
 }
 
+/// What the agent in a pane is doing, least urgent first.
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentState {
+    Idle,
+    Working,
+    Done,
+    Attention,
+}
+
+#[derive(Deserialize)]
+struct Status {
+    state: AgentState,
+    #[serde(default)]
+    message: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct Envelope {
     hello: Option<Hello>,
     to: Option<String>,
     focus: Option<Focus>,
+    status: Option<Status>,
     panes: Option<Value>,
     #[serde(flatten)]
     rest: Map<String, Value>,
@@ -46,6 +64,12 @@ pub struct Client {
 
 pub enum Host {
     Focus(String),
+    Status {
+        client: usize,
+        pane: String,
+        state: AgentState,
+        message: Option<String>,
+    },
 }
 
 pub enum Out {
@@ -134,6 +158,21 @@ impl Router {
                 )]
             };
         }
+        if let Some(status) = envelope.status {
+            let Some(pane) = self.clients[&id].pane.clone() else {
+                return vec![error_line(
+                    id,
+                    "status is for the agent in a pane, and this client claimed none",
+                    value,
+                )];
+            };
+            return vec![Out::Host(Host::Status {
+                client: id,
+                pane,
+                state: status.state,
+                message: status.message,
+            })];
+        }
         if envelope.panes.is_some() {
             let panes: Vec<PaneInfo> = self
                 .panes
@@ -148,7 +187,7 @@ impl Router {
         let Some(to) = envelope.to else {
             return vec![error_line(
                 id,
-                "a message needs \"to\", \"focus\", \"panes\" or \"hello\"",
+                "a message needs \"to\", \"focus\", \"status\", \"panes\" or \"hello\"",
                 value,
             )];
         };
@@ -359,5 +398,55 @@ mod tests {
         r.handle(1, r#"{"hello": {"name": "coax", "pane": "chat"}}"#);
         r.disconnected(1);
         assert!(r.occupant("chat").is_none());
+    }
+
+    #[test]
+    fn a_status_applies_to_the_pane_its_client_claimed() {
+        let mut r = router();
+        r.connected(1);
+        r.handle(1, r#"{"hello": {"name": "coax", "pane": "chat"}}"#);
+        let out = r.handle(
+            1,
+            r#"{"status": {"state": "attention", "message": "a question"}}"#,
+        );
+        assert!(matches!(
+            &out[..],
+            [Out::Host(Host::Status { client: 1, pane, state: AgentState::Attention, message: Some(m) })]
+                if pane == "chat" && m == "a question"
+        ));
+    }
+
+    #[test]
+    fn a_status_from_a_client_without_a_pane_is_an_error() {
+        let mut r = router();
+        r.connected(1);
+        r.handle(1, r#"{"hello": {"name": "tool"}}"#);
+        let out = lines(r.handle(1, r#"{"status": {"state": "working"}}"#));
+        assert!(
+            out[0].1["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("claimed none")
+        );
+    }
+
+    #[test]
+    fn attention_is_the_most_urgent_state_and_idle_the_least() {
+        let mut states = [
+            AgentState::Done,
+            AgentState::Idle,
+            AgentState::Attention,
+            AgentState::Working,
+        ];
+        states.sort();
+        assert_eq!(
+            states,
+            [
+                AgentState::Idle,
+                AgentState::Working,
+                AgentState::Done,
+                AgentState::Attention
+            ]
+        );
     }
 }

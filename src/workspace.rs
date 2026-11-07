@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use smithay::reexports::calloop::RegistrationToken;
 
-use crate::channel::{AGENT, Router};
+use crate::channel::{AGENT, AgentState, Router};
 use crate::panes::Layout;
 
 pub struct Workspace {
@@ -17,6 +18,17 @@ pub struct Workspace {
 
     /// Whether the workspace goes once its last client has.
     pub closing: bool,
+
+    /// The agent state each pane last reported, by pane name.
+    pub agents: HashMap<String, Agent>,
+}
+
+pub struct Agent {
+    pub state: AgentState,
+    pub message: Option<String>,
+
+    /// The socket client that reported it.
+    pub client: usize,
 }
 
 pub fn home() -> PathBuf {
@@ -58,7 +70,14 @@ impl Workspace {
             router,
             listener: None,
             closing: false,
+            agents: HashMap::new(),
         }
+    }
+
+    /// The most urgent state of the workspace's agents, or `None` when no
+    /// agent has reported.
+    pub fn agent_state(&self) -> Option<AgentState> {
+        self.agents.values().map(|agent| agent.state).max()
     }
 
     /// The app id prefix of a terminal started for one of this workspace's panes.

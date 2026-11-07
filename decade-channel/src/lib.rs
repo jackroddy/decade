@@ -28,6 +28,16 @@ pub enum Message {
     Closed,
 }
 
+/// What the agent in this client's pane is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentState {
+    Attention,
+    Done,
+    Working,
+    Idle,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pane {
     pub name: String,
@@ -153,6 +163,19 @@ impl Channel {
         let mut focus = Map::new();
         focus.insert("pane".into(), Value::String(pane.to_string()));
         self.write(object("focus", Value::Object(focus)))
+    }
+
+    /// Report the state of the agent in the pane this client claimed.
+    pub fn status(&mut self, state: AgentState, message: Option<&str>) -> io::Result<()> {
+        let mut status = Map::new();
+        status.insert(
+            "state".into(),
+            serde_json::to_value(state).map_err(io::Error::other)?,
+        );
+        if let Some(message) = message {
+            status.insert("message".into(), Value::String(message.to_string()));
+        }
+        self.write(object("status", Value::Object(status)))
     }
 
     pub fn panes(&mut self) -> io::Result<()> {
