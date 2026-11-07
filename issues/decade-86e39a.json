@@ -15,7 +15,7 @@
   "lease_expires": "2026-11-07T09:13:06.824738705Z",
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.909931087Z",
-  "updated_at": "2026-11-07T09:30:43.075456285Z",
+  "updated_at": "2026-11-07T09:39:17.458667758Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -50,6 +50,14 @@
       "author": "Jack Roddy/575e4e76",
       "text": "1a65d76 fixes three of the four findings recorded earlier. Frames of another size are now fitted with their aspect ratio on a background-coloured window. The fence wait joins the viewer's event loop instead of blocking it. An exclusive lock on `$XDG_RUNTIME_DIR/decade/server.lock` stops two servers from starting. The server still ignores the `device` in `formats` and renders on the first GPU with a render node.",
       "commit": "1a65d76",
+      "branch": "sessions"
+    },
+    {
+      "id": "e6062ec3",
+      "at": "2026-11-07T09:39:17.458667108Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "a55626a carries the clipboard and primary selection between panes and the host. Copy and paste between panes works on headless-dev. It also needed the server's seat to move data-device focus with keyboard focus, which it never did. Host to decade and decade to host could not be checked there, because the viewer window never gets keyboard focus or an input serial on headless-dev. Jack needs to click the window once and try wl-copy and wl-paste. Still open: an offer from one viewer does not reach other viewers, and drag and drop is refused.",
+      "commit": "a55626a",
       "branch": "sessions"
     }
   ],
