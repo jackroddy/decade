@@ -215,11 +215,7 @@ impl Layout {
     }
 
     pub fn client_rect(&self, pane: &Pane) -> CellRect {
-        let mut inner = pane.rect.inner();
-        if self.bar && !inner.is_empty() {
-            inner.row += 1;
-            inner.rows -= 1;
-        }
+        let inner = pane.rect.inner();
         if inner.rows < 1 {
             return CellRect::EMPTY;
         }
@@ -438,15 +434,6 @@ impl Layout {
                 let column = inner.column + inner.columns.saturating_sub(text.len() as u32) / 2;
                 grid.text(column, inner.row + inner.rows / 2, &text, DIM, PANE);
             }
-            if let Some((start, bar_row, width)) = self.bar_row(pane) {
-                grid.fill(start, bar_row, width, 1, BAR);
-                grid.text(start + 1, bar_row, &pane.name, FOREGROUND, BAR);
-                let end = start + width;
-                let close = end.saturating_sub(BAR_CLOSE.len() as u32);
-                let zoom = close.saturating_sub(BAR_ZOOM.len() as u32);
-                grid.text(zoom, bar_row, BAR_ZOOM, FOREGROUND, BAR);
-                grid.text(close, bar_row, BAR_CLOSE, FOREGROUND, BAR);
-            }
         }
         if self.rows == 0 {
             return;
@@ -460,6 +447,21 @@ impl Layout {
         let zoom = if self.zoom.is_some() { "  zoom" } else { "" };
         let status = format!(" decade  {focused}{zoom}  Ctrl+Space palette");
         grid.text(0, status_row, &status, FOREGROUND, STATUS);
+    }
+
+    pub fn draw_bars(&self, grid: &mut Grid) {
+        for pane in self.visible() {
+            let Some((start, bar_row, width)) = self.bar_row(pane) else {
+                continue;
+            };
+            grid.fill(start, bar_row, width, 1, BAR);
+            grid.text(start + 1, bar_row, &pane.name, FOREGROUND, BAR);
+            let end = start + width;
+            let close = end.saturating_sub(BAR_CLOSE.len() as u32);
+            let zoom = close.saturating_sub(BAR_ZOOM.len() as u32);
+            grid.text(zoom, bar_row, BAR_ZOOM, FOREGROUND, BAR);
+            grid.text(close, bar_row, BAR_CLOSE, FOREGROUND, BAR);
+        }
     }
 
     pub fn draw_overlay(&self, grid: &mut Grid) {
@@ -820,14 +822,14 @@ mod tests {
     }
 
     #[test]
-    fn the_bar_takes_the_top_row_of_the_client_and_has_buttons_on_the_right() {
+    fn the_bar_covers_the_top_row_of_the_client_and_leaves_its_size_alone() {
         let mut layout = Layout::new(100, 41);
         let pane = layout.pane(0).unwrap();
-        assert_eq!(layout.client_rect(pane).rows, 38);
+        let before = layout.client_rect(pane);
         layout.bar = true;
         let pane = layout.pane(0).unwrap();
-        assert_eq!(layout.client_rect(pane).row, 2);
-        assert_eq!(layout.client_rect(pane).rows, 37);
+        assert_eq!(layout.client_rect(pane), before);
+        assert_eq!(layout.bar_hit(48, before.row), Some((0, BarButton::Close)));
         assert_eq!(layout.bar_hit(48, 1), Some((0, BarButton::Close)));
         assert_eq!(layout.bar_hit(42, 1), Some((0, BarButton::Zoom)));
         assert_eq!(layout.bar_hit(2, 1), Some((0, BarButton::Name)));

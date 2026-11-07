@@ -17,9 +17,9 @@ command line and what the tool writes.
   made that way closes when its client exits. The three original panes are
   anchors: they stay as empty slots, saying what they wait for, when their
   client goes, and take it back when it returns.
-- Holding Ctrl alone for 50 ms shows a bar on each pane with its name, a
-  zoom toggle and an x that asks the client to close. Dragging the outline
-  between two panes resizes them.
+- Holding Ctrl alone for 50 ms shows a bar over the top row of each pane
+  with its name, a zoom toggle and an x that asks the client to close.
+  Dragging the outline between two panes resizes them.
 - Ctrl+Space opens a command palette, empty for now; Esc closes it.
 - Scroll wheel events reach clients.
 - decade is an MCP server over streamable HTTP, at the address in

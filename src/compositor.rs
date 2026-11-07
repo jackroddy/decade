@@ -132,6 +132,7 @@ pub struct State {
     unplaced: Vec<ToplevelSurface>,
     chrome: Option<(GlesTexture, Grid, Vec<u8>)>,
     overlay: Option<GlesTexture>,
+    bars: Option<(GlesTexture, Grid)>,
     pointer: Point<f64, Logical>,
     drag: Option<Boundary>,
     ctrl_timer: Option<RegistrationToken>,
@@ -297,6 +298,7 @@ pub fn run(commands: Commands) {
         unplaced: Vec::new(),
         chrome: None,
         overlay: None,
+        bars: None,
         pointer: (0.0, 0.0).into(),
         drag: None,
         ctrl_timer: None,
@@ -586,7 +588,7 @@ impl State {
     fn show_bar(&mut self, show: bool) {
         if self.layout.bar != show {
             self.layout.bar = show;
-            self.relayout();
+            self.backend.window().request_redraw();
         }
     }
 
@@ -835,6 +837,7 @@ impl State {
             layout,
             chrome,
             overlay,
+            bars,
             font,
             glyphs,
             start,
@@ -875,6 +878,22 @@ impl State {
                 .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
                 .ok();
         }
+        if layout.bar {
+            let mut grid = crate::panes::overlay_grid(layout.columns, layout.rows);
+            layout.draw_bars(&mut grid);
+            let unchanged = bars.as_ref().is_some_and(|(_, previous)| {
+                previous.columns == grid.columns && previous.cells == grid.cells
+            });
+            if !unchanged {
+                let pixels = chrome::raster(&grid, font, glyphs);
+                *bars = renderer
+                    .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
+                    .ok()
+                    .map(|texture| (texture, grid));
+            }
+        } else {
+            *bars = None;
+        }
         let texture_element = |renderer: &GlesRenderer, texture: &GlesTexture| {
             Element::Chrome(TextureRenderElement::from_static_texture(
                 Id::new(),
@@ -895,6 +914,9 @@ impl State {
         if layout.palette
             && let Some(texture) = overlay.as_ref()
         {
+            elements.push(texture_element(renderer, texture));
+        }
+        if let Some((texture, _)) = bars.as_ref() {
             elements.push(texture_element(renderer, texture));
         }
         for pane in layout.visible() {
