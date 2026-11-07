@@ -1,0 +1,28 @@
+{
+  "id": "decade-8b1468",
+  "title": "Scroll wheel events reach clients",
+  "body": "`State::input` in `src/compositor.rs` forwards pointer motion and buttons but\ndrops `InputEvent::PointerAxis`, so nothing scrolls under the mouse inside a\npane.\n\n## Proposal\n\nBuild an `AxisFrame` from the event the way smithay's examples do, with the\ndiscrete and v120 values when present, and send it through the seat's\npointer followed by a frame.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:07:44.962055413Z",
+  "updated_at": "2026-11-07T05:07:44.962055413Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "9494070",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
