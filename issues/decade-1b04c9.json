@@ -1,0 +1,30 @@
+{
+  "id": "decade-1b04c9",
+  "title": "A code pane shows a file and marks lines on request",
+  "body": "The empty pane in `src/panes.rs` is a placeholder. Nothing can show a file.\n\n## Proposal\n\nA code pane: a decade-aware client that occupies a pane, opens a file, scrolls\nto a line and marks ranges of lines, on messages from the socket. Read only;\nwhether it ever edits is a separate decision, as Jack said on 2026-11-05.\n\nTwo ways to build it:\n\n| Option | Cost | Fit |\n|---|---|---|\n| A TUI in a ghostty pane | a small ratatui program, syntax colouring from a crate | runs anywhere, same shape as the chat |\n| A native Wayland client drawing cells | its own renderer | pays for itself only with pixel features |\n\nLean: the TUI. It follows the TUI rule by construction and reuses whatever\nthe chat learns about rendering.\n\n## Out of scope\n\n- Editing.\n- Multiple files side by side. The first version shows one file per pane;\n  two files means two panes.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "decade-ee478b",
+  "blocked_by": [
+    "decade-bfeed1"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T01:47:21.311703073Z",
+  "updated_at": "2026-11-07T01:47:21.311703073Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "7932094",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
