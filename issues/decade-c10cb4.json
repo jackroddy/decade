@@ -1,0 +1,28 @@
+{
+  "id": "decade-c10cb4",
+  "title": "How do decade's server and its viewers split?",
+  "body": "decade today is one process: a smithay compositor whose output is a winit window on Hyprland (`run` in `src/compositor.rs`). Persistent sessions need the clients to stay connected to a process that outlives the window.\n\n## Options\n\n- Window inside the server. One long-lived decade process per session renders with surfaceless EGL when nothing is shown, and opens or closes its own host window on request. No frames leave the process. It costs dropping smithay's winit helper, which creates one window once. It rules out several viewers and remote viewing unless the second option is built on top later.\n- Separate viewer. A headless server renders each frame into a dmabuf and passes it over a unix socket to a thin viewer, which shows it on Hyprland. The viewer sends input back. A local viewer can hand the dmabuf straight to Hyprland, so frames are not copied. A remote viewer would need the frames encoded and streamed, which is a separate piece of work on the same frame protocol.\n\nJack leans to the separate viewer, because remote viewing would be worth a lot if it works well.\n\n## Open\n\n- Several viewers at different sizes: the panes' clients can have only one size, so one viewer has to decide the layout's size.\n- Frame sync between processes: buffer reuse, fences, and how the viewer paces the server.\n- Where Hyprland-specific code lives, such as the shortcuts inhibitor, once the window belongs to a viewer.",
+  "type": "decision",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-da02e3",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T08:23:04.073040109Z",
+  "updated_at": "2026-11-07T08:23:04.073040109Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "60ddbe2",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
