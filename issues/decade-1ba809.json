@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:19:57.462094981Z",
-  "updated_at": "2026-11-07T23:31:39.762498854Z",
+  "updated_at": "2026-11-07T23:31:39.772569641Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "6ed36ac4",
+      "at": "2026-11-07T23:31:39.772568931Z",
+      "author": "Jack Roddy/6b9cbed5",
+      "text": "Jack moved this into the usability and UI round (decade-492261) as its second feature after the frame. Each tab is one split tree, as herdr does it, shown in the top bar from the frame issue. The tabs are saved with the workspace, so workspaces.toml moves to version 2 and the reader keeps an arm for version 1 under CLAUDE.md.",
+      "commit": "bc045c7",
+      "branch": "sessions"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "60ddbe2",
