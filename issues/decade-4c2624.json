@@ -1,0 +1,30 @@
+{
+  "id": "decade-4c2624",
+  "title": "A server holds a workspace per project",
+  "body": "A decade server holds every workspace (see the note on decade-da02e3). A workspace is a project, with its own split tree and default cwd. Today decade has one `Layout` with one tree.\n\n## Proposal\n\nThe server keeps several workspaces. A viewer shows one, and switches between them with a key and from the palette. A pane started in a workspace starts in its cwd.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-da02e3",
+  "blocked_by": [
+    "decade-86e39a"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T08:33:59.919739011Z",
+  "updated_at": "2026-11-07T08:33:59.919739011Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "60ddbe2",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
