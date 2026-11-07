@@ -1,0 +1,28 @@
+{
+  "id": "decade-f92199",
+  "title": "A pane split by a new pane keeps its old size",
+  "body": "Jack reports on 2026-11-06 that a new terminal pane made while a terminal pane is focused gets drawn over by the old terminal. The old terminal keeps its size until something calls `relayout`.\n\n`Layout::add_transient` in `src/panes.rs` splits the focused pane, calls `arrange`, and sets `layout.focused` to the new pane. `new_terminal_pane` in `src/compositor.rs` then calls `focus(id)`, which reads `previous` from `layout.focused`. That is already the new id, so `configure(previous)` and `configure(id)` both target the new pane, which has no client yet. The pane that was split never gets its new size.\n\nThe same order appears in `commit`, where an unknown window gets `add_transient` and then `focus`, and in `remove_pane`, where `layout.remove` grows a neighbour and `focus` configures only the focused pane.\n\n## Proposal\n\nAll three sites call `relayout()` before `focus`. `relayout` configures every pane with its current rect and Activated state.",
+  "type": "bug",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:40:06.084535526Z",
+  "updated_at": "2026-11-07T05:40:06.084535526Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "93a5286",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
