@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T01:05:07.995242382Z",
-  "updated_at": "2026-11-07T01:16:59.06106049Z",
+  "updated_at": "2026-11-07T01:18:05.797881771Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -23,6 +23,14 @@
       "at": "2026-11-07T01:16:59.06105991Z",
       "author": "Jack Roddy/618aab71",
       "text": "First result, commit 200bb66 on dev. ghostty runs as a client of decade and draws its shell prompt inside the terminal pane, under the cell chrome, on the first try. smithay 0.7 with backend_winit, backend_egl, renderer_gl and wayland_frontend was enough; no git pin was needed. Two things were cut from the proposal without loss: wl_drm, whose binding needs smithay's use_system_lib feature, and dmabuf default feedback, whose render-node lookup needs backend_drm. ghostty's GL path works over the plain dmabuf v3 global. Not yet checked by hand: keys reaching the shell, Ctrl+h, j, k, l moving focus, and a window resize reconfiguring the client. Open: the nested output reports scale 1, so chrome and client both render at scale 1 on a 1.25 monitor; the chrome's cell count went from 173 to 238 columns for that reason. The main loop busy-polls winit with a zero timeout and relies on the swap for pacing, which is fine for the spike and wrong for a product.",
+      "commit": "200bb66",
+      "branch": "dev"
+    },
+    {
+      "id": "b783c9ba",
+      "at": "2026-11-07T01:18:05.797880831Z",
+      "author": "Jack Roddy/618aab71",
+      "text": "Checked by hand by Jack on 2026-11-06 at commit 200bb66: keys reach the shell, Ctrl+h, j, k, l move focus between panes, a window resize relayouts the pane and ghostty follows, and a click focuses the pane under the pointer. Everything the proposal asked for works except the scale, which is still 1. The milestone's language trigger did not fire: nothing the spike needed was missing from smithay's winit backend.",
       "commit": "200bb66",
       "branch": "dev"
     }
