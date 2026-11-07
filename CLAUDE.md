@@ -47,6 +47,10 @@ is the command line, the socket protocol and what the tool writes; for
 breaking axis, a change that breaks one of those moves that crate's minor.
 Anything else moves the patch. A protocol change moves both.
 
+**Text.** decade rasterizes text at its physical pixel size and draws each
+texture at that size, on whole pixels. Text is never scaled. Anything drawn
+scaled, such as the drag ghost, leaves its text out.
+
 **Formats.** A change to an on-disk layout bumps that format's version byte.
 The reader keeps an arm for the old layout by default. A breaking release may
 drop that arm, listed under `### Removed`.
@@ -54,7 +58,9 @@ drop that arm, listed under `### Removed`.
 **Running decade.** Claude never starts decade, on Jack's screen or on
 `headless-dev`. Claude builds it, asks Jack to run it, and waits for his
 report. `decade-dev` runs the debug build and `decade` the release build.
-Both are links to `scripts/launch`, which rebuilds first.
+Both are links to `scripts/launch`, which rebuilds first. Claude never asks
+Jack for a screenshot. When Claude needs to know how something looks, Claude
+asks him to describe it.
 
 **Windows during development.** A decade window whose class is `decade-dev`
 opens on a headless Hyprland output named `headless-dev`, kept off the real
