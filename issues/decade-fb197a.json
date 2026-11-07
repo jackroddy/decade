@@ -3,7 +3,7 @@
   "title": "Command palette",
   "body": "Ctrl+Space opens an empty palette today. `Layout.palette` is set, `draw_overlay` in `src/panes.rs` draws a box on the overlay layer, and `keyboard` in `src/compositor.rs` swallows every key until Esc closes it.\n\nJack modelled the palette on the Omarchy menu (Super+Space). That menu is a tree of rows, each with an icon, a label, an optional description, and either an action or a submenu. The first version of decade's palette has three menus at its root: Launch, Layout and Settings. Typing filters the list in front of you. Global search across every menu waits until there are enough rows to make it useful. Sessions are out until Jack decides how they should work.",
   "type": "milestone",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T06:31:44.527374042Z",
-  "updated_at": "2026-11-07T06:31:44.527374042Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T07:29:43.518489535Z",
+  "closed_at": "2026-11-07T07:29:43.518489535Z",
+  "close_reason": "The palette frame and Launch landed in c741ff2 and 2fd6fa5, and settings in 3f10063. The Layout menu was dropped.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "4fa2ae0",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "3b8a796",
+      "branch": "dev"
+    }
   }
 }
