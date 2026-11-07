@@ -1,0 +1,10 @@
+{
+  "slug": "ghostty-class-needs-gtk-app-id",
+  "text": "ghostty --class=NAME sets the Wayland app id, but GTK accepts only a valid application id (reverse-DNS with a dot, such as decade.chat); a bare word like 'extra' is rejected and the app id falls back to com.mitchellh.ghostty. decade's pane routing by app id depends on this. Seen on 2026-11-06.",
+  "created_at": "2026-11-07T05:27:44.902972172Z",
+  "updated_at": "2026-11-07T05:27:44.902972172Z",
+  "stamp": {
+    "commit": "93a5286",
+    "branch": "dev"
+  }
+}
