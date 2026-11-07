@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:19:57.471358146Z",
-  "updated_at": "2026-11-07T21:20:58.88963946Z",
+  "updated_at": "2026-11-07T21:59:58.285810535Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/575e4e76",
       "text": "Part of this is settled by the workspace design in decade-4c2624: the chat, terminal and code anchors stop being the default, and --chat and --code are removed. What a pane holds and what pinning means are still open.",
       "commit": "d1be0b5",
+      "branch": "sessions"
+    },
+    {
+      "id": "829c876f",
+      "at": "2026-11-07T21:59:58.285809935Z",
+      "author": "Jack Roddy/6b9cbed5",
+      "text": "Jack settled this, starting from Claude's leans.\n\n- A pane holds a name, a command or a plain shell, and a cwd. decade still gives each terminal it starts an app id (`--class=decade.w<id>.<pane>`) and matches the window to its pane by it. A pane is no longer configured with an app id.\n- Pinning keeps the slot. When a pinned pane's program exits, the pane stays empty with a button that starts its command again. An unpinned pane closes with its program. A pin no longer waits for an app id. decade-7c65be is this change.\n- decade does not save or relaunch GUI apps. That is a separate feature, decade-15e5eb.\n- The chat, terminal and code anchors were removed in decade-4c2624.",
+      "commit": "31d801e",
       "branch": "sessions"
     }
   ],
