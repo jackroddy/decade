@@ -1,5 +1,7 @@
 mod gpu;
+mod grid;
 mod panes;
+mod text;
 
 use std::sync::Arc;
 
@@ -9,6 +11,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
 use gpu::Gpu;
+use grid::Grid;
 
 #[derive(Default)]
 struct App {
@@ -39,9 +42,15 @@ impl ApplicationHandler for App {
                 gpu.resize(size.width, size.height);
                 window.request_redraw();
             }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                gpu.set_scale(scale_factor as f32);
+                window.request_redraw();
+            }
             WindowEvent::RedrawRequested => {
-                let (width, height) = gpu.size();
-                gpu.render(&panes::layout(width, height));
+                let (columns, rows) = gpu.grid_size();
+                let mut grid = Grid::new(columns, rows, panes::FOREGROUND, panes::BACKGROUND);
+                panes::layout(&mut grid);
+                gpu.render(&grid);
             }
             _ => {}
         }

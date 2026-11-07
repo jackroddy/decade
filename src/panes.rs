@@ -1,59 +1,24 @@
-use crate::gpu::Rect;
+use crate::grid::{Grid, Rgba};
 
-pub const CELL_WIDTH: u32 = 9;
-pub const CELL_HEIGHT: u32 = 18;
+pub const BACKGROUND: Rgba = [0.07, 0.07, 0.09, 1.0];
+pub const FOREGROUND: Rgba = [0.80, 0.80, 0.84, 1.0];
+const PANE: Rgba = [0.11, 0.11, 0.14, 1.0];
+const TITLE: Rgba = [0.20, 0.22, 0.30, 1.0];
+const STATUS: Rgba = [0.16, 0.18, 0.24, 1.0];
 
-const BACKGROUND: [f32; 4] = [0.07, 0.07, 0.09, 1.0];
-const PANE: [f32; 4] = [0.11, 0.11, 0.14, 1.0];
-const TITLE: [f32; 4] = [0.20, 0.22, 0.30, 1.0];
-const STATUS: [f32; 4] = [0.16, 0.18, 0.24, 1.0];
-
-struct Grid {
-    width: u32,
-    height: u32,
-    columns: u32,
-    rows: u32,
+fn pane(grid: &mut Grid, column: u32, row: u32, columns: u32, rows: u32, title: &str) {
+    if columns < 3 || rows < 3 {
+        return;
+    }
+    grid.fill(column, row, columns, rows, PANE);
+    grid.fill(column, row, columns, 1, TITLE);
+    grid.text(column + 1, row, title, FOREGROUND, TITLE);
 }
 
-impl Grid {
-    fn rect(&self, column: u32, row: u32, columns: u32, rows: u32, color: [f32; 4]) -> Rect {
-        let x0 = (column * CELL_WIDTH) as f32 / self.width as f32 * 2.0 - 1.0;
-        let x1 = ((column + columns) * CELL_WIDTH) as f32 / self.width as f32 * 2.0 - 1.0;
-        let y0 = 1.0 - (row * CELL_HEIGHT) as f32 / self.height as f32 * 2.0;
-        let y1 = 1.0 - ((row + rows) * CELL_HEIGHT) as f32 / self.height as f32 * 2.0;
-        Rect {
-            min: [x0, y1],
-            max: [x1, y0],
-            color,
-        }
-    }
-
-    fn pane(&self, out: &mut Vec<Rect>, column: u32, row: u32, columns: u32, rows: u32) {
-        if columns < 3 || rows < 3 {
-            return;
-        }
-        out.push(self.rect(column, row, columns, rows, PANE));
-        out.push(self.rect(column, row, columns, 1, TITLE));
-    }
-}
-
-pub fn layout(width: u32, height: u32) -> Vec<Rect> {
-    let grid = Grid {
-        width,
-        height,
-        columns: width / CELL_WIDTH,
-        rows: height / CELL_HEIGHT,
-    };
-    let mut out = Vec::with_capacity(8);
-    out.push(Rect {
-        min: [-1.0, -1.0],
-        max: [1.0, 1.0],
-        color: BACKGROUND,
-    });
+pub fn layout(grid: &mut Grid) {
     if grid.columns < 8 || grid.rows < 8 {
-        return out;
+        return;
     }
-
     let status_row = grid.rows - 1;
     let body_rows = status_row - 1;
     let left_columns = grid.columns / 2;
@@ -63,15 +28,17 @@ pub fn layout(width: u32, height: u32) -> Vec<Rect> {
     let bottom_row = top_rows + 1;
     let bottom_rows = body_rows - bottom_row;
 
-    grid.pane(&mut out, 0, 0, left_columns, body_rows);
-    grid.pane(&mut out, right_column, 0, right_columns, top_rows);
-    grid.pane(
-        &mut out,
+    pane(grid, 0, 0, left_columns, body_rows, "chat");
+    pane(grid, right_column, 0, right_columns, top_rows, "terminal");
+    pane(
+        grid,
         right_column,
         bottom_row,
         right_columns,
         bottom_rows,
+        "empty",
     );
-    out.push(grid.rect(0, status_row, grid.columns, 1, STATUS));
-    out
+    grid.fill(0, status_row, grid.columns, 1, STATUS);
+    let status = format!(" decade  {} x {} cells", grid.columns, grid.rows);
+    grid.text(0, status_row, &status, FOREGROUND, STATUS);
 }

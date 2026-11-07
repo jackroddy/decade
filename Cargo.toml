@@ -11,6 +11,8 @@ authors = ["Jack Roddy <jack.w.roddy@gmail.com>"]
 repository = "https://github.com/jackroddy/decade"
 
 [dependencies]
+fontdb = "0.24.0"
 pollster = "1"
+swash = "0.2.10"
 wgpu = "30"
 winit = "0.30"
