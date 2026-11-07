@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T07:20:54.715857133Z",
-  "updated_at": "2026-11-07T07:20:54.715857133Z",
+  "updated_at": "2026-11-07T08:10:19.269396787Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "066bb743",
+      "at": "2026-11-07T08:10:19.269395957Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "Until 60ddbe2, decade's dmabuf global carried no feedback, so a client's Mesa had no GPU to open and could fall back to software rendering. That broke ghostty at large sizes. Some of the misbehaviour listed in this issue may have had the same cause, so the apps are worth trying again.",
+      "commit": "60ddbe2",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "c741ff2",
