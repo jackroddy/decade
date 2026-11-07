@@ -3,7 +3,7 @@
   "title": "A viewer-only decade builds on macOS",
   "body": "The viewer is part of the decade binary, and Jack's only other machine is a MacBook.\n\n## Proposal\n\nThe compositor, the server and anything else Linux-specific compile only on Linux, behind cfg gates. On macOS, decade builds as a viewer alone.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-da02e3",
@@ -15,16 +15,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.956301428Z",
-  "updated_at": "2026-11-07T08:33:59.956301428Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T09:10:41.264017477Z",
+  "closed_at": "2026-11-07T09:10:41.264017477Z",
+  "close_reason": "2cae090 gates every Linux-only module and dependency, and cargo check passes for aarch64-apple-darwin. On macOS decade is a placeholder until remote viewing (decade-e3a784) gives it something to show.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "60ddbe2",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "2cae090",
+      "branch": "sessions"
+    }
   }
 }
