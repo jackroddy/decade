@@ -1,0 +1,28 @@
+{
+  "id": "decade-e00603",
+  "title": "Dropping a dragged pane near an edge splits the target there",
+  "body": "Dragging a pane (see `Drag::Pane` in `src/compositor.rs`) can only swap it with the pane it is dropped on. `State::drop` calls `Layout::swap`, which exchanges the two leaf ids in the split tree.\n\n## Proposal\n\nA drop near one edge of the target pane splits the target there and moves the dragged pane into the new half, using the same split as `Layout::add_transient`. The target's outline shows which half the pane will take while the pointer is over that edge.\n\n## Open\n\n- How wide the edge band is, in cells or as a fraction of the pane.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T06:01:21.185090388Z",
+  "updated_at": "2026-11-07T06:01:21.185090388Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "3ee6949",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
