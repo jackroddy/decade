@@ -20,6 +20,9 @@ command line and what the tool writes.
 - Holding Ctrl alone for 50 ms shows a bar over the top row of each pane
   with its name, a zoom toggle and an x that asks the client to close.
   Dragging the outline between two panes resizes them.
+- Ctrl+dragging a pane, or dragging it by the name on its bar, carries a
+  small copy of it under the pointer. Dropping it on another pane swaps the
+  two.
 - Ctrl+Space opens a command palette, empty for now; Esc closes it.
 - Scroll wheel events reach clients.
 - decade is an MCP server over streamable HTTP, at the address in

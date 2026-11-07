@@ -18,6 +18,7 @@ use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, render_elements_from_surface_tree,
 };
 use smithay::backend::renderer::element::texture::TextureRenderElement;
+use smithay::backend::renderer::element::utils::RescaleRenderElement;
 use smithay::backend::renderer::element::{Id, Kind};
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
 use smithay::backend::renderer::utils::{draw_render_elements, on_commit_buffer_handler};
@@ -85,11 +86,25 @@ const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
 const BAR_HOLD: Duration = Duration::from_millis(50);
 const BTN_LEFT: u32 = 0x110;
+const GHOST_SCALE: f64 = 0.2;
+const GHOST_ALPHA: f32 = 0.8;
+const GRAB_ANIMATION: Duration = Duration::from_millis(100);
+
+enum Drag {
+    Boundary(Boundary),
+    Pane {
+        id: usize,
+        grab: Point<i32, Physical>,
+        start: Instant,
+    },
+}
 
 render_elements! {
     Element<R> where R: ImportAll + ImportMem;
     Surface = WaylandSurfaceRenderElement<R>,
     Chrome = TextureRenderElement<<R as RendererSuper>::TextureId>,
+    Ghost = RescaleRenderElement<WaylandSurfaceRenderElement<R>>,
+    GhostChrome = RescaleRenderElement<TextureRenderElement<<R as RendererSuper>::TextureId>>,
 }
 
 enum Key {
@@ -133,8 +148,9 @@ pub struct State {
     chrome: Option<(GlesTexture, Grid, Vec<u8>)>,
     overlay: Option<GlesTexture>,
     bars: Option<(GlesTexture, Grid)>,
+    ghost: Option<(GlesTexture, bool)>,
     pointer: Point<f64, Logical>,
-    drag: Option<Boundary>,
+    drag: Option<Drag>,
     ctrl_timer: Option<RegistrationToken>,
     scale: f64,
     start: Instant,
@@ -299,6 +315,7 @@ pub fn run(commands: Commands) {
         chrome: None,
         overlay: None,
         bars: None,
+        ghost: None,
         pointer: (0.0, 0.0).into(),
         drag: None,
         ctrl_timer: None,
@@ -624,12 +641,22 @@ impl State {
             InputEvent::PointerMotionAbsolute { event } => {
                 let size = self.backend.window_size().to_f64().to_logical(self.scale);
                 self.pointer = event.position_transformed(size.to_i32_round());
-                if let Some(boundary) = self.drag.take() {
-                    let (column, row) = self.pointer_cell();
-                    self.layout.drag_boundary(&boundary, column, row);
-                    self.drag = Some(boundary);
-                    self.relayout();
-                    return;
+                match self.drag.take() {
+                    Some(Drag::Boundary(boundary)) => {
+                        let (column, row) = self.pointer_cell();
+                        self.layout.drag_boundary(&boundary, column, row);
+                        self.drag = Some(Drag::Boundary(boundary));
+                        self.relayout();
+                        return;
+                    }
+                    Some(Drag::Pane { id, grab, start }) => {
+                        let target = self.pane_under_pointer().filter(|&target| target != id);
+                        self.layout.drop_target = target;
+                        self.drag = Some(Drag::Pane { id, grab, start });
+                        self.backend.window().request_redraw();
+                        return;
+                    }
+                    None => {}
                 }
                 let pointer = self.seat.get_pointer().unwrap();
                 let focus = self.pane_under_pointer().and_then(|id| {
@@ -656,7 +683,8 @@ impl State {
                     if pressed && self.press_on_chrome() {
                         return;
                     }
-                    if !pressed && self.drag.take().is_some() {
+                    if !pressed && let Some(drag) = self.drag.take() {
+                        self.drop(drag);
                         return;
                     }
                 }
@@ -762,27 +790,74 @@ impl State {
 
     fn press_on_chrome(&mut self) -> bool {
         let (column, row) = self.pointer_cell();
-        if let Some((id, button)) = self.layout.bar_hit(column, row) {
-            match button {
-                BarButton::Close => self.close_pane(id),
-                BarButton::Zoom => {
-                    self.layout.toggle_zoom(id);
-                    self.relayout();
-                }
-                BarButton::Name => self.focus(id),
+        let bar = self.layout.bar_hit(column, row);
+        match bar {
+            Some((id, BarButton::Close)) => {
+                self.close_pane(id);
+                return true;
             }
-            return true;
+            Some((id, BarButton::Zoom)) => {
+                self.layout.toggle_zoom(id);
+                self.relayout();
+                return true;
+            }
+            _ => {}
         }
         if let Some(boundary) = self.layout.boundary_at(column, row) {
-            self.drag = Some(boundary);
+            self.drag = Some(Drag::Boundary(boundary));
             return true;
         }
-        if let Some(id) = self.pane_under_pointer()
-            && id != self.layout.focused
-        {
+        let Some(id) = self.pane_under_pointer() else {
+            return false;
+        };
+        let ctrl = self.seat.get_keyboard().unwrap().modifier_state().ctrl;
+        if ctrl || bar.is_some() {
+            self.start_pane_drag(id);
+            return true;
+        }
+        if id != self.layout.focused {
             self.focus(id);
         }
         false
+    }
+
+    fn start_pane_drag(&mut self, id: usize) {
+        self.focus(id);
+        let pointer = self.pointer.to_physical(self.scale).to_i32_round();
+        let grab = pointer - self.pane_origin(id);
+        self.drag = Some(Drag::Pane {
+            id,
+            grab,
+            start: Instant::now(),
+        });
+        self.layout.dragging = Some(id);
+        self.backend.window().request_redraw();
+    }
+
+    fn drop(&mut self, drag: Drag) {
+        let Drag::Pane { id, .. } = drag else {
+            return;
+        };
+        self.layout.dragging = None;
+        self.ghost = None;
+        if let Some(target) = self.layout.drop_target.take() {
+            self.layout.swap(id, target);
+            self.relayout();
+        } else {
+            self.backend.window().request_redraw();
+        }
+    }
+
+    fn pane_origin(&self, id: usize) -> Point<i32, Physical> {
+        let Some(pane) = self.layout.pane(id) else {
+            return Point::default();
+        };
+        let rect = pane.rect;
+        (
+            (rect.column * self.font.cell_width) as i32,
+            (rect.row * self.font.cell_height) as i32,
+        )
+            .into()
     }
 
     fn pointer_cell(&self) -> (u32, u32) {
@@ -844,6 +919,9 @@ impl State {
             glyphs,
             start,
             scale,
+            drag,
+            pointer,
+            ghost,
             ..
         } = self;
         let scale = *scale;
@@ -913,6 +991,80 @@ impl State {
         };
 
         let mut elements: Vec<Element<GlesRenderer>> = Vec::new();
+        let mut animating = false;
+        let dragged = match drag {
+            Some(Drag::Pane { id, grab, start }) => {
+                layout.pane(*id).map(|pane| (pane, *grab, *start))
+            }
+            _ => None,
+        };
+        if let Some((pane, grab, start)) = dragged {
+            let t = (start.elapsed().as_secs_f64() / GRAB_ANIMATION.as_secs_f64()).min(1.0);
+            animating = t < 1.0;
+            let eased = 1.0 - (1.0 - t).powi(3);
+            let ghost_scale = 1.0 + (GHOST_SCALE - 1.0) * eased;
+            let alpha = 1.0 + (GHOST_ALPHA - 1.0) * eased as f32;
+            let pointer = pointer.to_physical(scale).to_i32_round();
+            let origin = pointer - grab;
+            let pixels = (
+                (pane.rect.columns * font.cell_width) as i32,
+                (pane.rect.rows * font.cell_height) as i32,
+            );
+            if ghost.as_ref().is_none_or(|(_, bar)| *bar != layout.bar)
+                && let Some(grid) = layout.draw_ghost(pane.id)
+            {
+                let raster = chrome::raster(&grid, font, glyphs);
+                *ghost = renderer
+                    .import_memory(&raster, Fourcc::Abgr8888, pixels.into(), false)
+                    .ok()
+                    .map(|texture| (texture, layout.bar));
+            }
+            if let Some((texture, _)) = ghost.as_ref() {
+                let size: Size<i32, Physical> = pixels.into();
+                let element = TextureRenderElement::from_static_texture(
+                    Id::new(),
+                    renderer.context_id(),
+                    origin.to_f64(),
+                    texture.clone(),
+                    1,
+                    Transform::Normal,
+                    Some(alpha),
+                    None,
+                    Some(size.to_f64().to_logical(scale).to_i32_round()),
+                    None,
+                    Kind::Unspecified,
+                );
+                elements.push(Element::GhostChrome(RescaleRenderElement::from_element(
+                    element,
+                    pointer,
+                    ghost_scale,
+                )));
+            }
+            if let Some(toplevel) = &pane.toplevel {
+                let client = layout.client_rect(pane);
+                let offset: Point<i32, Physical> = (
+                    ((client.column - pane.rect.column) * font.cell_width) as i32,
+                    ((client.row - pane.rect.row) * font.cell_height) as i32,
+                )
+                    .into();
+                let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                    render_elements_from_surface_tree(
+                        renderer,
+                        toplevel.wl_surface(),
+                        origin + offset,
+                        scale,
+                        alpha,
+                        Kind::Unspecified,
+                    );
+                elements.extend(surfaces.into_iter().map(|surface| {
+                    Element::Ghost(RescaleRenderElement::from_element(
+                        surface,
+                        pointer,
+                        ghost_scale,
+                    ))
+                }));
+            }
+        }
         if layout.palette
             && let Some(texture) = overlay.as_ref()
         {
@@ -925,6 +1077,9 @@ impl State {
             let Some(toplevel) = &pane.toplevel else {
                 continue;
             };
+            if layout.dragging == Some(pane.id) {
+                continue;
+            }
             let rect = layout.client_rect(pane);
             if rect.columns == 0 || rect.rows == 0 {
                 continue;
@@ -961,6 +1116,9 @@ impl State {
             .unwrap();
         let _ = frame.finish().unwrap();
         drop(framebuffer);
+        if animating {
+            backend.window().request_redraw();
+        }
 
         let time = start.elapsed().as_millis() as u32;
         for pane in layout.visible() {
