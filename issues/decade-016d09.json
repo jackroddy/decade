@@ -1,0 +1,28 @@
+{
+  "id": "decade-016d09",
+  "title": "Pane gaps, unfocused outlines and pinned panes look unfinished",
+  "body": "The UI audit of 2026-11-07 (`tmp-claude/2026-11-07-ui-audit/`, local to Jack's machine) found these in the normal workspace view:\n\n- Gaps between panes and the margin at the window's edge are not uniform. The horizontal and vertical gaps differ.\n- An unfocused pane's outline is a faint grey and hard to see. Only the focused pane has colour.\n- Nothing shows that a pane is pinned except the Ctrl bar.\n\nThe status line findings belong to the frame issue, which replaces it.\n\n## Proposal\n\nMake every gap and the outer margin the same width. Raise the unfocused outline's contrast, and consider dimming unfocused content slightly. Draw a small pinned mark on a pinned pane's outline.\n\n## Open\n\n- The overlays (palette, picker, Ctrl bar, settings) were not audited, because no input reached them. They wait for the screenshot tool in this milestone.",
+  "type": "task",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "decade-492261",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T23:31:39.742798946Z",
+  "updated_at": "2026-11-07T23:31:39.742798946Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "bc045c7",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
