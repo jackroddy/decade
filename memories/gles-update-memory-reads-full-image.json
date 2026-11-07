@@ -1,0 +1,10 @@
+{
+  "slug": "gles-update-memory-reads-full-image",
+  "text": "smithay 0.7 GlesRenderer::update_memory(texture, data, region) sets UNPACK_ROW_LENGTH to the texture width and UNPACK_SKIP_PIXELS/ROWS to the region origin, so data must be a full-texture-sized image, not the region's pixels. decade keeps the chrome's RGBA buffer beside its texture for this (patch_chrome in src/compositor.rs). Passing only the region's pixels draws garbage. Found by trial on 2026-11-06.",
+  "created_at": "2026-11-07T05:27:44.894301831Z",
+  "updated_at": "2026-11-07T05:27:44.894301831Z",
+  "stamp": {
+    "commit": "93a5286",
+    "branch": "dev"
+  }
+}
