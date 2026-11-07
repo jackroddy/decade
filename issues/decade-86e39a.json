@@ -1,0 +1,30 @@
+{
+  "id": "decade-86e39a",
+  "title": "A headless server owns the panes and a local viewer shows them",
+  "body": "Today one decade process is both compositor and window (`run` in `src/compositor.rs`, through smithay's winit backend), so closing the window ends every pane.\n\n## Proposal\n\n- `decade server` runs the compositor with surfaceless EGL on the GPU's render node and no window. It renders into a small pool of dmabufs and keeps running with no viewer.\n- `decade` starts the server if it is not running, then attaches a viewer: a Wayland client of Hyprland that shows the server's dmabufs directly and sends input back, over the protocol from the spec.\n- The viewer takes over everything about the host window: its size and scale, the shortcuts inhibitor, the Hyprland workspace watcher, and the key repeat settings.\n\n## Open\n\n- How the server reuses a buffer only after the viewer and Hyprland release it.\n- What the server does about frame callbacks to clients while no viewer is attached.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-da02e3",
+  "blocked_by": [
+    "decade-f1897f"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T08:33:59.909931087Z",
+  "updated_at": "2026-11-07T08:33:59.909931087Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "60ddbe2",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
