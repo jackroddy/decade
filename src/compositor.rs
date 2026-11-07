@@ -106,6 +106,13 @@ const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
 const BTN_LEFT: u32 = 0x110;
 const POOL_SIZE: usize = 3;
+const KEY_LEFTCTRL: u32 = 29;
+const KEY_LEFTSHIFT: u32 = 42;
+const KEY_C: u32 = 46;
+const KEY_V: u32 = 47;
+const KEY_X: u32 = 45;
+const KEY_LEFTMETA: u32 = 125;
+const KEY_RIGHTMETA: u32 = 126;
 const RESIZE_STEP: u32 = 2;
 const KEY_CAPSLOCK: u32 = 58;
 const KEY_NUMLOCK: u32 = 69;
@@ -145,8 +152,16 @@ enum Key {
     Resize(Direction),
     NewPane,
     Palette,
+    Clipboard(Chord),
     Menu(MenuKey),
     Swallow,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Chord {
+    Copy,
+    Paste,
+    Cut,
 }
 
 struct ChildEnv {
@@ -1721,6 +1736,58 @@ impl State {
         }
     }
 
+    fn send_chord(&mut self, chord: Chord) {
+        let terminal = self
+            .layout
+            .pane(self.layout.focused)
+            .and_then(|pane| pane.toplevel.as_ref())
+            .and_then(|toplevel| app_id(toplevel.wl_surface()))
+            .is_some_and(|app_id| app_id.starts_with("decade."));
+        let keys: &[u32] = match (terminal, chord) {
+            (true, Chord::Copy | Chord::Cut) => &[KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_C],
+            (true, Chord::Paste) => &[KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_V],
+            (false, Chord::Copy) => &[KEY_LEFTCTRL, KEY_C],
+            (false, Chord::Paste) => &[KEY_LEFTCTRL, KEY_V],
+            (false, Chord::Cut) => &[KEY_LEFTCTRL, KEY_X],
+        };
+        let held_super: Vec<u32> = self
+            .active
+            .and_then(|id| self.viewers.get(&id))
+            .map(|viewer| {
+                viewer
+                    .keys
+                    .iter()
+                    .copied()
+                    .filter(|&key| key == KEY_LEFTMETA || key == KEY_RIGHTMETA)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let time = self.start.elapsed().as_millis() as u32;
+        let keyboard = self.seat.get_keyboard().unwrap();
+        let send = |state: &mut State, key: u32, pressed: KeyState| {
+            keyboard.input::<(), _>(
+                state,
+                Keycode::new(key + 8),
+                pressed,
+                SERIAL_COUNTER.next_serial(),
+                time,
+                |_, _, _| FilterResult::Forward,
+            );
+        };
+        for &key in &held_super {
+            send(self, key, KeyState::Released);
+        }
+        for &key in keys {
+            send(self, key, KeyState::Pressed);
+        }
+        for &key in keys.iter().rev() {
+            send(self, key, KeyState::Released);
+        }
+        for &key in &held_super {
+            send(self, key, KeyState::Pressed);
+        }
+    }
+
     fn start_repeat(&mut self, code: u32, key: Key) {
         let interval = Duration::from_millis(1000 / self.repeat.rate as u64);
         let timer = Timer::from_duration(Duration::from_millis(self.repeat.delay as u64));
@@ -1739,6 +1806,7 @@ impl State {
 
     fn run_key(&mut self, key: Key) {
         match key {
+            Key::Clipboard(chord) => self.send_chord(chord),
             Key::Zoom => {
                 let focused = self.layout.focused;
                 self.layout.toggle_zoom(focused);
@@ -2311,7 +2379,7 @@ fn repeats(key: Key) -> bool {
     match key {
         Key::Focus(_) | Key::Move(_) | Key::Resize(_) => true,
         Key::Menu(key) => !matches!(key, MenuKey::Enter | MenuKey::Escape),
-        Key::Zoom | Key::NewPane | Key::Palette | Key::Swallow => false,
+        Key::Zoom | Key::NewPane | Key::Palette | Key::Clipboard(_) | Key::Swallow => false,
     }
 }
 
@@ -2336,6 +2404,9 @@ fn super_key(sym: u32, shift: bool) -> Option<Key> {
         keysyms::KEY_Up => Some(Key::Resize(Direction::Up)),
         keysyms::KEY_Down => Some(Key::Resize(Direction::Down)),
         keysyms::KEY_m if !shift => Some(Key::Zoom),
+        keysyms::KEY_c if !shift => Some(Key::Clipboard(Chord::Copy)),
+        keysyms::KEY_v if !shift => Some(Key::Clipboard(Chord::Paste)),
+        keysyms::KEY_x if !shift => Some(Key::Clipboard(Chord::Cut)),
         keysyms::KEY_Return if shift => Some(Key::NewPane),
         keysyms::KEY_space if shift => Some(Key::Palette),
         _ => None,

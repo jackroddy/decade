@@ -66,7 +66,8 @@ command line and what the tool writes.
   `decade` again shows them again. The two talk over the protocol in
   `docs/viewer.md`.
 - Copy and paste work between panes, and between panes and the host, for
-  both the clipboard and the primary selection.
+  both the clipboard and the primary selection. Super+C, Super+V and
+  Super+X copy, paste and cut in the focused pane.
 - A pane is drawn as a box-drawing outline, one stroke wide, in the accent
   colour on the focused pane and a muted one elsewhere; the title strips are
   gone. Colours come from a palette copied from the Omarchy theme.
