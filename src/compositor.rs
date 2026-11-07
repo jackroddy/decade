@@ -19,7 +19,7 @@ use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, render_elements_from_surface_tree,
 };
 use smithay::backend::renderer::element::texture::TextureRenderElement;
-use smithay::backend::renderer::element::utils::RescaleRenderElement;
+use smithay::backend::renderer::element::utils::{CropRenderElement, RescaleRenderElement};
 use smithay::backend::renderer::element::{Id, Kind};
 use smithay::backend::renderer::gles::element::PixelShaderElement;
 use smithay::backend::renderer::gles::{
@@ -141,7 +141,7 @@ enum Drag {
 
 render_elements! {
     Element<=GlesRenderer>;
-    Surface = WaylandSurfaceRenderElement<GlesRenderer>,
+    Surface = CropRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
     Text = TextureRenderElement<GlesTexture>,
     Rounded = PixelShaderElement,
     Solid = SolidColorRenderElement,
@@ -2684,7 +2684,17 @@ impl State {
                     1.0,
                     Kind::Unspecified,
                 );
-            elements.extend(surfaces.into_iter().map(Element::Surface));
+            let size = (
+                (rect.columns * font.cell_width) as i32,
+                (rect.rows * font.cell_height) as i32,
+            );
+            let crop = Rectangle::new(origin.into(), size.into());
+            elements.extend(
+                surfaces
+                    .into_iter()
+                    .filter_map(|surface| CropRenderElement::from_element(surface, scale, crop))
+                    .map(Element::Surface),
+            );
         }
 
         if picker.is_none() {
@@ -3153,9 +3163,14 @@ impl CompositorHandler for State {
                 pane.toplevel = Some(toplevel);
                 pane.app_id = app_id;
             }
-            if workspace == self.current() {
-                self.focus(id);
-            }
+
+            // ghostty draws itself focused until its first keyboard leave,
+            // so each new window gets focus once before it returns to the
+            // focused pane
+            let keyboard = self.seat.get_keyboard().unwrap();
+            keyboard.set_focus(self, Some(surface.clone()), SERIAL_COUNTER.next_serial());
+            let focused = self.layout().focused;
+            self.focus(focused);
         }
         if let Some((workspace, id)) = self.pane_of_surface(surface)
             && let Some(pane) = self.workspaces[workspace].layout.pane(id)
