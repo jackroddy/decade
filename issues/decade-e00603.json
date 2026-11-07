@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-07T06:51:21.81927145Z",
   "defer_until": null,
   "created_at": "2026-11-07T06:01:21.185090388Z",
-  "updated_at": "2026-11-07T06:36:21.81927145Z",
+  "updated_at": "2026-11-07T06:41:48.23328467Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "05d34a2e",
+      "at": "2026-11-07T06:41:48.23328404Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "Jack changed the indicator after trying the preview. The edge zones are rectangles now, not triangles. While a pane is hovered, decade draws five fixed targets over it: a middle half for swap, and quarter-width or quarter-height targets on each side for left, right, above and below. The corners between them are not targets. Each target has a cyan outline and a label, and the one under the pointer fills. Two-cell strips along the window edges draw for the whole drag. The rect preview from the body is gone.",
+      "commit": "4fa2ae0",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "3ee6949",
