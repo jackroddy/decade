@@ -1,7 +1,7 @@
 {
   "id": "decade-315351",
-  "title": "An MCP server lets the agent drive panes",
-  "body": "An agent cannot ask decade for anything. ACP has no way for a client to\noffer tools to the agent; the agent's tools are its own or come from MCP\nservers the client names when it opens a session.\n\n## Proposal\n\nAn MCP server whose tools are decade's verbs: show a file, mark lines, draw\non the drawing pane once that exists. Each tool forwards the call over the\ndecade socket and returns the result. The chat passes this server in its\nACP session so the agent loads it. The server is small; its job is a\ntranslation.\n\n## Rejected\n\n- Markers in the agent's prose that the chat parses. Works with any agent\n  and needs no MCP, but it is text the model may format wrong, it shows\n  up in transcripts, and errors have no channel back. Right for a demo,\n  wrong for a foundation.\n\n## Open\n\n- Whether the server is a separate binary or a mode of the chat TUI.",
+  "title": "decade is an MCP server that relays tool calls to panes",
+  "body": "An agent cannot ask decade for anything. ACP has no way for a client to\noffer tools to the agent; the agent's tools are its own or come from MCP\nservers the client names when it opens a session.\n\n## Proposal\n\ndecade itself is the MCP server, over streamable HTTP on a local port, so no\nbridge process exists. A tools/call becomes a message on the pane socket to\nthe pane the tool names, and the pane's reply is the tool result.\n\nThe tools come from the panes. A pane's hello grows an optional `tools` list\nin MCP's own schema form; decade's tools/list is the union of what the\noccupied panes offer, named `<pane>.<verb>`, plus decade's own `focus` and\n`panes`. A new pane program adds tools without a change to decade. coax\npasses decade's MCP address in the ACP session's server list.\n\nDecided with Jack on 2026-11-06, in place of a bridge beside decade: one\nprotocol per audience, the socket for programs in panes and MCP for agents,\nwith decade the only thing that speaks both.\n\n## Rejected\n\n- A separate MCP bridge process forwarding to the socket. Defines every verb\n  twice and adds a process for nothing decade cannot do itself.\n- MCP everywhere, with each pane program an MCP server. A TUI's stdio is its\n  terminal, so each pane would need an HTTP server; the agent would address\n  ports instead of roles; and MCP flows host to server, so a pane could not\n  tell the chat anything. Most traffic here is not from the agent.\n- Markers in the agent's prose that the chat parses. Fragile, visible in\n  transcripts, no channel for errors.\n\n## Open\n\n- Which Rust MCP implementation: rmcp, the official SDK, is the first thing\n  to check.\n- Whether the pane socket's hello carries the tool schemas from the start\n  or decade hardcodes the code pane's three verbs first.",
   "type": "feature",
   "status": "open",
   "priority": 3,
@@ -15,7 +15,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T01:47:21.328413009Z",
-  "updated_at": "2026-11-07T01:47:21.328413009Z",
+  "updated_at": "2026-11-07T03:55:21.452327146Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
