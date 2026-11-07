@@ -15,9 +15,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.919739011Z",
-  "updated_at": "2026-11-07T21:56:11.416134039Z",
+  "updated_at": "2026-11-07T21:56:17.779052193Z",
   "closed_at": "2026-11-07T21:56:11.416134039Z",
-  "close_reason": "Every step of the proposal landed on the sessions branch. Workspace state and the one-terminal start are in 00e4258, the palette flow and the status line name in ce55b49, the per-workspace socket, router and MCP address in 862bd35, and closing in its own commit after those. Jack checked creating and closing workspaces by hand. The picker is decade-d2f047 and templates are decade-59930c.",
+  "close_reason": "Every step of the proposal landed on the sessions branch. Workspace state and the one-terminal start are in 00e4258, the palette flow and the status line name in ce55b49, the per-workspace socket, router and MCP address in 862bd35, and closing in 31d801e. Jack checked creating and closing workspaces by hand. The picker is decade-d2f047 and templates are decade-59930c.",
   "resolution": "done",
   "notes": [
     {
