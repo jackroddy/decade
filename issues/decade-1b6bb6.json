@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:07:44.925896852Z",
-  "updated_at": "2026-11-07T05:07:44.925896852Z",
+  "updated_at": "2026-11-07T05:27:44.88584671Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "724805cf",
+      "at": "2026-11-07T05:27:44.88584625Z",
+      "author": "Jack Roddy/618aab71",
+      "text": "State on 2026-11-06 at commit 93a5286: the split tree, anchors, transient panes, Ctrl bar, gutter drag, axis forwarding and palette stub are in. Outlines are box-drawing glyphs in colours from src/palette.rs, copied from the Omarchy theme. Focus is fast again: a focus change reconfigures only the two panes involved and the chrome texture is patched for changed cells only (GlesRenderer::update_memory reads a region out of a full-size buffer, so the chrome pixels are kept beside the texture). The dev profile builds at opt-level 1. Checked by Jack by hand: focus by key and mouse. Not yet checked by hand: the bar's buttons, boundary drag, Ctrl+Shift+Enter, the palette, scroll. Known: the bar appears too slowly, filed as its own bug.",
+      "commit": "93a5286",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "9494070",
