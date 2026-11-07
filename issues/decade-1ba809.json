@@ -7,13 +7,15 @@
   "priority": 1,
   "labels": [],
   "parent": "decade-492261",
-  "blocked_by": [],
+  "blocked_by": [
+    "decade-617e2a"
+  ],
   "related": [],
   "assignee": null,
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:19:57.462094981Z",
-  "updated_at": "2026-11-07T23:31:39.772569641Z",
+  "updated_at": "2026-11-07T23:31:39.781502785Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
