@@ -3,7 +3,7 @@
   "title": "The palette shows a menu you can filter and move through",
   "body": "The palette is drawn as a box on the overlay layer, and every key is swallowed while it is open (see the milestone).\n\n## Proposal\n\n- A list view that draws one menu level: a query line on top, then rows of icon, label and dim description. The selected row takes the accent colour.\n- The query line takes typed text, with Backspace and a cursor. Typing filters the rows of the current level by label and description.\n- Up and Down, or Ctrl+J and Ctrl+K, move the selection. Enter runs a row or opens its submenu. Esc goes up a level, and closes the palette at the root.\n- The root holds Launch, Layout and Settings as submenus. Each is filled by its own issue.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-fb197a",
@@ -12,19 +12,22 @@
   ],
   "related": [],
   "assignee": "Jack Roddy/575e4e76",
-  "lease_expires": "2026-11-07T07:10:32.94128387Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T06:31:44.53834433Z",
-  "updated_at": "2026-11-07T07:03:34.428488415Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T07:14:14.70668954Z",
+  "closed_at": "2026-11-07T07:14:14.70668954Z",
+  "close_reason": "c741ff2 adds the palette frame: a rounded box with Launch, Layout and Settings at the root, filtering, arrow and Ctrl+J/K movement, Enter into submenus, Esc up or out.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "4fa2ae0",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "c741ff2",
+      "branch": "dev"
+    }
   }
 }
