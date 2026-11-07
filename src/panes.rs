@@ -75,6 +75,7 @@ impl CellRect {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Direction {
     Left,
     Down,

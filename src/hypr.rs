@@ -34,11 +34,21 @@ impl Hyprland {
     }
 
     pub fn alone(&self) -> Option<bool> {
+        alone_in(&self.ask("j/clients")?, std::process::id())
+    }
+
+    pub fn option(&self, name: &str) -> Option<i64> {
+        let reply = self.ask(&format!("j/getoption {name}"))?;
+        let reply: serde_json::Value = serde_json::from_str(&reply).ok()?;
+        reply["int"].as_i64()
+    }
+
+    fn ask(&self, request: &str) -> Option<String> {
         let mut stream = UnixStream::connect(self.dir.join(".socket.sock")).ok()?;
-        stream.write_all(b"j/clients").ok()?;
+        stream.write_all(request.as_bytes()).ok()?;
         let mut reply = String::new();
         stream.read_to_string(&mut reply).ok()?;
-        alone_in(&reply, std::process::id())
+        Some(reply)
     }
 }
 

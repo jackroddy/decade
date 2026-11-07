@@ -48,9 +48,11 @@ command line and what the tool writes.
   inside the chat pane or the code pane, in addition to the shell in the
   terminal pane.
 - Super with h, j, k or l moves focus between panes by direction,
-  Super+Shift swaps the focused pane with its neighbour, and Super with an
-  arrow key moves the nearest divider. A click focuses the pane under the
-  pointer.
+  Super+Shift swaps the focused pane with its neighbour, Super with an arrow
+  key moves the nearest divider, and Super+M zooms the focused pane. A click
+  focuses the pane under the pointer.
+- Held keys repeat in decade's own bindings, the palette and the settings
+  panel, at the delay and rate Hyprland is set to.
 - Under Hyprland, while decade's window is the only one on its workspace,
   Hyprland passes decade the keys it would otherwise take. Binds marked
   `dont_inhibit` keep working in Hyprland.

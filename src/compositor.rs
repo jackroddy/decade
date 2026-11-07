@@ -115,8 +115,10 @@ render_elements! {
     GhostSolid = RescaleRenderElement<SolidColorRenderElement>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Key {
     Focus(Direction),
+    Zoom,
     Move(Direction),
     Resize(Direction),
     NewPane,
@@ -134,6 +136,8 @@ struct ChildEnv {
 pub struct State {
     shortcuts: Option<Shortcuts>,
     hyprland: Option<Hyprland>,
+    repeat: Repeat,
+    repeating: Option<(u32, RegistrationToken)>,
     compositor_state: CompositorState,
     xdg_shell_state: XdgShellState,
     shm_state: ShmState,
@@ -168,6 +172,12 @@ pub struct State {
     ctrl_timer: Option<RegistrationToken>,
     scale: f64,
     start: Instant,
+}
+
+#[derive(Clone, Copy)]
+struct Repeat {
+    delay: i32,
+    rate: i32,
 }
 
 pub struct Commands {
@@ -228,7 +238,14 @@ pub fn run(commands: Commands) {
 
     let mut seat_state = SeatState::new();
     let mut seat = seat_state.new_wl_seat(&dh, "decade");
-    seat.add_keyboard(Default::default(), 200, 25).unwrap();
+    let hyprland = Hyprland::find();
+    let option = |name: &str| hyprland.as_ref().and_then(|hyprland| hyprland.option(name));
+    let repeat = Repeat {
+        delay: option("input:repeat_delay").unwrap_or(200).clamp(1, 5000) as i32,
+        rate: option("input:repeat_rate").unwrap_or(25).clamp(1, 1000) as i32,
+    };
+    seat.add_keyboard(Default::default(), repeat.delay, repeat.rate)
+        .unwrap();
     seat.add_pointer();
 
     let mut settings_path = settings::path();
@@ -283,7 +300,8 @@ pub fn run(commands: Commands) {
                 state.redraw();
             }
             WinitEvent::CloseRequested => state.loop_signal.stop(),
-            WinitEvent::Focus(_) => {}
+            WinitEvent::Focus(false) => state.stop_repeat(),
+            WinitEvent::Focus(true) => {}
         })
         .unwrap();
 
@@ -335,10 +353,11 @@ pub fn run(commands: Commands) {
             None
         }
     };
-    let hyprland = Hyprland::find();
     let mut state = State {
         shortcuts,
         hyprland,
+        repeat,
+        repeating: None,
         compositor_state: CompositorState::new::<State>(&dh),
         xdg_shell_state: XdgShellState::new::<State>(&dh),
         shm_state: ShmState::new::<State>(&dh, vec![]),
@@ -897,30 +916,67 @@ impl State {
             (false, true) => self.cancel_ctrl_timer(),
             (false, false) => {}
         }
+        let code = event.key_code().raw();
+        if !pressed && self.repeating.is_some_and(|(held, _)| held == code) {
+            self.stop_repeat();
+        }
+        if pressed {
+            self.stop_repeat();
+            if let Some(key) = key.filter(|&key| repeats(key)) {
+                self.start_repeat(code, key);
+            }
+        }
+        if let Some(key) = key {
+            self.run_key(key);
+        }
+    }
+
+    fn start_repeat(&mut self, code: u32, key: Key) {
+        let interval = Duration::from_millis(1000 / self.repeat.rate as u64);
+        let timer = Timer::from_duration(Duration::from_millis(self.repeat.delay as u64));
+        let token = self.loop_handle.insert_source(timer, move |_, _, state| {
+            state.run_key(key);
+            TimeoutAction::ToDuration(interval)
+        });
+        self.repeating = token.ok().map(|token| (code, token));
+    }
+
+    fn stop_repeat(&mut self) {
+        if let Some((_, token)) = self.repeating.take() {
+            self.loop_handle.remove(token);
+        }
+    }
+
+    fn run_key(&mut self, key: Key) {
         match key {
-            Some(Key::Focus(direction)) => {
+            Key::Zoom => {
+                let focused = self.layout.focused;
+                self.layout.toggle_zoom(focused);
+                self.relayout();
+            }
+            Key::Focus(direction) => {
                 if let Some(id) = self.layout.neighbour(direction) {
                     self.focus(id);
                 }
             }
-            Some(Key::Move(direction)) => {
+            Key::Move(direction) => {
                 let focused = self.layout.focused;
                 if let Some(id) = self.layout.neighbour(direction) {
                     self.layout.apply_drop(focused, Drop::Swap(id));
                     self.relayout();
                 }
             }
-            Some(Key::Resize(direction)) => {
+            Key::Resize(direction) => {
                 let focused = self.layout.focused;
                 self.layout.resize_toward(focused, direction, RESIZE_STEP);
                 self.relayout();
             }
-            Some(Key::NewPane) => self.new_terminal_pane(),
-            Some(Key::Palette) => {
+            Key::NewPane => self.new_terminal_pane(),
+            Key::Palette => {
                 self.menu = Some(Menu::new(apps::installed()));
                 self.backend.window().request_redraw();
             }
-            Some(Key::Menu(key)) => {
+            Key::Menu(key) => {
                 if let Some(panel) = &mut self.panel {
                     let before = self.settings;
                     match panel.key(key, &mut self.settings) {
@@ -945,7 +1001,7 @@ impl State {
                 }
                 self.backend.window().request_redraw();
             }
-            Some(Key::Swallow) | None => {}
+            Key::Swallow => {}
         }
     }
 
@@ -1421,6 +1477,14 @@ impl Paint<'_> {
     }
 }
 
+fn repeats(key: Key) -> bool {
+    match key {
+        Key::Focus(_) | Key::Move(_) | Key::Resize(_) => true,
+        Key::Menu(key) => !matches!(key, MenuKey::Enter | MenuKey::Escape),
+        Key::Zoom | Key::NewPane | Key::Palette | Key::Swallow => false,
+    }
+}
+
 fn super_key(sym: u32, shift: bool) -> Option<Key> {
     let direction = match sym {
         keysyms::KEY_h | keysyms::KEY_H => Some(Direction::Left),
@@ -1441,6 +1505,7 @@ fn super_key(sym: u32, shift: bool) -> Option<Key> {
         keysyms::KEY_Right => Some(Key::Resize(Direction::Right)),
         keysyms::KEY_Up => Some(Key::Resize(Direction::Up)),
         keysyms::KEY_Down => Some(Key::Resize(Direction::Down)),
+        keysyms::KEY_m if !shift => Some(Key::Zoom),
         keysyms::KEY_Return if shift => Some(Key::NewPane),
         keysyms::KEY_space if shift => Some(Key::Palette),
         _ => None,
