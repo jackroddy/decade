@@ -3,7 +3,7 @@
   "title": "A headless server owns the panes and a local viewer shows them",
   "body": "Today one decade process is both compositor and window (`run` in `src/compositor.rs`, through smithay's winit backend), so closing the window ends every pane.\n\n## Proposal\n\n- `decade server` runs the compositor with surfaceless EGL on the GPU's render node and no window. It renders into a small pool of dmabufs and keeps running with no viewer.\n- `decade` starts the server if it is not running, then attaches a viewer: a Wayland client of Hyprland that shows the server's dmabufs directly and sends input back, over the protocol from the spec.\n- The viewer takes over everything about the host window: its size and scale, the shortcuts inhibitor, the Hyprland workspace watcher, and the key repeat settings.\n\n## Open\n\n- How the server reuses a buffer only after the viewer and Hyprland release it.\n- What the server does about frame callbacks to clients while no viewer is attached.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-da02e3",
@@ -12,13 +12,13 @@
   ],
   "related": [],
   "assignee": "Jack Roddy/575e4e76",
-  "lease_expires": "2026-11-07T09:13:06.824738705Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.909931087Z",
-  "updated_at": "2026-11-07T09:39:17.458667758Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T21:03:22.427279143Z",
+  "closed_at": "2026-11-07T21:03:22.427279143Z",
+  "close_reason": "b2b90c7 splits decade into a headless server and a viewer. ec6041f, 5c77da3, 1a65d76, a55626a and d1be0b5 follow it on the sessions branch. Jack checked input, the clipboard and reattaching on 2026-11-07. The server still renders on the first GPU it finds, which the notes record.",
+  "resolution": "done",
   "notes": [
     {
       "id": "b7d404b3",
@@ -66,6 +66,9 @@
       "commit": "60ddbe2",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "d1be0b5",
+      "branch": "sessions"
+    }
   }
 }
