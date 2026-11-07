@@ -3,7 +3,7 @@
   "title": "The chat follows the agent's work into the panes",
   "body": "The chat TUI receives typed ACP events: `tool_call` and `tool_call_update`\nwith a kind, a status and locations, the `fs/read_text_file` and\n`fs/write_text_file` requests it answers, and plan updates. Nothing in\ndecade reacts to them yet.\n\n## Proposal\n\nA fixed table from ACP event to decade socket message, applied by the chat\nwith no model in the loop:\n\n| Event | Pane action |\n|---|---|\n| read tool call with a location | code pane shows the file at the line |\n| edit tool call completed with a diff | code pane shows the file and marks the changed lines |\n| fs/read_text_file request | same as a read tool call, and earlier |\n| search tool call | nothing, unless the content carries hits |\n| execute tool call | nothing in the first version |\n| plan update | nothing until a plan pane exists |\n\nEach rule can be switched off per pane by the user. The limit is stated on\nthe milestone: this expresses only what the agent's activity implies, never\nan intention such as \"highlight only these lines\".\n\n## Open\n\n- Debounce: an agent reading ten files in a second should not flip the code\n  pane ten times. Probably the last one wins after a short delay.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-ee478b",
@@ -16,16 +16,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T01:47:21.320240777Z",
-  "updated_at": "2026-11-07T01:47:21.320240777Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T03:58:27.518386577Z",
+  "closed_at": "2026-11-07T03:58:27.518386577Z",
+  "close_reason": "Done in coax, in the commit titled 'Follow the agent's work into decade's code pane' on its dev branch, 2026-11-06. The table from the proposal is implemented as written, with the debounce resolved as 'last action after 150 ms of quiet'. Seen live on the dev output: coax ran the hello scenario and the code pane opened src/main.rs at line 1 from the agent's read, with no one asking.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "7932094",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "92b2b38",
+      "branch": "dev"
+    }
   }
 }
