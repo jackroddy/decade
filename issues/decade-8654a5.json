@@ -7,13 +7,15 @@
   "priority": 2,
   "labels": [],
   "parent": "decade-fb197a",
-  "blocked_by": [],
+  "blocked_by": [
+    "decade-14e0ec"
+  ],
   "related": [],
   "assignee": "Jack Roddy/575e4e76",
   "lease_expires": "2026-11-07T07:10:32.94128387Z",
   "defer_until": null,
   "created_at": "2026-11-07T06:31:44.53834433Z",
-  "updated_at": "2026-11-07T06:55:32.94128387Z",
+  "updated_at": "2026-11-07T07:03:34.428488415Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
