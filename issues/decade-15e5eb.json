@@ -1,0 +1,28 @@
+{
+  "id": "decade-15e5eb",
+  "title": "GUI apps are started again when a workspace is restored",
+  "body": "A window decade did not start, such as a GUI app from Launch or one opened from a terminal, is not saved and not started again when a workspace is restored. decade-cc25be left this out on purpose. Jack's workflow is mostly terminals and coax, and he wants relaunching GUI apps designed on its own, later.\n\n## Open\n\n- Where decade gets a GUI app's command: the desktop entry it was launched from, or `/proc/<pid>/cmdline` of the client.\n- Whether a restored GUI pane comes back as an empty slot before this feature exists.",
+  "type": "feature",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": "decade-da02e3",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T21:59:58.273325149Z",
+  "updated_at": "2026-11-07T21:59:58.273325149Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "31d801e",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
