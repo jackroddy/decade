@@ -1,7 +1,7 @@
 {
   "id": "decade-e00603",
-  "title": "Dropping a dragged pane near an edge splits the target there",
-  "body": "Dragging a pane (see `Drag::Pane` in `src/compositor.rs`) can only swap it with the pane it is dropped on. `State::drop` calls `Layout::swap`, which exchanges the two leaf ids in the split tree.\n\n## Proposal\n\nA drop near one edge of the target pane splits the target there and moves the dragged pane into the new half, using the same split as `Layout::add_transient`. The target's outline shows which half the pane will take while the pointer is over that edge.\n\n## Open\n\n- How wide the edge band is, in cells or as a fraction of the pane.",
+  "title": "Where a dragged pane is dropped decides how it joins the layout",
+  "body": "A pane drag (`Drag::Pane` in `src/compositor.rs`) can only swap: dropping on another pane calls `Layout::swap`, which exchanges the two leaf ids in the split tree. The target pane gets a cyan outline while the pointer is over it.\n\n## Proposal\n\nWhere the pointer is when the drag ends decides the drop:\n\n| Zone | Drop |\n|---|---|\n| middle half of a pane, both ways | swap with that pane |\n| rest of a pane, nearest edge wins | split that pane on that side; the dragged pane takes the half on that side |\n| two-cell band along a window edge | split the root on that side; the dragged pane spans that side and takes a third |\n| the dragged pane's own slot | nothing |\n\nWhile a ghost is held, a cyan rectangle with a translucent fill and a short label (\"swap\", \"left\", \"right\", \"above\", \"below\") covers the rect the dragged pane would get. decade gets that rect by applying the drop to a copy of the tree and arranging it.\n\n## Rejected\n\n- Dropping in the gutter between two panes to insert between them. Jack tried it on 2026-11-06 and chose edge zones instead.",
   "type": "feature",
   "status": "open",
   "priority": 3,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T06:01:21.185090388Z",
-  "updated_at": "2026-11-07T06:01:21.185090388Z",
+  "updated_at": "2026-11-07T06:36:21.810549455Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
