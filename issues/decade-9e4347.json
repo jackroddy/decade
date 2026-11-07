@@ -3,7 +3,7 @@
   "title": "Is the harness chat pane native to the host or a pty program?",
   "body": "The main pane is a chat with an agent harness: the user types, the harness\nanswers, and the harness sends commands to other panes. This decision is\nwhether that pane is part of the host binary or a program the host runs like\nany other pane.\n\n## Options\n\n| Option | Where the harness runs | Talks to other panes via | Replaceable |\n|---|---|---|---|\n| Native | Inside the host process | Host internals | No, without changing the host |\n| pty program | A separate process the host spawns | The same socket every pane gets | Yes, by pointing the session at a different program |\n\nNative. The host starts with a chat pane that works, no protocol needed\nbetween the harness and the host. Commands to other panes call host\nfunctions. Simplest for the first prototype. The cost is that the harness is\nthe one pane that does not go through the protocol, so the protocol never\ngets exercised by its most demanding client, and swapping harnesses means\nediting the host.\n\npty program. The harness is a decade-aware tool like any other: it draws\nthrough the pty and addresses other panes through its socket. The host has\none code path and one protocol, and a different harness, or a second one in\nanother session, is a configuration change. The cost is that the socket\nprotocol has to carry everything a harness needs on day one, including\naddressing other panes, which is a wider protocol than a code viewer needs.\n\n## Lean\n\npty program, with a native stand-in during the prototype stage only. The\nstand-in exists to get a window on screen before the socket exists, and is\ndeleted when the first real harness pane runs. A native harness kept past\nthat point is the one exception that would make the protocol a second-class\npath.\n\n## Cost\n\n- The socket protocol needs pane-to-pane addressing from the start, not just\n  host-to-pane.\n- A harness as a separate program means its state, such as conversation\n  history, lives outside the host and the host cannot show it without asking.\n\n## Open\n\n- Whether the stand-in draws anything or is an empty pane with a title.\n- Which harness the first real pane wraps. Claude Code with its stream\n  output is the obvious candidate on this machine.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-71e626",
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T02:23:01.665279304Z",
-  "updated_at": "2026-11-07T01:05:07.986717693Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T01:47:21.283594526Z",
+  "closed_at": "2026-11-07T01:47:21.283594526Z",
+  "close_reason": "Decided on 2026-11-06: decade has no built-in chat pane. The chat is a standalone TUI in its own repository, an ACP client that runs an agent such as Claude Code as a subprocess and renders its session its own way; it runs in a ghostty pane inside decade or in any terminal without decade. Jack's reason is that the visual choices and output formatting of Claude Code's own TUI cannot be fixed by configuration, so the harness-as-the-chat option is out, and a native pane would duplicate what a terminal already does. The native stand-in is never written. The chat pane in src/panes.rs becomes a terminal pane running that TUI.",
+  "resolution": "done",
   "notes": [
     {
       "id": "94085c0e",
@@ -32,6 +32,9 @@
       "commit": "none",
       "branch": "main"
     },
-    "closed": null
+    "closed": {
+      "commit": "7932094",
+      "branch": "dev"
+    }
   }
 }
