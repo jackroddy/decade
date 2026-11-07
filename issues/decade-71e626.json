@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-06T02:21:59.75357826Z",
-  "updated_at": "2026-11-07T01:05:17.996938439Z",
+  "updated_at": "2026-11-07T01:09:18.714149641Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "18cdf18a",
+      "at": "2026-11-07T01:09:18.714149051Z",
+      "author": "Jack Roddy/618aab71",
+      "text": "Language question, raised 2026-11-06 and settled for now. decade stays in Rust on smithay. The alternative taken seriously is Zig on wlroots, as river does it. The trigger to revisit is one thing only: the spike decade-3079aa finds something the nested compositor needs that smithay's winit backend cannot do and wlroots' nested backend can. Everything outside the compositor core, which is the socket protocol, the harness, process management, the text pane and the tests, is better in Rust either way.",
+      "commit": "a822d1e",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "none",
