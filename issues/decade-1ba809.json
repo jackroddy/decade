@@ -3,7 +3,7 @@
   "title": "Tabs inside a workspace",
   "body": "herdr, which Jack is using as a reference for sessions, nests a tab level between a workspace and its panes: each tab is one split-tree layout. decade has one split tree per window today (`Layout.root` in `src/panes.rs`).\n\nJack wants tabs but uses them rarely, so they come after persistent sessions. When they land, today's single tree becomes the first tab, and anything saved per session has to make room for several trees.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-492261",
@@ -15,10 +15,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:19:57.462094981Z",
-  "updated_at": "2026-11-07T23:31:39.781502785Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T23:56:43.201549322Z",
+  "closed_at": "2026-11-07T23:56:43.201549322Z",
+  "close_reason": "Landed in 4dbe92b. Super+T, Super+[ and Super+], numbered top-bar buttons, Close tab in the palette, workspaces.toml version 2 with a version 1 reader arm. Known gap: many tabs can run into the agent counts on the right of the top bar.",
+  "resolution": "done",
   "notes": [
     {
       "id": "6ed36ac4",
@@ -34,6 +34,9 @@
       "commit": "60ddbe2",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "4dbe92b",
+      "branch": "sessions"
+    }
   }
 }
