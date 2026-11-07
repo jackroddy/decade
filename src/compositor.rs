@@ -28,6 +28,7 @@ use smithay::input::keyboard::{FilterResult, keysyms};
 use smithay::input::pointer::{ButtonEvent, CursorImageStatus, MotionEvent};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
+use smithay::reexports::calloop::channel::{self as calloop_channel, Event as ChannelEvent};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{
     EventLoop, Interest, LoopHandle, LoopSignal, Mode as CalloopMode, PostAction,
@@ -72,10 +73,12 @@ use smithay::{
 use crate::channel::{Host, Out, Router};
 use crate::chrome;
 use crate::grid::Grid;
+use crate::mcp;
 use crate::panes::{BACKGROUND, Direction, FOREGROUND, Layout, Pane};
 use crate::text::{FONT_PX, Font, Glyphs};
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
+const AGENT_CLIENT: usize = usize::MAX;
 
 render_elements! {
     Element<R> where R: ImportAll + ImportMem;
@@ -102,6 +105,7 @@ pub struct State {
     sockets: HashMap<usize, UnixStream>,
     next_client: usize,
     channel_path: PathBuf,
+    mcp_url: Option<String>,
     font: Font,
     glyphs: Glyphs,
     layout: Layout,
@@ -222,13 +226,30 @@ pub fn run(commands: Commands) {
         )
         .unwrap();
 
-    let router = Router::new(
+    let mut router = Router::new(
         layout
             .panes
             .iter()
             .map(|pane| pane.title.to_string())
             .collect(),
     );
+    router.connected(AGENT_CLIENT);
+    router.handle(AGENT_CLIENT, r#"{"hello":{"name":"agent"}}"#);
+    let (mcp_requests, mcp_source) = calloop_channel::channel();
+    handle
+        .insert_source(mcp_source, |event, _, state| {
+            if let ChannelEvent::Msg(request) = event {
+                state.mcp_request(request);
+            }
+        })
+        .unwrap();
+    let mcp = match mcp::start(mcp_requests) {
+        Ok(server) => Some(server),
+        Err(error) => {
+            eprintln!("decade: the MCP server did not start: {error}");
+            None
+        }
+    };
     let mut state = State {
         compositor_state: CompositorState::new::<State>(&dh),
         xdg_shell_state: XdgShellState::new::<State>(&dh),
@@ -248,6 +269,7 @@ pub fn run(commands: Commands) {
         sockets: HashMap::new(),
         next_client: 0,
         channel_path,
+        mcp_url: mcp.map(|server| server.url),
         font,
         glyphs: Glyphs::new(),
         layout,
@@ -258,27 +280,17 @@ pub fn run(commands: Commands) {
         start: Instant::now(),
     };
 
-    let mut children = vec![spawn_terminal(
-        &socket_name,
-        &state.channel_path,
-        "terminal",
-        &[],
-    )];
+    let env = ChildEnv {
+        wayland: &socket_name,
+        channel: &state.channel_path,
+        mcp: state.mcp_url.as_deref(),
+    };
+    let mut children = vec![spawn_terminal(&env, "terminal", &[])];
     if let Some(chat) = &commands.chat {
-        children.push(spawn_terminal(
-            &socket_name,
-            &state.channel_path,
-            "chat",
-            chat,
-        ));
+        children.push(spawn_terminal(&env, "chat", chat));
     }
     if let Some(code) = &commands.code {
-        children.push(spawn_terminal(
-            &socket_name,
-            &state.channel_path,
-            "code",
-            code,
-        ));
+        children.push(spawn_terminal(&env, "code", code));
     }
     state.backend.window().request_redraw();
     event_loop
@@ -321,17 +333,22 @@ fn remove_stale_sockets(dir: &Path) {
     }
 }
 
-fn spawn_terminal(
-    socket: &std::ffi::OsStr,
-    channel: &Path,
-    pane: &str,
-    command: &[String],
-) -> Option<Child> {
+struct ChildEnv<'a> {
+    wayland: &'a std::ffi::OsStr,
+    channel: &'a Path,
+    mcp: Option<&'a str>,
+}
+
+fn spawn_terminal(env: &ChildEnv, pane: &str, command: &[String]) -> Option<Child> {
     let mut ghostty = Command::new("ghostty");
     ghostty
-        .env("WAYLAND_DISPLAY", socket)
-        .env("DECADE_SOCKET", channel)
-        .env("DECADE_PANE", pane)
+        .env("WAYLAND_DISPLAY", env.wayland)
+        .env("DECADE_SOCKET", env.channel)
+        .env("DECADE_PANE", pane);
+    if let Some(mcp) = env.mcp {
+        ghostty.env("DECADE_MCP", mcp);
+    }
+    ghostty
         .env_remove("DISPLAY")
         .args(["--window-decoration=none", "--gtk-titlebar=false"])
         .arg(format!("--class=decade.{pane}"));
@@ -394,6 +411,18 @@ impl State {
         if inserted.is_err() {
             self.channel_disconnected(id);
         }
+    }
+
+    fn mcp_request(&mut self, request: mcp::Request) {
+        let mut reply = Vec::new();
+        for out in self.router.handle(AGENT_CLIENT, &request.line) {
+            match out {
+                Out::Line(to, text) if to == AGENT_CLIENT => reply.push(text),
+                Out::Line(to, text) => self.channel_send(to, &text),
+                Out::Host(Host::Focus(pane)) => self.focus(pane),
+            }
+        }
+        let _ = request.reply.send(reply);
     }
 
     fn channel_disconnected(&mut self, id: usize) {
@@ -515,10 +544,10 @@ impl State {
                         }
                     },
                 );
-                if let Some(direction) = direction {
-                    if let Some(pane) = self.layout.neighbour(direction) {
-                        self.focus(pane);
-                    }
+                if let Some(direction) = direction
+                    && let Some(pane) = self.layout.neighbour(direction)
+                {
+                    self.focus(pane);
                 }
             }
             InputEvent::PointerMotionAbsolute { event } => {
@@ -544,12 +573,11 @@ impl State {
                 pointer.frame(self);
             }
             InputEvent::PointerButton { event } => {
-                if event.state() == ButtonState::Pressed {
-                    if let Some(pane) = self.pane_under_pointer() {
-                        if pane != self.layout.focused {
-                            self.focus(pane);
-                        }
-                    }
+                if event.state() == ButtonState::Pressed
+                    && let Some(pane) = self.pane_under_pointer()
+                    && pane != self.layout.focused
+                {
+                    self.focus(pane);
                 }
                 let pointer = self.seat.get_pointer().unwrap();
                 pointer.button(
@@ -767,15 +795,14 @@ impl CompositorHandler for State {
                 .as_ref()
                 .is_some_and(|toplevel| toplevel.wl_surface() == surface)
         });
-        if let Some(pane) = pane {
-            if !self.layout.panes[pane]
+        if let Some(pane) = pane
+            && !self.layout.panes[pane]
                 .toplevel
                 .as_ref()
                 .unwrap()
                 .is_initial_configure_sent()
-            {
-                self.configure(pane);
-            }
+        {
+            self.configure(pane);
         }
     }
 }

@@ -12,6 +12,10 @@ command line and what the tool writes.
 
 ### Added
 
+- decade is an MCP server over streamable HTTP, at the address in
+  `DECADE_MCP` in the environment of everything it starts. Its tools are
+  `focus`, `panes`, `code.show`, `code.mark` and `code.clear`; a call becomes
+  the matching socket message and decade's answer is the tool result.
 - A unix socket for decade-aware programs, with its path in `DECADE_SOCKET`
   and the pane name in `DECADE_PANE` of everything decade starts. JSON lines:
   a hello that claims a pane, messages addressed to a pane and forwarded to

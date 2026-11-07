@@ -2,6 +2,7 @@ mod channel;
 mod chrome;
 mod compositor;
 mod grid;
+mod mcp;
 mod panes;
 mod text;
 

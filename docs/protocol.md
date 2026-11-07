@@ -79,6 +79,18 @@ Anything decade cannot act on comes back on the same connection:
 `message` is the offending line as parsed, or as a string when it was not
 JSON. decade never drops a message silently.
 
+## Agents: MCP
+
+Agents do not use this socket. decade is also an MCP server, over streamable
+HTTP at the address in `DECADE_MCP`, which every program decade starts gets
+beside `DECADE_SOCKET`. Its tools are decade's own `focus` and `panes` and, for
+the code pane, `code.show`, `code.mark` and `code.clear`, each with the payload
+described above as its arguments. A tool call becomes the matching socket
+message from a built-in client named `agent`, so a pane sees `"from": "agent"`.
+decade's answer, an error line or the pane list, is the tool result; a message
+that was only forwarded answers "sent". coax passes `DECADE_MCP` to the agent
+in the ACP session's server list, so any agent coax runs sees these tools.
+
 ## Version
 
 `welcome` carries `version`, 1 today. The number moves when a message changes
