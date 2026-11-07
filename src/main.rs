@@ -6,14 +6,23 @@ mod panes;
 mod text;
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let chat = match args.first().map(String::as_str) {
-        Some("--chat") if args.len() > 1 => Some(args[1..].to_vec()),
-        None => None,
-        _ => {
-            eprintln!("usage: decade [--chat <command> [args...]]");
-            std::process::exit(2);
-        }
+    let mut commands = compositor::Commands {
+        chat: None,
+        code: None,
     };
-    compositor::run(compositor::Commands { chat });
+    let mut args = std::env::args().skip(1);
+    while let Some(flag) = args.next() {
+        let command = args
+            .next()
+            .map(|command| command.split_whitespace().map(str::to_string).collect());
+        match (flag.as_str(), command) {
+            ("--chat", Some(command)) => commands.chat = Some(command),
+            ("--code", Some(command)) => commands.code = Some(command),
+            _ => {
+                eprintln!("usage: decade [--chat \"<command>\"] [--code \"<command>\"]");
+                std::process::exit(2);
+            }
+        }
+    }
+    compositor::run(commands);
 }

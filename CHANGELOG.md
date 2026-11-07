@@ -17,8 +17,9 @@ command line and what the tool writes.
   a hello that claims a pane, messages addressed to a pane and forwarded to
   its occupant, `focus` and `panes` for decade itself, and an error line for
   anything else. `docs/protocol.md` has the details.
-- `--chat <command> [args...]` runs the command in a terminal inside the chat
-  pane, in addition to the shell in the terminal pane.
+- `--chat "<command>"` and `--code "<command>"` run a command in a terminal
+  inside the chat pane or the code pane, in addition to the shell in the
+  terminal pane.
 - Ctrl with h, j, k or l moves focus between panes by direction; a click
   focuses the pane under the pointer.
 

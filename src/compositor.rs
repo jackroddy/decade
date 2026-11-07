@@ -114,6 +114,7 @@ pub struct State {
 
 pub struct Commands {
     pub chat: Option<Vec<String>>,
+    pub code: Option<Vec<String>>,
 }
 
 pub fn run(commands: Commands) {
@@ -268,6 +269,14 @@ pub fn run(commands: Commands) {
             &state.channel_path,
             "chat",
             chat,
+        ));
+    }
+    if let Some(code) = &commands.code {
+        children.push(spawn_terminal(
+            &socket_name,
+            &state.channel_path,
+            "code",
+            code,
         ));
     }
     state.backend.window().request_redraw();
