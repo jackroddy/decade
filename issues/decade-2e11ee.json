@@ -3,7 +3,7 @@
   "title": "Holding Ctrl shows a bar on each pane with zoom and close",
   "body": "There is no way to close a pane except from inside its client, and no zoom.\n\n## Proposal\n\nWhen Ctrl has been held alone for 300 ms, every pane's client is pushed down\none row and that row shows a bar: the pane's name on the left, `zoom` and\n`x` on the right. Releasing Ctrl removes the bars. The delay keeps ordinary\nchords such as Ctrl+c from moving clients. Ctrl+h, j, k, l keep working\nwhile bars show.\n\nClicking `x` asks the client to close through xdg-shell; a pane with no\nclient is removed if transient and left as a slot if anchored. Clicking\n`zoom` gives the pane the whole body and hides the rest until clicked again.\n\n## Open\n\n- Whether the bar should also carry the pin toggle once pins exist.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-1b6bb6",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:07:44.944180628Z",
-  "updated_at": "2026-11-07T05:07:44.944180628Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T05:16:17.92272151Z",
+  "closed_at": "2026-11-07T05:16:17.92272151Z",
+  "close_reason": "Done in the commit titled 'Lay panes out as a split tree with anchors and a Ctrl bar', 2026-11-06, with unit tests on the layout model for bar hit areas and boundary dragging. The bar, the drag and the palette need a hand on keyboard and mouse to check and are untested on screen as of this close; Jack is the tester.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "9494070",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "ee6d3f8",
+      "branch": "dev"
+    }
   }
 }

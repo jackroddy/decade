@@ -3,7 +3,7 @@
   "title": "Dragging the boundary between two panes resizes them",
   "body": "Ratios in the split tree have no way to change.\n\n## Proposal\n\nA pointer press on the outline cells between two sibling panes finds the\nsplit node whose boundary runs there; motion while pressed moves that\nnode's ratio so the boundary follows the pointer in whole cells; release\nends it. Clients are reconfigured as the boundary moves. No keyboard\nequivalent, by decision.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-1b6bb6",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:07:44.953285106Z",
-  "updated_at": "2026-11-07T05:07:44.953285106Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T05:16:17.92272317Z",
+  "closed_at": "2026-11-07T05:16:17.92272317Z",
+  "close_reason": "Done in the commit titled 'Lay panes out as a split tree with anchors and a Ctrl bar', 2026-11-06, with unit tests on the layout model for bar hit areas and boundary dragging. The bar, the drag and the palette need a hand on keyboard and mouse to check and are untested on screen as of this close; Jack is the tester.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "9494070",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "ee6d3f8",
+      "branch": "dev"
+    }
   }
 }
