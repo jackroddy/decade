@@ -114,6 +114,11 @@ pub struct Pane {
 }
 
 impl Pane {
+    /// Whether the pane is a pinned terminal whose shell has exited.
+    pub fn restartable(&self) -> bool {
+        self.toplevel.is_none() && self.cwd.is_some() && matches!(self.kind, Kind::Anchor { .. })
+    }
+
     pub fn new(id: usize, name: String, kind: Kind) -> Pane {
         Pane {
             id,
@@ -710,12 +715,28 @@ fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect) {
         return;
     }
     scene.fill(inner, PANE);
+    let middle = inner.row + inner.rows / 2;
+    let centered = |text: &str| inner.column + inner.columns.saturating_sub(text.len() as u32) / 2;
+    if pane.restartable() {
+        let text = "shell exited";
+        scene.text(centered(text), middle.saturating_sub(1), text, DIM);
+        let button = " restart ";
+        let column = centered(button);
+        let rect = CellRect {
+            column,
+            row: middle + 1,
+            columns: button.len() as u32,
+            rows: 1,
+        };
+        scene.fill(rect, BAR_FOCUSED);
+        scene.text(column, middle + 1, button, BAR_FOCUSED_TEXT);
+        return;
+    }
     let text = match &pane.kind {
         Kind::Anchor { app_id } => format!("waiting for {app_id}"),
         Kind::Transient => "no client".to_string(),
     };
-    let column = inner.column + inner.columns.saturating_sub(text.len() as u32) / 2;
-    scene.text(column, inner.row + inner.rows / 2, &text, DIM);
+    scene.text(centered(&text), middle, &text, DIM);
 }
 
 fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 3] {
@@ -1340,5 +1361,46 @@ mod tests {
         let layout = three_anchors();
         assert_eq!(layout.unique_name("terminal"), "terminal2");
         assert_eq!(layout.unique_name("nautilus"), "nautilus");
+    }
+
+    fn texts(scene: &Scene) -> Vec<String> {
+        scene
+            .shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                crate::draw::Shape::Text { text, .. } => Some(text.trim().to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pinned_terminal_whose_shell_exited_shows_a_restart_button() {
+        let mut layout = Layout::new(100, 41);
+        layout.panes[0].cwd = Some(PathBuf::from("/home/jack"));
+        layout.pin(0, "decade.w0.terminal".to_string());
+        let font = crate::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, "jack");
+        let texts = texts(&scene);
+        assert!(texts.iter().any(|text| text == "shell exited"));
+        assert!(texts.iter().any(|text| text == "restart"));
+    }
+
+    #[test]
+    fn a_pinned_gui_pane_without_its_window_waits_and_offers_no_restart() {
+        let mut layout = Layout::new(100, 41);
+        layout.pin(0, "org.gnome.Nautilus".to_string());
+        assert!(!layout.panes[0].restartable());
+        let font = crate::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, "jack");
+        let texts = texts(&scene);
+        assert!(
+            texts
+                .iter()
+                .any(|text| text == "waiting for org.gnome.Nautilus")
+        );
+        assert!(!texts.iter().any(|text| text == "restart"));
     }
 }

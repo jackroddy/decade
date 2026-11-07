@@ -50,7 +50,9 @@ command line and what the tool writes.
   between two panes resizes them.
 - Pinning a pane makes it an anchor for its program's app id. An anchor
   stays as an empty slot, saying what it waits for, when its client goes,
-  and takes it back when it returns. Unpinning an anchor makes it a pane
+  and takes it back when it returns. A pinned terminal whose shell exits
+  shows a restart button instead, and a click on the slot or Enter starts
+  a new shell in the pane's directory. Unpinning an anchor makes it a pane
   that closes with its program.
 - Ctrl+dragging a pane, or dragging it by the name on its bar, carries a
   small copy of it under the pointer. Dropping it on a target drawn over

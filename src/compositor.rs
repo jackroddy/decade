@@ -158,6 +158,7 @@ enum Key {
     NewPane,
     Palette,
     Picker,
+    Restart,
     Clipboard(Chord),
     Menu(MenuKey),
     Swallow,
@@ -1902,6 +1903,26 @@ impl State {
         self.focus(id);
     }
 
+    fn restart_pane(&mut self, workspace: usize, id: usize) {
+        let Some(pane) = self.workspaces[workspace].layout.pane(id) else {
+            return;
+        };
+        if !pane.restartable() {
+            return;
+        }
+        let starting = pane.pid.is_some_and(|pid| {
+            self.children
+                .iter_mut()
+                .find(|child| child.id() == pid)
+                .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
+        });
+        if starting {
+            return;
+        }
+        let (name, cwd) = (pane.name.clone(), pane.cwd.clone().unwrap_or_default());
+        self.spawn_terminal(workspace, &name, &cwd);
+    }
+
     fn remove_pane(&mut self, workspace: usize, id: usize) {
         let layout = &mut self.workspaces[workspace].layout;
         let Some(pane) = layout.pane(id) else {
@@ -2104,6 +2125,10 @@ impl State {
             KeyState::Released
         };
         let palette = self.menu.is_some() || self.panel.is_some() || self.picker.is_some();
+        let restartable = self
+            .layout()
+            .pane(self.layout().focused)
+            .is_some_and(|pane| pane.restartable());
         let mut control_key = false;
         let key = keyboard.input::<Key, _>(
             self,
@@ -2120,6 +2145,10 @@ impl State {
                         modifiers,
                         handle.modified_sym(),
                     ));
+                }
+                let plain = !modifiers.logo && !modifiers.ctrl && !modifiers.alt;
+                if restartable && pressed && plain && sym == keysyms::KEY_Return {
+                    return FilterResult::Intercept(Key::Restart);
                 }
                 if !pressed || !modifiers.logo {
                     return FilterResult::Forward;
@@ -2254,6 +2283,10 @@ impl State {
                 self.request_redraw();
             }
             Key::Picker => self.open_picker(),
+            Key::Restart => {
+                let focused = self.layout().focused;
+                self.restart_pane(self.current(), focused);
+            }
             Key::Menu(key) if self.picker.is_some() => {
                 let ids: Vec<u32> = self.workspaces.iter().map(|known| known.id).collect();
                 let columns = self.picker_grid().columns;
@@ -2344,6 +2377,15 @@ impl State {
             self.start_pane_drag(id);
             return true;
         }
+        if self
+            .layout()
+            .pane(id)
+            .is_some_and(|pane| pane.restartable())
+        {
+            self.focus(id);
+            self.restart_pane(self.current(), id);
+            return true;
+        }
         if id != self.layout().focused {
             self.focus(id);
         }
@@ -2372,6 +2414,7 @@ impl State {
             }
         }
         self.chrome_changed();
+        self.schedule_save();
     }
 
     fn start_pane_drag(&mut self, id: usize) {
@@ -2944,6 +2987,7 @@ fn repeats(key: Key) -> bool {
         | Key::NewPane
         | Key::Palette
         | Key::Picker
+        | Key::Restart
         | Key::Clipboard(_)
         | Key::Swallow => false,
     }
