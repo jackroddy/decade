@@ -25,6 +25,8 @@ mod panel;
 #[cfg(target_os = "linux")]
 mod panes;
 #[cfg(target_os = "linux")]
+mod picker;
+#[cfg(target_os = "linux")]
 mod settings;
 #[cfg(target_os = "linux")]
 mod text;

@@ -197,14 +197,27 @@ impl Menu {
                 self.query.clear();
                 self.query_changed();
             }
-            Target::Directory => {
-                self.path.push(index);
-                self.query = "~/".to_string();
-                self.query_changed();
-            }
+            Target::Directory => self.open_directory(index),
             Target::Complete(_) => self.complete(),
         }
         Outcome::Open
+    }
+
+    fn open_directory(&mut self, index: usize) {
+        self.path.push(index);
+        self.query = "~/".to_string();
+        self.query_changed();
+    }
+
+    pub fn start_new_workspace(&mut self) {
+        let directory = self
+            .root
+            .iter()
+            .position(|row| matches!(row.target, Target::Directory));
+        if let Some(index) = directory {
+            self.path.clear();
+            self.open_directory(index);
+        }
     }
 
     fn complete(&mut self) {

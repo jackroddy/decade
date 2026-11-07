@@ -92,11 +92,12 @@ use crate::gpu::Gpu;
 use crate::hypr::Hyprland;
 use crate::mcp;
 use crate::menu::{Action, Menu, MenuKey, Outcome};
-use crate::palette::ACCENT;
+use crate::palette::{self, ACCENT};
 use crate::panel::{Panel, PanelOutcome};
 use crate::panes::{
     BACKGROUND, BarButton, Boundary, Direction, Drop, Kind as PaneKind, Layout, Pane,
 };
+use crate::picker::{self, Grid, Picker};
 use crate::settings::{self, Settings};
 use crate::text::Font;
 use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
@@ -121,6 +122,8 @@ const MAX_SCALE: u32 = 120 * 8;
 const FORMATS_WAIT: Duration = Duration::from_secs(1);
 const OUTBOX_RETRY: Duration = Duration::from_millis(5);
 const CLOSE_TIMEOUT_MS: i32 = 1000;
+const PICKER_TICK: Duration = Duration::from_millis(500);
+const CLOSE_ICON: char = '\u{f0156}';
 const CLIPBOARD: u32 = 0;
 const PRIMARY: u32 = 1;
 
@@ -151,6 +154,7 @@ enum Key {
     Resize(Direction),
     NewPane,
     Palette,
+    Picker,
     Clipboard(Chord),
     Menu(MenuKey),
     Swallow,
@@ -209,6 +213,10 @@ pub struct State {
     menu_font: Font,
     rounded: GlesPixelProgram,
     menu: Option<Menu>,
+    picker: Option<Picker>,
+
+    /// The timer that sends frame callbacks to hidden workspaces while the picker is open.
+    picker_tick: Option<RegistrationToken>,
     panel: Option<Panel>,
     settings: Settings,
     settings_path: Option<PathBuf>,
@@ -495,6 +503,8 @@ pub fn run() {
         next_workspace: 1,
         unplaced: Vec::new(),
         menu: None,
+        picker: None,
+        picker_tick: None,
         panel: None,
         settings,
         settings_path,
@@ -908,6 +918,87 @@ impl State {
         }
         if self.active.is_some_and(|active| moved.contains(&active)) {
             self.workspace_shown();
+        }
+        self.request_redraw();
+    }
+
+    fn picker_grid(&self) -> Grid {
+        Grid::new(
+            self.workspaces.len() + 1,
+            self.size,
+            self.font.cell_height as i32,
+        )
+    }
+
+    fn open_picker(&mut self) {
+        if self.picker.is_some() {
+            return;
+        }
+        self.picker = Some(Picker::new(self.current()));
+        let tick =
+            self.loop_handle
+                .insert_source(Timer::from_duration(PICKER_TICK), |_, _, state| {
+                    state.tick_hidden();
+                    TimeoutAction::ToDuration(PICKER_TICK)
+                });
+        self.picker_tick = tick.ok();
+        self.tick_hidden();
+    }
+
+    fn close_picker(&mut self) {
+        self.picker = None;
+        if let Some(token) = self.picker_tick.take() {
+            self.loop_handle.remove(token);
+        }
+        self.request_redraw();
+    }
+
+    fn tick_hidden(&mut self) {
+        let time = self.start.elapsed().as_millis() as u32;
+        for workspace in &self.workspaces {
+            let shown = self
+                .viewers
+                .values()
+                .any(|viewer| viewer.welcomed && viewer.workspace == workspace.id);
+            if shown {
+                continue;
+            }
+            for pane in &workspace.layout.panes {
+                if let Some(toplevel) = &pane.toplevel {
+                    send_frames_surface_tree(toplevel.wl_surface(), time);
+                }
+            }
+        }
+        self.request_redraw();
+    }
+
+    fn picker_outcome(&mut self, outcome: picker::Outcome) {
+        match outcome {
+            picker::Outcome::Open => {}
+            picker::Outcome::Close => self.close_picker(),
+            picker::Outcome::Show(id) => {
+                self.close_picker();
+                if let Some(active) = self.active {
+                    self.show(active, id);
+                }
+            }
+            picker::Outcome::New => {
+                self.close_picker();
+                let shown = &self.workspaces[self.current()];
+                let (id, name) = (shown.id, shown.name.clone());
+                let mut menu = Menu::new(apps::installed(), workspace::home(), id, &name);
+                menu.start_new_workspace();
+                self.menu = Some(menu);
+            }
+            picker::Outcome::CloseWorkspace(id) => self.close_workspace(id),
+            picker::Outcome::Move { from, to } => {
+                let moved = self.workspaces.remove(from);
+                self.workspaces.insert(to, moved);
+                self.send_workspace_list();
+            }
+        }
+        if let Some(picker) = &mut self.picker {
+            picker.selected = picker.selected.min(self.workspaces.len());
         }
         self.request_redraw();
     }
@@ -1776,6 +1867,14 @@ impl State {
 
     fn pointer_moved(&mut self, location: Point<f64, Logical>, time: u32) {
         self.pointer = location;
+        if self.picker.is_some() {
+            let point = self.pointer.to_physical(self.scale).to_i32_round();
+            let ids: Vec<u32> = self.workspaces.iter().map(|known| known.id).collect();
+            if self.picker.as_mut().unwrap().motion(point, &ids) {
+                self.request_redraw();
+            }
+            return;
+        }
         match self.drag.take() {
             Some(Drag::Boundary(boundary)) => {
                 let (column, row) = self.pointer_cell();
@@ -1825,6 +1924,22 @@ impl State {
     }
 
     fn pointer_button(&mut self, button: u32, pressed: bool, time: u32) {
+        if self.picker.is_some() {
+            if button == BTN_LEFT {
+                let point = self.pointer.to_physical(self.scale).to_i32_round();
+                let ids: Vec<u32> = self.workspaces.iter().map(|known| known.id).collect();
+                let grid = self.picker_grid();
+                let cell_height = self.font.cell_height as i32;
+                let picker = self.picker.as_mut().unwrap();
+                let outcome = if pressed {
+                    picker.press(point, &ids, &grid, cell_height)
+                } else {
+                    picker.release(point, &ids, &grid)
+                };
+                self.picker_outcome(outcome);
+            }
+            return;
+        }
         if button == BTN_LEFT {
             if pressed && self.press_on_chrome() {
                 return;
@@ -1889,7 +2004,7 @@ impl State {
         } else {
             KeyState::Released
         };
-        let palette = self.menu.is_some() || self.panel.is_some();
+        let palette = self.menu.is_some() || self.panel.is_some() || self.picker.is_some();
         let mut control_key = false;
         let key = keyboard.input::<Key, _>(
             self,
@@ -2038,6 +2153,13 @@ impl State {
                 let (id, name) = (shown.id, shown.name.clone());
                 self.menu = Some(Menu::new(apps::installed(), workspace::home(), id, &name));
                 self.request_redraw();
+            }
+            Key::Picker => self.open_picker(),
+            Key::Menu(key) if self.picker.is_some() => {
+                let ids: Vec<u32> = self.workspaces.iter().map(|known| known.id).collect();
+                let columns = self.picker_grid().columns;
+                let outcome = self.picker.as_mut().unwrap().key(key, &ids, columns);
+                self.picker_outcome(outcome);
             }
             Key::Menu(key) => {
                 if let Some(panel) = &mut self.panel {
@@ -2252,15 +2374,21 @@ impl State {
             pointer,
             menu,
             panel,
+            picker,
             settings,
             rounded,
             ..
         } = self;
         let layout = &workspaces[workspace].layout;
-        let (menu, panel, drag) = if workspace == current {
-            (menu.as_ref(), panel.as_ref(), drag.as_ref())
+        let (menu, panel, drag, picker) = if workspace == current {
+            (
+                menu.as_ref(),
+                panel.as_ref(),
+                drag.as_ref(),
+                picker.as_ref(),
+            )
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
         let scale = *scale;
         let size = *size;
@@ -2290,6 +2418,11 @@ impl State {
             let box_size = panel.draw(&mut scene, paint.menu_font, settings);
             let origin = ((size.w - box_size.w) / 2, (size.h - box_size.h) / 3).into();
             paint.scene(&mut elements, &scene, origin, None);
+        }
+
+        if let Some(picker) = picker {
+            let pointer = pointer.to_physical(scale).to_i32_round();
+            paint_picker(&mut paint, &mut elements, picker, workspaces, size, pointer);
         }
 
         let mut animating = false;
@@ -2367,7 +2500,7 @@ impl State {
         layout.draw_drop(&mut above);
         paint.scene(&mut elements, &above, Point::default(), None);
 
-        for pane in layout.visible() {
+        for pane in layout.visible().filter(|_| picker.is_none()) {
             let Some(toplevel) = &pane.toplevel else {
                 continue;
             };
@@ -2394,9 +2527,11 @@ impl State {
             elements.extend(surfaces.into_iter().map(Element::Surface));
         }
 
-        let mut below = Scene::new(font);
-        layout.draw(&mut below, &workspaces[workspace].name);
-        paint.scene(&mut elements, &below, Point::default(), None);
+        if picker.is_none() {
+            let mut below = Scene::new(font);
+            layout.draw(&mut below, &workspaces[workspace].name);
+            paint.scene(&mut elements, &below, Point::default(), None);
+        }
 
         let mut frame = paint
             .renderer
@@ -2425,6 +2560,117 @@ impl State {
         }
         Ok(sync.export())
     }
+}
+
+fn paint_picker(
+    paint: &mut Paint,
+    elements: &mut Vec<Element>,
+    picker: &Picker,
+    workspaces: &[Workspace],
+    size: Size<i32, Physical>,
+    pointer: Point<i32, Physical>,
+) {
+    let (cell_width, cell_height) = (paint.font.cell_width, paint.font.cell_height);
+    let grid = Grid::new(workspaces.len() + 1, size, cell_height as i32);
+    let mut over = Scene::new(paint.font);
+    let mut under = Scene::new(paint.font);
+    let line = over.line_width();
+    let label_width =
+        |text: &str| (text.chars().count() as u32 * paint.menu_font.cell_width) as i32;
+    let drop_target = picker.dragging.and_then(|_| grid.cell_at(pointer));
+    let mut surfaces = Vec::new();
+    for (i, cell) in grid.cells.iter().enumerate() {
+        let outline = if drop_target == Some(i) {
+            palette::CYAN
+        } else if picker.selected == i {
+            ACCENT
+        } else {
+            palette::MUTED
+        };
+        over.box_lines(
+            cell.loc.x - line,
+            cell.loc.y - line,
+            cell.size.w + line * 2,
+            cell.size.h + line * 2,
+            outline,
+        );
+        under.rect(
+            cell.loc.x,
+            cell.loc.y,
+            cell.size.w,
+            cell.size.h,
+            palette::DARK_BACKGROUND,
+        );
+        let label_y =
+            cell.loc.y + cell.size.h + (grid.label - paint.menu_font.cell_height as i32) / 2;
+        let Some(workspace) = workspaces.get(i) else {
+            let text = "+ New workspace";
+            let x = cell.loc.x + (cell.size.w - label_width(text)) / 2;
+            let y = cell.loc.y + (cell.size.h - paint.menu_font.cell_height as i32) / 2;
+            over.text_px(x, y, text, Face::Menu, palette::FOREGROUND);
+            continue;
+        };
+        let confirming = picker.confirming == Some(workspace.id);
+        let label = if confirming {
+            format!("close {}? press x again", workspace.name)
+        } else if workspace.closing {
+            format!("{} closing", workspace.name)
+        } else {
+            workspace.name.clone()
+        };
+        let label_color = if confirming {
+            palette::RED
+        } else {
+            palette::FOREGROUND
+        };
+        let x = cell.loc.x + (cell.size.w - label_width(&label)) / 2;
+        over.text_px(x, label_y, &label, Face::Menu, label_color);
+        let button = grid.close_button(i, cell_height as i32);
+        let icon_color = if confirming {
+            palette::RED
+        } else {
+            palette::LIGHT_FOREGROUND
+        };
+        let icon_x = button.loc.x + (button.size.w - paint.menu_font.cell_width as i32) / 2;
+        let icon_y = button.loc.y + (button.size.h - paint.menu_font.cell_height as i32) / 2;
+        over.text_px(
+            icon_x,
+            icon_y,
+            &CLOSE_ICON.to_string(),
+            Face::Menu,
+            icon_color,
+        );
+
+        let layout = &workspace.layout;
+        for pane in layout.visible() {
+            let Some(toplevel) = &pane.toplevel else {
+                continue;
+            };
+            let client = layout.client_rect(pane);
+            let origin = cell.loc
+                + Point::from((
+                    (client.column * cell_width) as i32,
+                    (client.row * cell_height) as i32,
+                ));
+            let tree: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                render_elements_from_surface_tree(
+                    paint.renderer,
+                    toplevel.wl_surface(),
+                    origin,
+                    paint.scale,
+                    1.0,
+                    Kind::Unspecified,
+                );
+            surfaces.extend(tree.into_iter().map(|surface| {
+                Element::Ghost(RescaleRenderElement::from_element(
+                    surface, cell.loc, grid.scale,
+                ))
+            }));
+        }
+    }
+    paint.scene(elements, &over, Point::default(), None);
+    elements.extend(surfaces);
+    paint.scene(elements, &under, Point::default(), None);
 }
 
 #[derive(Clone, Copy)]
@@ -2595,7 +2841,12 @@ fn repeats(key: Key) -> bool {
     match key {
         Key::Focus(_) | Key::Move(_) | Key::Resize(_) => true,
         Key::Menu(key) => !matches!(key, MenuKey::Enter | MenuKey::Escape),
-        Key::Zoom | Key::NewPane | Key::Palette | Key::Clipboard(_) | Key::Swallow => false,
+        Key::Zoom
+        | Key::NewPane
+        | Key::Palette
+        | Key::Picker
+        | Key::Clipboard(_)
+        | Key::Swallow => false,
     }
 }
 
@@ -2625,6 +2876,7 @@ fn super_key(sym: u32, shift: bool) -> Option<Key> {
         keysyms::KEY_x if !shift => Some(Key::Clipboard(Chord::Cut)),
         keysyms::KEY_Return if shift => Some(Key::NewPane),
         keysyms::KEY_space if shift => Some(Key::Palette),
+        keysyms::KEY_Tab if !shift => Some(Key::Picker),
         _ => None,
     }
 }
