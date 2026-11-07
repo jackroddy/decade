@@ -35,13 +35,18 @@ use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_seat};
 use smithay::reexports::wayland_server::{Client, Display, DisplayHandle};
 use smithay::reexports::winit::platform::wayland::WindowAttributesExtWayland;
 use smithay::reexports::winit::window::Window;
-use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Transform};
+use smithay::utils::{
+    Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Serial, Size, Transform,
+};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction,
-    with_surface_tree_downward,
+    with_states, with_surface_tree_downward,
 };
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
+use smithay::wayland::fractional_scale::{
+    FractionalScaleHandler, FractionalScaleManagerState, with_fractional_scale,
+};
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{
@@ -52,14 +57,16 @@ use smithay::wayland::shell::xdg::{
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::socket::ListeningSocketSource;
+use smithay::wayland::viewporter::ViewporterState;
 use smithay::{
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat,
-    delegate_shm, delegate_xdg_shell, render_elements,
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_fractional_scale,
+    delegate_output, delegate_seat, delegate_shm, delegate_viewporter, delegate_xdg_shell,
+    render_elements,
 };
 
 use crate::chrome;
 use crate::grid::Grid;
-use crate::panes::{BACKGROUND, Direction, FOREGROUND, Layout};
+use crate::panes::{BACKGROUND, Direction, FOREGROUND, Layout, Pane};
 use crate::text::{FONT_PX, Font, Glyphs};
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
@@ -77,6 +84,8 @@ pub struct State {
     seat_state: SeatState<State>,
     data_device_state: DataDeviceState,
     dmabuf_state: DmabufState,
+    _fractional_scale_state: FractionalScaleManagerState,
+    _viewporter_state: ViewporterState,
     seat: Seat<State>,
     output: Output,
     backend: WinitGraphicsBackend<GlesRenderer>,
@@ -87,6 +96,7 @@ pub struct State {
     layout: Layout,
     chrome: Option<GlesTexture>,
     pointer: Point<f64, Logical>,
+    scale: f64,
     start: Instant,
 }
 
@@ -105,6 +115,7 @@ pub fn run() {
     let _dmabuf_global = dmabuf_state.create_global::<State>(&dh, formats);
 
     let size = backend.window_size();
+    let scale = backend.window().scale_factor();
     let mode = Mode {
         size,
         refresh: REFRESH_MILLIHERTZ,
@@ -122,7 +133,7 @@ pub fn run() {
     output.change_current_state(
         Some(mode),
         Some(Transform::Normal),
-        Some(Scale::Integer(1)),
+        Some(Scale::Fractional(scale)),
         Some((0, 0).into()),
     );
     output.set_preferred(mode);
@@ -132,7 +143,7 @@ pub fn run() {
     seat.add_keyboard(Default::default(), 200, 25).unwrap();
     seat.add_pointer();
 
-    let font = Font::load(FONT_PX * backend.window().scale_factor() as f32);
+    let font = Font::load(FONT_PX * scale as f32);
     let layout = Layout::new(
         size.w as u32 / font.cell_width,
         size.h as u32 / font.cell_height,
@@ -160,7 +171,9 @@ pub fn run() {
         .unwrap();
     handle
         .insert_source(winit, |event, _, state| match event {
-            WinitEvent::Resized { size, .. } => state.resized(size.w as u32, size.h as u32),
+            WinitEvent::Resized { size, scale_factor } => {
+                state.resized(size.w as u32, size.h as u32, scale_factor)
+            }
             WinitEvent::Input(event) => state.input(event),
             WinitEvent::Redraw => state.redraw(),
             WinitEvent::CloseRequested => state.loop_signal.stop(),
@@ -175,6 +188,8 @@ pub fn run() {
         seat_state,
         data_device_state: DataDeviceState::new::<State>(&dh),
         dmabuf_state,
+        _fractional_scale_state: FractionalScaleManagerState::new::<State>(&dh),
+        _viewporter_state: ViewporterState::new::<State>(&dh),
         seat,
         output,
         backend,
@@ -185,6 +200,7 @@ pub fn run() {
         layout,
         chrome: None,
         pointer: (0.0, 0.0).into(),
+        scale,
         start: Instant::now(),
     };
 
@@ -217,7 +233,18 @@ fn spawn_terminal(socket: &std::ffi::OsStr) -> Option<Child> {
 }
 
 impl State {
-    fn resized(&mut self, width: u32, height: u32) {
+    fn resized(&mut self, width: u32, height: u32, scale: f64) {
+        let rescaled = scale != self.scale;
+        if rescaled {
+            self.scale = scale;
+            self.font = Font::load(FONT_PX * scale as f32);
+            self.glyphs = Glyphs::new();
+            for pane in &self.layout.panes {
+                if let Some(toplevel) = &pane.toplevel {
+                    self.send_scale(toplevel.wl_surface());
+                }
+            }
+        }
         self.layout
             .resize(width / self.font.cell_width, height / self.font.cell_height);
         self.output.change_current_state(
@@ -226,7 +253,7 @@ impl State {
                 refresh: REFRESH_MILLIHERTZ,
             }),
             None,
-            None,
+            rescaled.then_some(Scale::Fractional(scale)),
             None,
         );
         self.chrome = None;
@@ -241,16 +268,10 @@ impl State {
         let Some(toplevel) = &pane.toplevel else {
             return;
         };
-        let rect = pane.client_rect();
+        let (_, size) = self.client_geometry(pane);
         let focused = self.layout.panes[self.layout.focused].toplevel.as_ref() == Some(toplevel);
         toplevel.with_pending_state(|state| {
-            state.size = Some(
-                (
-                    (rect.columns * self.font.cell_width) as i32,
-                    (rect.rows * self.font.cell_height) as i32,
-                )
-                    .into(),
-            );
+            state.size = Some(size);
             if focused {
                 state.states.set(xdg_toplevel::State::Activated);
             } else {
@@ -310,19 +331,15 @@ impl State {
                 }
             }
             InputEvent::PointerMotionAbsolute { event } => {
-                let size = self.backend.window_size();
-                self.pointer = event.position_transformed((size.w, size.h).into());
+                let size = self.backend.window_size().to_f64().to_logical(self.scale);
+                self.pointer = event.position_transformed(size.to_i32_round());
                 let pointer = self.seat.get_pointer().unwrap();
                 let focus = self.pane_under_pointer().and_then(|pane| {
-                    let pane = &self.layout.panes[pane];
-                    let rect = pane.client_rect();
-                    let origin = (
-                        (rect.column * self.font.cell_width) as f64,
-                        (rect.row * self.font.cell_height) as f64,
-                    );
-                    pane.toplevel
+                    let (origin, _) = self.client_geometry(&self.layout.panes[pane]);
+                    self.layout.panes[pane]
+                        .toplevel
                         .as_ref()
-                        .map(|toplevel| (toplevel.wl_surface().clone(), origin.into()))
+                        .map(|toplevel| (toplevel.wl_surface().clone(), origin.to_f64()))
                 });
                 pointer.motion(
                     self,
@@ -360,9 +377,36 @@ impl State {
     }
 
     fn pane_under_pointer(&self) -> Option<usize> {
-        let column = (self.pointer.x / self.font.cell_width as f64) as u32;
-        let row = (self.pointer.y / self.font.cell_height as f64) as u32;
+        let physical = self.pointer.to_physical(self.scale);
+        let column = (physical.x / self.font.cell_width as f64) as u32;
+        let row = (physical.y / self.font.cell_height as f64) as u32;
         self.layout.pane_at(column, row)
+    }
+
+    fn client_geometry(&self, pane: &Pane) -> (Point<i32, Logical>, Size<i32, Logical>) {
+        let rect = pane.client_rect();
+        let origin: Point<i32, Physical> = (
+            (rect.column * self.font.cell_width) as i32,
+            (rect.row * self.font.cell_height) as i32,
+        )
+            .into();
+        let size: Size<i32, Physical> = (
+            (rect.columns * self.font.cell_width) as i32,
+            (rect.rows * self.font.cell_height) as i32,
+        )
+            .into();
+        (
+            origin.to_f64().to_logical(self.scale).to_i32_round(),
+            size.to_f64().to_logical(self.scale).to_i32_round(),
+        )
+    }
+
+    fn send_scale(&self, surface: &WlSurface) {
+        with_states(surface, |states| {
+            with_fractional_scale(states, |fractional| {
+                fractional.set_preferred_scale(self.scale);
+            });
+        });
     }
 
     fn redraw(&mut self) {
@@ -382,8 +426,10 @@ impl State {
             font,
             glyphs,
             start,
+            scale,
             ..
         } = self;
+        let scale = *scale;
         let size = backend.window_size();
         let damage = Rectangle::from_size(size);
         let (renderer, mut framebuffer) = backend.bind().unwrap();
@@ -417,7 +463,7 @@ impl State {
                     renderer,
                     toplevel.wl_surface(),
                     origin,
-                    1.0,
+                    scale,
                     1.0,
                     Kind::Unspecified,
                 );
@@ -431,8 +477,8 @@ impl State {
             1,
             Transform::Normal,
             None,
-            None,
-            None,
+            Some(Rectangle::from_size(size.to_f64().to_logical(1.0))),
+            Some(size.to_f64().to_logical(scale).to_i32_round()),
             None,
             Kind::Unspecified,
         )));
@@ -446,7 +492,8 @@ impl State {
                 &[damage],
             )
             .unwrap();
-        draw_render_elements::<GlesRenderer, _, _>(&mut frame, 1.0, &elements, &[damage]).unwrap();
+        draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &elements, &[damage])
+            .unwrap();
         let _ = frame.finish().unwrap();
         drop(framebuffer);
 
@@ -598,6 +645,12 @@ impl ServerDndGrabHandler for State {
 
 impl OutputHandler for State {}
 
+impl FractionalScaleHandler for State {
+    fn new_fractional_scale(&mut self, surface: WlSurface) {
+        self.send_scale(&surface);
+    }
+}
+
 delegate_compositor!(State);
 delegate_xdg_shell!(State);
 delegate_shm!(State);
@@ -605,3 +658,5 @@ delegate_dmabuf!(State);
 delegate_seat!(State);
 delegate_data_device!(State);
 delegate_output!(State);
+delegate_fractional_scale!(State);
+delegate_viewporter!(State);
