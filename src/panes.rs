@@ -263,7 +263,10 @@ impl Layout {
             .iter()
             .find(|pane| {
                 pane.toplevel.is_none()
-                    && matches!(&pane.kind, Kind::Anchor { app_id: wanted } if wanted == app_id)
+                    && match &pane.kind {
+                        Kind::Anchor { app_id: wanted } => wanted == app_id,
+                        Kind::Transient => app_id.strip_prefix("decade.") == Some(&pane.name),
+                    }
             })
             .map(|pane| pane.id)
     }
@@ -829,6 +832,15 @@ mod tests {
         assert_eq!(layout.bar_hit(42, 1), Some((0, BarButton::Zoom)));
         assert_eq!(layout.bar_hit(2, 1), Some((0, BarButton::Name)));
         assert_eq!(layout.bar_hit(2, 5), None);
+    }
+
+    #[test]
+    fn a_transient_pane_is_placed_by_the_app_id_of_the_terminal_started_for_it() {
+        let mut layout = Layout::new(100, 41);
+        let name = layout.unique_name("terminal");
+        let id = layout.add_transient(name);
+        assert_eq!(layout.place(Some("decade.terminal2")), Some(id));
+        assert_eq!(layout.place(Some("decade.terminal3")), None);
     }
 
     #[test]
