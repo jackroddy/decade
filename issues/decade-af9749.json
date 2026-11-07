@@ -3,26 +3,29 @@
   "title": "Ctrl+Shift+Enter adds an empty pane beside the new terminal",
   "body": "Jack reports on 2026-11-06 that Ctrl+Shift+Enter adds two panes, a terminal and an empty pane beside it.\n\n`new_terminal_pane` in `src/compositor.rs` asks `Layout::unique_name(\"terminal\")` for a name. The anchor `terminal` already holds that name, so it gets `terminal2`. It adds an empty `Kind::Transient` pane under that name and starts ghostty with `--class=decade.terminal2`. On ghostty's first commit, `commit` calls `Layout::place(app_id)` in `src/panes.rs` to find the waiting pane. `place` matches only `Kind::Anchor` panes, so it finds none, and `commit` adds a second transient pane named `decade.terminal2` for the window.\n\n## Proposal\n\n`place` also matches a `Kind::Transient` pane with no toplevel whose name, prefixed with `decade.`, equals the app id.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-1b6bb6",
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/575e4e76",
-  "lease_expires": "2026-11-07T05:51:52.013527815Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:36:49.109691567Z",
-  "updated_at": "2026-11-07T05:36:52.013527815Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T05:44:16.210488365Z",
+  "closed_at": "2026-11-07T05:44:16.210488365Z",
+  "close_reason": "Layout::place matches a waiting transient pane by its app id in 11658b0.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "93a5286",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "07e5c73",
+      "branch": "dev"
+    }
   }
 }
