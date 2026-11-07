@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T06:18:15.363289226Z",
-  "updated_at": "2026-11-07T06:18:15.363289226Z",
+  "updated_at": "2026-11-07T21:59:58.306438556Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "44593d91",
+      "at": "2026-11-07T21:59:58.306438036Z",
+      "author": "Jack Roddy/6b9cbed5",
+      "text": "decade-cc25be decided the open question. decade restarts the command only when someone presses the restart button on the empty slot, so a command that exits at once cannot loop. A pinned pane keeps its command and cwd instead of an app id.",
+      "commit": "31d801e",
+      "branch": "sessions"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "3ee6949",
