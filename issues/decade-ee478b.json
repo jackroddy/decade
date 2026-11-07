@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T01:47:21.29259868Z",
-  "updated_at": "2026-11-07T03:55:21.461084124Z",
+  "updated_at": "2026-11-07T04:04:23.214458452Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -23,6 +23,14 @@
       "at": "2026-11-07T03:55:21.461083394Z",
       "author": "Jack Roddy/618aab71",
       "text": "Architecture settled with Jack on 2026-11-06: two protocols, one per audience. Programs in panes speak the JSON-lines socket to decade, which routes pane to pane and never lets panes talk directly. Agents speak MCP to decade itself, and decade relays a tool call as a socket message to the named pane. coax is a pane program, so it drives panes over the socket (follow-along) and is not an MCP client. The alternative, MCP everywhere with each pane an MCP server, lost on transport (a TUI's stdio is its terminal), addressing (ports, not roles) and direction (MCP is host to server; a pane could not tell the chat anything). See decade-315351 for the MCP side.",
+      "commit": "92b2b38",
+      "branch": "dev"
+    },
+    {
+      "id": "4ecb11e1",
+      "at": "2026-11-07T04:04:23.214457882Z",
+      "author": "Jack Roddy/618aab71",
+      "text": "Follow-along, decade-fe3599, is done but not pursued further, by Jack's call on 2026-11-06: as implemented and as described it has little utility. The code stays in coax as it is; no debounce tuning, no more rules, no tests beyond the ones there. The milestone's remaining piece is decade-315351, decade as an MCP server.",
       "commit": "92b2b38",
       "branch": "dev"
     }
