@@ -1,8 +1,8 @@
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
-use crate::grid::{CLEAR, Grid, Rgba};
+use crate::draw::Scene;
 use crate::palette;
-use crate::text::edge_char;
+use crate::text::Rgba;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;
@@ -146,7 +146,6 @@ pub struct Layout {
     pub focused: usize,
     pub zoom: Option<usize>,
     pub bar: bool,
-    pub palette: bool,
     pub drag_cell: Option<(u32, u32)>,
     pub dragging: Option<usize>,
     pub hover: Option<(usize, BarButton)>,
@@ -172,7 +171,6 @@ impl Layout {
             focused: 1,
             zoom: None,
             bar: false,
-            palette: false,
             drag_cell: None,
             dragging: None,
             hover: None,
@@ -424,7 +422,7 @@ impl Layout {
         self.arrange();
     }
 
-    pub fn draw_drop(&self, grid: &mut Grid) {
+    pub fn draw_drop(&self, scene: &mut Scene) {
         let (Some(dragged), Some((column, row))) = (self.dragging, self.drag_cell) else {
             return;
         };
@@ -437,7 +435,7 @@ impl Layout {
                     None => Drop::Swap(target),
                     Some(side) => Drop::Split { target, side },
                 };
-                draw_zone(grid, zone, active == Some(drop));
+                draw_zone(scene, zone, active == Some(drop));
             }
         }
         let body = self.body();
@@ -474,7 +472,7 @@ impl Layout {
             ),
         ];
         for (side, strip) in strips {
-            draw_zone(grid, strip, active == Some(Drop::Edge(side)));
+            draw_zone(scene, strip, active == Some(Drop::Edge(side)));
         }
     }
 
@@ -528,7 +526,7 @@ impl Layout {
         None
     }
 
-    pub fn draw(&self, grid: &mut Grid) {
+    pub fn draw(&self, scene: &mut Scene) {
         for pane in self.visible() {
             if self.dragging == Some(pane.id) {
                 continue;
@@ -538,49 +536,58 @@ impl Layout {
             } else {
                 OUTLINE
             };
-            draw_pane(grid, pane, pane.rect, outline);
+            scene.outline(pane.rect, outline);
+            draw_waiting(scene, pane, pane.rect.inner());
         }
         if self.rows == 0 {
             return;
         }
         let status_row = self.rows - 1;
-        grid.fill(0, status_row, self.columns, 1, STATUS);
+        scene.fill(
+            CellRect {
+                column: 0,
+                row: status_row,
+                columns: self.columns,
+                rows: 1,
+            },
+            STATUS,
+        );
         let focused = self
             .pane(self.focused)
             .map(|pane| pane.name.as_str())
             .unwrap_or("");
         let zoom = if self.zoom.is_some() { "  zoom" } else { "" };
         let status = format!(" decade  {focused}{zoom}  Ctrl+Space palette");
-        grid.text(0, status_row, &status, FOREGROUND, STATUS);
+        scene.text(0, status_row, &status, FOREGROUND);
     }
 
-    pub fn draw_bars(&self, grid: &mut Grid) {
+    pub fn draw_bars(&self, scene: &mut Scene) {
         if !self.bar {
             return;
         }
         for pane in self.visible() {
             if self.dragging != Some(pane.id) {
-                self.draw_bar(grid, pane, pane.rect.inner());
+                self.draw_bar(scene, pane, pane.rect.inner());
             }
         }
     }
 
-    pub fn draw_ghost(&self, id: usize) -> Option<Grid> {
-        let pane = self.pane(id)?;
+    pub fn draw_ghost(&self, id: usize, scene: &mut Scene) {
+        let Some(pane) = self.pane(id) else {
+            return;
+        };
         let inner = CellRect {
             column: 0,
             row: 0,
             ..pane.rect.inner()
         };
-        let mut grid = Grid::new(inner.columns, inner.rows, FOREGROUND, CLEAR);
-        draw_waiting(&mut grid, pane, inner);
+        draw_waiting(scene, pane, inner);
         if self.bar {
-            self.draw_bar(&mut grid, pane, inner);
+            self.draw_bar(scene, pane, inner);
         }
-        Some(grid)
     }
 
-    fn draw_bar(&self, grid: &mut Grid, pane: &Pane, inner: CellRect) {
+    fn draw_bar(&self, scene: &mut Scene, pane: &Pane, inner: CellRect) {
         if inner.is_empty() {
             return;
         }
@@ -591,8 +598,8 @@ impl Layout {
         } else {
             (BAR, DIM)
         };
-        grid.fill(start, row, width, 1, bg);
-        grid.text(start + 1, row, &pane.name, fg, bg);
+        scene.fill(CellRect { rows: 1, ..inner }, bg);
+        scene.text(start + 1, row, &pane.name, fg);
         let pinned = matches!(pane.kind, Kind::Anchor { .. });
         let zoomed = self.zoom == Some(pane.id);
         for (button, x) in bar_buttons(start, width) {
@@ -604,19 +611,25 @@ impl Layout {
                 BarButton::Close => (CLOSE_ICON, fg),
                 BarButton::Name => continue,
             };
-            let (color, bg) = match self.hover {
+            let color = match self.hover {
                 Some((id, hovered)) if id == pane.id && hovered == button => {
                     let hover = if button == BarButton::Close {
                         CLOSE_HOVER
                     } else {
                         HOVER
                     };
-                    (FOREGROUND, hover)
+                    let cell = CellRect {
+                        column: x,
+                        row,
+                        columns: BUTTON_WIDTH,
+                        rows: 1,
+                    };
+                    scene.fill(cell, hover);
+                    FOREGROUND
                 }
-                _ => (color, bg),
+                _ => color,
             };
-            grid.fill(x, row, BUTTON_WIDTH, 1, bg);
-            grid.icon(x + 1, row, icon, color, bg);
+            scene.text(x + 1, row, &icon.to_string(), color);
         }
     }
 
@@ -631,58 +644,19 @@ impl Layout {
             pane.kind = Kind::Transient;
         }
     }
-
-    pub fn draw_overlay(&self, grid: &mut Grid) {
-        if !self.palette {
-            return;
-        }
-        let body = self.body();
-        let width = body.columns.min(60);
-        let height = 5;
-        if body.columns < 8 || body.rows < height {
-            return;
-        }
-        let column = (body.columns - width) / 2;
-        let row = (body.rows - height) / 2;
-        grid.fill(column, row, width, height, PANE);
-        outline_box(
-            grid,
-            CellRect {
-                column,
-                row,
-                columns: width,
-                rows: height,
-            },
-            FOCUS,
-            BACKGROUND,
-        );
-        grid.text(column + 2, row + 1, "command palette", FOREGROUND, PANE);
-        grid.text(
-            column + 2,
-            row + 3,
-            "nothing here yet. Esc closes.",
-            DIM,
-            PANE,
-        );
-    }
 }
 
-fn draw_pane(grid: &mut Grid, pane: &Pane, rect: CellRect, outline: Rgba) {
-    outline_box(grid, rect, outline, BACKGROUND);
-    draw_waiting(grid, pane, rect.inner());
-}
-
-fn draw_waiting(grid: &mut Grid, pane: &Pane, inner: CellRect) {
+fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect) {
     if inner.is_empty() || pane.toplevel.is_some() {
         return;
     }
-    grid.fill(inner.column, inner.row, inner.columns, inner.rows, PANE);
+    scene.fill(inner, PANE);
     let text = match &pane.kind {
         Kind::Anchor { app_id } => format!("waiting for {app_id}"),
         Kind::Transient => "no client".to_string(),
     };
     let column = inner.column + inner.columns.saturating_sub(text.len() as u32) / 2;
-    grid.text(column, inner.row + inner.rows / 2, &text, DIM, PANE);
+    scene.text(column, inner.row + inner.rows / 2, &text, DIM);
 }
 
 fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 3] {
@@ -694,25 +668,6 @@ fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 3] {
         (BarButton::Zoom, zoom),
         (BarButton::Close, close),
     ]
-}
-
-fn outline_box(grid: &mut Grid, rect: CellRect, color: Rgba, bg: Rgba) {
-    if rect.columns < 2 || rect.rows < 2 {
-        return;
-    }
-    let right = rect.column + rect.columns - 1;
-    let bottom = rect.row + rect.rows - 1;
-    let horizontal: String = "─".repeat(rect.columns as usize - 2);
-    grid.text(rect.column, rect.row, &format!("┌{horizontal}┐"), color, bg);
-    grid.text(rect.column, bottom, &format!("└{horizontal}┘"), color, bg);
-    for row in rect.row + 1..bottom {
-        grid.text(rect.column, row, "│", color, bg);
-        grid.text(right, row, "│", color, bg);
-    }
-}
-
-pub fn overlay_grid(columns: u32, rows: u32) -> Grid {
-    Grid::new(columns, rows, FOREGROUND, CLEAR)
 }
 
 fn split_area(area: CellRect, axis: Axis, ratio: f32) -> (CellRect, CellRect) {
@@ -845,30 +800,11 @@ fn drop_zones(rect: CellRect) -> [(Option<Side>, CellRect); 5] {
     ]
 }
 
-fn draw_zone(grid: &mut Grid, zone: CellRect, active: bool) {
-    let bg = if active {
-        [DROP[0], DROP[1], DROP[2], 0.35]
-    } else {
-        CLEAR
-    };
+fn draw_zone(scene: &mut Scene, zone: CellRect, active: bool) {
     if active {
-        grid.fill(zone.column, zone.row, zone.columns, zone.rows, bg);
+        scene.fill(zone, [DROP[0], DROP[1], DROP[2], 0.35]);
     }
-    let (right, bottom) = (zone.column + zone.columns, zone.row + zone.rows);
-    for row in zone.row..bottom {
-        for column in zone.column..right {
-            let sides = (
-                column == zone.column,
-                column + 1 == right,
-                row == zone.row,
-                row + 1 == bottom,
-            );
-            if sides.0 || sides.1 || sides.2 || sides.3 {
-                let edge = edge_char(sides.0, sides.1, sides.2, sides.3);
-                grid.text(column, row, &edge.to_string(), DROP, bg);
-            }
-        }
-    }
+    scene.frame(zone, DROP);
 }
 
 fn dropped(root: Node, dragged: usize, drop: Drop) -> Node {
@@ -1201,15 +1137,21 @@ mod tests {
     fn a_dragged_pane_leaves_its_slot_empty_and_its_ghost_is_the_inside_of_the_pane() {
         let mut layout = Layout::new(100, 41);
         layout.bar = true;
-        let rect = layout.pane(0).unwrap().rect;
         layout.dragging = Some(0);
-        let mut chrome = Grid::new(100, 41, FOREGROUND, BACKGROUND);
+        let font = crate::text::Font::load(crate::text::FONT_PX);
+        let mut chrome = Scene::new(&font);
         layout.draw(&mut chrome);
-        assert!(chrome.cells[(rect.row * 100 + rect.column) as usize].ch != '┌');
-        let ghost = layout.draw_ghost(0).unwrap();
-        let inner = rect.inner();
-        assert_eq!((ghost.columns, ghost.rows), (inner.columns, inner.rows));
-        assert_eq!(ghost.cells[1].ch, 'c');
+        let waiting = chrome.shapes.iter().any(|shape| {
+            matches!(shape, crate::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
+        });
+        assert!(!waiting);
+        let mut ghost = Scene::new(&font);
+        layout.draw_ghost(0, &mut ghost);
+        let name = ghost.shapes.iter().find_map(|shape| match shape {
+            crate::draw::Shape::Text { at, text, .. } if text == "chat" => Some(*at),
+            _ => None,
+        });
+        assert_eq!(name, Some((font.cell_width as i32, 0).into()));
     }
 
     #[test]
@@ -1226,21 +1168,6 @@ mod tests {
         let mut layout = Layout::new(100, 41);
         layout.unpin(0);
         assert!(matches!(layout.pane(0).unwrap().kind, Kind::Transient));
-    }
-
-    #[test]
-    fn a_bar_icon_takes_two_cells() {
-        let mut layout = Layout::new(100, 41);
-        layout.bar = true;
-        let rect = layout.pane(0).unwrap().rect;
-        let mut grid = Grid::new(100, 41, FOREGROUND, CLEAR);
-        layout.draw_bars(&mut grid);
-        let row = rect.inner().row;
-        let close = (row * 100 + 46) as usize;
-        assert_eq!(grid.cells[close].ch, CLOSE_ICON);
-        assert!(!grid.cells[close].right_half);
-        assert_eq!(grid.cells[close + 1].ch, CLOSE_ICON);
-        assert!(grid.cells[close + 1].right_half);
     }
 
     #[test]

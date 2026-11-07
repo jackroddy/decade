@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use swash::scale::{Render, ScaleContext, Source};
 use swash::{CacheKey, FontRef};
 
@@ -10,7 +8,7 @@ pub struct Font {
     data: Vec<u8>,
     offset: u32,
     key: CacheKey,
-    px: f32,
+    pub px: f32,
     pub cell_width: u32,
     pub cell_height: u32,
     baseline: i32,
@@ -59,87 +57,85 @@ impl Font {
     }
 }
 
-pub struct Glyphs {
-    cache: HashMap<(char, bool), Vec<u8>>,
-    context: ScaleContext,
+pub type Rgba = [f32; 4];
+
+pub struct Run {
+    pub pixels: Vec<u8>,
+    pub width: i32,
+    pub height: i32,
+    pub left: i32,
+    pub top: i32,
 }
 
-impl Glyphs {
-    pub fn new() -> Glyphs {
-        Glyphs {
-            cache: HashMap::new(),
-            context: ScaleContext::new(),
-        }
-    }
-
-    pub fn coverage(&mut self, font: &Font, ch: char, right_half: bool) -> &[u8] {
-        let key = (ch, right_half);
-        if !self.cache.contains_key(&key) {
-            let pixels = rasterize(&mut self.context, font, ch, right_half);
-            self.cache.insert(key, pixels);
-        }
-        &self.cache[&key]
-    }
-}
-
-const EDGE_BASE: u32 = 0x10FF00;
-const EDGE_LEFT: u32 = 1;
-const EDGE_RIGHT: u32 = 2;
-const EDGE_TOP: u32 = 4;
-const EDGE_BOTTOM: u32 = 8;
-
-pub fn edge_char(left: bool, right: bool, top: bool, bottom: bool) -> char {
-    let bits = [
-        (left, EDGE_LEFT),
-        (right, EDGE_RIGHT),
-        (top, EDGE_TOP),
-        (bottom, EDGE_BOTTOM),
-    ]
-    .into_iter()
-    .filter(|&(on, _)| on)
-    .fold(0, |bits, (_, bit)| bits | bit);
-    char::from_u32(EDGE_BASE + bits).unwrap_or(' ')
-}
-
-fn rasterize(context: &mut ScaleContext, font: &Font, ch: char, right_half: bool) -> Vec<u8> {
-    let width = font.cell_width as i32;
-    let height = font.cell_height as i32;
-    let mut pixels = vec![0; (width * height) as usize];
-    if let Some(bits) = (ch as u32).checked_sub(EDGE_BASE).filter(|&bits| bits < 16) {
-        let thickness = (width / 8).max(1);
-        for y in 0..height {
-            for x in 0..width {
-                let on = (bits & EDGE_LEFT != 0 && x < thickness)
-                    || (bits & EDGE_RIGHT != 0 && x >= width - thickness)
-                    || (bits & EDGE_TOP != 0 && y < thickness)
-                    || (bits & EDGE_BOTTOM != 0 && y >= height - thickness);
-                if on {
-                    pixels[(y * width + x) as usize] = 255;
-                }
-            }
-        }
-        return pixels;
-    }
+pub fn raster_run(context: &mut ScaleContext, font: &Font, text: &str, color: Rgba) -> Run {
+    let cell_width = font.cell_width as i32;
     let font_ref = font.as_ref();
-    let glyph = font_ref.charmap().map(ch);
     let mut scaler = context.builder(font_ref).size(font.px).hint(true).build();
-    let Some(image) = Render::new(&[Source::Outline]).render(&mut scaler, glyph) else {
-        return pixels;
-    };
-    let image_width = image.placement.width as i32;
-    let shift = if right_half { width } else { 0 };
-    for y in 0..image.placement.height as i32 {
-        let cy = font.baseline - image.placement.top + y;
-        if cy < 0 || cy >= height {
+    let mut images = Vec::new();
+    let (mut left, mut top) = (0, 0);
+    let mut right = text.chars().count() as i32 * cell_width;
+    let mut bottom = font.cell_height as i32;
+    for (i, ch) in text.chars().enumerate() {
+        let glyph = font_ref.charmap().map(ch);
+        let Some(image) = Render::new(&[Source::Outline]).render(&mut scaler, glyph) else {
             continue;
-        }
-        for x in 0..image_width {
-            let cx = image.placement.left + x - shift;
-            if cx < 0 || cx >= width {
-                continue;
+        };
+        let x = i as i32 * cell_width + image.placement.left;
+        let y = font.baseline - image.placement.top;
+        left = left.min(x);
+        top = top.min(y);
+        right = right.max(x + image.placement.width as i32);
+        bottom = bottom.max(y + image.placement.height as i32);
+        images.push((x, y, image));
+    }
+    let (width, height) = (right - left, bottom - top);
+    let mut coverage = vec![0u8; (width * height) as usize];
+    for (x, y, image) in &images {
+        let image_width = image.placement.width as i32;
+        for row in 0..image.placement.height as i32 {
+            for column in 0..image_width {
+                let value = image.data[(row * image_width + column) as usize];
+                let at = ((y - top + row) * width + (x - left + column)) as usize;
+                coverage[at] = coverage[at].max(value);
             }
-            pixels[(cy * width + cx) as usize] = image.data[(y * image_width + x) as usize];
         }
     }
-    pixels
+    let pixels = coverage
+        .iter()
+        .flat_map(|&value| {
+            let alpha = value as f32 / 255.0 * color[3];
+            let channel = |c: f32| (c * alpha * 255.0).round() as u8;
+            [
+                channel(color[0]),
+                channel(color[1]),
+                channel(color[2]),
+                (alpha * 255.0).round() as u8,
+            ]
+        })
+        .collect();
+    Run {
+        pixels,
+        width,
+        height,
+        left,
+        top,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_run_covers_its_cells_and_any_glyph_that_overflows_them() {
+        let font = Font::load(FONT_PX);
+        let mut context = ScaleContext::new();
+        let run = raster_run(&mut context, &font, "ab", [1.0; 4]);
+        assert!(run.width >= 2 * font.cell_width as i32);
+        assert!(run.height >= font.cell_height as i32);
+        assert_eq!(run.pixels.len(), (run.width * run.height * 4) as usize);
+        assert!(run.pixels.iter().any(|&byte| byte > 0));
+        let icon = raster_run(&mut context, &font, "\u{f0156}", [1.0; 4]);
+        assert!(icon.width > font.cell_width as i32);
+    }
 }

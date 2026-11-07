@@ -1,8 +1,8 @@
 mod channel;
-mod chrome;
 mod compositor;
-mod grid;
+mod draw;
 mod mcp;
+mod menu;
 mod palette;
 mod panes;
 mod text;

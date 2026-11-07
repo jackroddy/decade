@@ -26,7 +26,9 @@ command line and what the tool writes.
   small copy of it under the pointer. Dropping it on a target drawn over
   another pane swaps the two or splits that pane on one side. Dropping it
   on a window edge makes it span that side.
-- Ctrl+Space opens a command palette, empty for now; Esc closes it.
+- Ctrl+Space opens a command palette with Launch, Layout and Settings
+  menus, all empty for now. Typing filters the list, the arrow keys move,
+  and Esc goes back or closes it.
 - Scroll wheel events reach clients.
 - decade is an MCP server over streamable HTTP, at the address in
   `DECADE_MCP` in the environment of everything it starts. Its tools are

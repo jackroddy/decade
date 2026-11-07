@@ -8,7 +8,6 @@ use std::process::{Child, Command};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use smithay::backend::allocator::Fourcc;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::input::{
     AbsolutePositionEvent, Axis as InputAxis, AxisSource, ButtonState, Event, InputEvent, KeyState,
@@ -21,15 +20,16 @@ use smithay::backend::renderer::element::surface::{
 use smithay::backend::renderer::element::texture::TextureRenderElement;
 use smithay::backend::renderer::element::utils::RescaleRenderElement;
 use smithay::backend::renderer::element::{Id, Kind};
-use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+use smithay::backend::renderer::gles::element::PixelShaderElement;
+use smithay::backend::renderer::gles::{
+    GlesPixelProgram, GlesRenderer, GlesTexture, Uniform, UniformName, UniformType,
+};
 use smithay::backend::renderer::utils::{
     CommitCounter, draw_render_elements, on_commit_buffer_handler,
 };
-use smithay::backend::renderer::{
-    Color32F, Frame, ImportAll, ImportDma, ImportMem, Renderer, RendererSuper,
-};
+use smithay::backend::renderer::{Color32F, Frame, ImportDma, Renderer};
 use smithay::backend::winit::{self, WinitEvent, WinitGraphicsBackend, WinitInput};
-use smithay::input::keyboard::{FilterResult, keysyms};
+use smithay::input::keyboard::{FilterResult, Keysym, keysyms};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, CursorImageStatus, MotionEvent};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
@@ -77,14 +77,12 @@ use smithay::{
 };
 
 use crate::channel::{Host, Out, Router};
-use crate::chrome;
-use crate::grid::Grid;
+use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::mcp;
+use crate::menu::{MENU_PX, Menu, MenuKey};
 use crate::palette::ACCENT;
-use crate::panes::{
-    BACKGROUND, BarButton, Boundary, Direction, FOREGROUND, Kind as PaneKind, Layout, Pane,
-};
-use crate::text::{FONT_PX, Font, Glyphs};
+use crate::panes::{BACKGROUND, BarButton, Boundary, Direction, Kind as PaneKind, Layout, Pane};
+use crate::text::{FONT_PX, Font};
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
@@ -104,19 +102,20 @@ enum Drag {
 }
 
 render_elements! {
-    Element<R> where R: ImportAll + ImportMem;
-    Surface = WaylandSurfaceRenderElement<R>,
-    Chrome = TextureRenderElement<<R as RendererSuper>::TextureId>,
-    Ghost = RescaleRenderElement<WaylandSurfaceRenderElement<R>>,
-    GhostChrome = RescaleRenderElement<TextureRenderElement<<R as RendererSuper>::TextureId>>,
-    GhostOutline = SolidColorRenderElement,
+    Element<=GlesRenderer>;
+    Surface = WaylandSurfaceRenderElement<GlesRenderer>,
+    Text = TextureRenderElement<GlesTexture>,
+    Rounded = PixelShaderElement,
+    Solid = SolidColorRenderElement,
+    Ghost = RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
+    GhostSolid = RescaleRenderElement<SolidColorRenderElement>,
 }
 
 enum Key {
     Focus(Direction),
     NewPane,
     Palette,
-    Escape,
+    Menu(MenuKey),
     Swallow,
 }
 
@@ -147,13 +146,12 @@ pub struct State {
     env: ChildEnv,
     children: Vec<Child>,
     font: Font,
-    glyphs: Glyphs,
+    texts: TextCache,
     layout: Layout,
     unplaced: Vec<ToplevelSurface>,
-    chrome: Option<(GlesTexture, Grid, Vec<u8>)>,
-    overlay: Option<GlesTexture>,
-    bars: Option<(GlesTexture, Grid)>,
-    ghost: Option<(GlesTexture, bool)>,
+    menu_font: Font,
+    rounded: GlesPixelProgram,
+    menu: Option<Menu>,
     pointer: Point<f64, Logical>,
     drag: Option<Drag>,
     ctrl_timer: Option<RegistrationToken>,
@@ -179,6 +177,18 @@ pub fn run(commands: Commands) {
 
     let mut dmabuf_state = DmabufState::new();
     let formats = backend.renderer().dmabuf_formats();
+    let rounded = backend
+        .renderer()
+        .compile_custom_pixel_shader(
+            include_str!("rounded.frag"),
+            &[
+                UniformName::new("fill", UniformType::_4f),
+                UniformName::new("border", UniformType::_4f),
+                UniformName::new("radius", UniformType::_1f),
+                UniformName::new("border_width", UniformType::_1f),
+            ],
+        )
+        .expect("the rounded rect shader compiles");
     let _dmabuf_global = dmabuf_state.create_global::<State>(&dh, formats);
 
     let size = backend.window_size();
@@ -314,13 +324,12 @@ pub fn run(commands: Commands) {
         },
         children: Vec::new(),
         font,
-        glyphs: Glyphs::new(),
+        texts: TextCache::new(),
+        menu_font: Font::load(MENU_PX * scale as f32),
+        rounded,
         layout,
         unplaced: Vec::new(),
-        chrome: None,
-        overlay: None,
-        bars: None,
-        ghost: None,
+        menu: None,
         pointer: (0.0, 0.0).into(),
         drag: None,
         ctrl_timer: None,
@@ -492,7 +501,8 @@ impl State {
         if rescaled {
             self.scale = scale;
             self.font = Font::load(FONT_PX * scale as f32);
-            self.glyphs = Glyphs::new();
+            self.menu_font = Font::load(MENU_PX * scale as f32);
+            self.texts.clear();
             for pane in &self.layout.panes {
                 if let Some(toplevel) = &pane.toplevel {
                     self.send_scale(toplevel.wl_surface());
@@ -514,7 +524,6 @@ impl State {
     }
 
     fn relayout(&mut self) {
-        self.overlay = None;
         let ids: Vec<usize> = self.layout.panes.iter().map(|pane| pane.id).collect();
         for id in ids {
             self.configure(id);
@@ -746,7 +755,7 @@ impl State {
     ) {
         let keyboard = self.seat.get_keyboard().unwrap();
         let pressed = event.state() == KeyState::Pressed;
-        let palette = self.layout.palette;
+        let palette = self.menu.is_some();
         let mut control_key = false;
         let key = keyboard.input::<Key, _>(
             self,
@@ -758,11 +767,11 @@ impl State {
                 let sym = handle.modified_sym().raw();
                 control_key = sym == keysyms::KEY_Control_L || sym == keysyms::KEY_Control_R;
                 if palette {
-                    return if pressed && sym == keysyms::KEY_Escape {
-                        FilterResult::Intercept(Key::Escape)
-                    } else {
-                        FilterResult::Intercept(Key::Swallow)
-                    };
+                    return FilterResult::Intercept(menu_key(
+                        pressed,
+                        modifiers.ctrl,
+                        handle.modified_sym(),
+                    ));
                 }
                 if !pressed || !modifiers.ctrl {
                     return FilterResult::Forward;
@@ -779,6 +788,7 @@ impl State {
             },
         );
         match (control_key, pressed) {
+            (true, true) if palette => {}
             (true, true) => self.ctrl_pressed(),
             (true, false) => self.ctrl_released(),
             (false, true) => self.cancel_ctrl_timer(),
@@ -792,13 +802,14 @@ impl State {
             }
             Some(Key::NewPane) => self.new_terminal_pane(),
             Some(Key::Palette) => {
-                self.layout.palette = true;
-                self.overlay = None;
+                self.menu = Some(Menu::new());
                 self.backend.window().request_redraw();
             }
-            Some(Key::Escape) => {
-                self.layout.palette = false;
-                self.overlay = None;
+            Some(Key::Menu(key)) => {
+                let open = self.menu.as_mut().is_some_and(|menu| menu.key(key));
+                if !open {
+                    self.menu = None;
+                }
                 self.backend.window().request_redraw();
             }
             Some(Key::Swallow) | None => {}
@@ -885,7 +896,6 @@ impl State {
             return;
         };
         self.layout.dragging = None;
-        self.ghost = None;
         let drop = self
             .layout
             .drag_cell
@@ -963,86 +973,38 @@ impl State {
         let State {
             backend,
             layout,
-            chrome,
-            overlay,
-            bars,
             font,
-            glyphs,
+            menu_font,
+            texts,
             start,
             scale,
             drag,
             pointer,
-            ghost,
+            menu,
+            rounded,
             ..
         } = self;
         let scale = *scale;
         let size = backend.window_size();
         let damage = Rectangle::from_size(size);
         let (renderer, mut framebuffer) = backend.bind().unwrap();
-
-        let texture_size = (
-            (layout.columns * font.cell_width) as i32,
-            (layout.rows * font.cell_height) as i32,
-        );
-        let mut grid = Grid::new(layout.columns, layout.rows, FOREGROUND, BACKGROUND);
-        layout.draw(&mut grid);
-        match chrome {
-            Some((texture, previous, pixels))
-                if previous.columns == grid.columns && previous.rows == grid.rows =>
-            {
-                patch_chrome(renderer, texture, pixels, previous, &grid, font, glyphs);
-                *previous = grid;
-            }
-            _ => {
-                let pixels = chrome::raster(&grid, font, glyphs);
-                *chrome = renderer
-                    .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
-                    .ok()
-                    .map(|texture| (texture, grid, pixels));
-            }
-        }
-        if overlay.is_none() && layout.palette {
-            let mut grid = crate::panes::overlay_grid(layout.columns, layout.rows);
-            layout.draw_overlay(&mut grid);
-            let pixels = chrome::raster(&grid, font, glyphs);
-            *overlay = renderer
-                .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
-                .ok();
-        }
-        if layout.bar || layout.dragging.is_some() {
-            let mut grid = crate::panes::overlay_grid(layout.columns, layout.rows);
-            layout.draw_bars(&mut grid);
-            layout.draw_drop(&mut grid);
-            let unchanged = bars.as_ref().is_some_and(|(_, previous)| {
-                previous.columns == grid.columns && previous.cells == grid.cells
-            });
-            if !unchanged {
-                let pixels = chrome::raster(&grid, font, glyphs);
-                *bars = renderer
-                    .import_memory(&pixels, Fourcc::Abgr8888, texture_size.into(), false)
-                    .ok()
-                    .map(|texture| (texture, grid));
-            }
-        } else {
-            *bars = None;
-        }
-        let texture_element = |renderer: &GlesRenderer, texture: &GlesTexture| {
-            Element::Chrome(TextureRenderElement::from_static_texture(
-                Id::new(),
-                renderer.context_id(),
-                (0.0, 0.0),
-                texture.clone(),
-                1,
-                Transform::Normal,
-                None,
-                Some(Rectangle::from_size(size.to_f64().to_logical(1.0))),
-                Some(size.to_f64().to_logical(scale).to_i32_round()),
-                None,
-                Kind::Unspecified,
-            ))
+        let mut paint = Paint {
+            renderer,
+            texts,
+            font,
+            menu_font,
+            rounded,
+            scale,
         };
+        let mut elements: Vec<Element> = Vec::new();
 
-        let mut elements: Vec<Element<GlesRenderer>> = Vec::new();
+        if let Some(menu) = menu {
+            let mut scene = Scene::new(paint.menu_font);
+            let box_size = menu.draw(&mut scene, paint.menu_font);
+            let origin = ((size.w - box_size.w) / 2, (size.h - box_size.h) / 3).into();
+            paint.scene(&mut elements, &scene, origin, None);
+        }
+
         let mut animating = false;
         let dragged = match drag {
             Some(Drag::Pane { id, grab, start }) => {
@@ -1054,81 +1016,34 @@ impl State {
             let t = (start.elapsed().as_secs_f64() / GRAB_ANIMATION.as_secs_f64()).min(1.0);
             animating = t < 1.0;
             let eased = 1.0 - (1.0 - t).powi(3);
-            let ghost_scale = 1.0 + (GHOST_SCALE - 1.0) * eased;
-            let alpha = 1.0 + (GHOST_ALPHA - 1.0) * eased as f32;
-            let pointer = pointer.to_physical(scale).to_i32_round();
-            let origin = pointer - grab;
+            let shrink = Shrink {
+                about: pointer.to_physical(scale).to_i32_round(),
+                scale: 1.0 + (GHOST_SCALE - 1.0) * eased,
+                alpha: 1.0 + (GHOST_ALPHA - 1.0) * eased as f32,
+            };
+            let origin = shrink.about - grab;
             let cell: Point<i32, Physical> =
                 (font.cell_width as i32, font.cell_height as i32).into();
-            let inner = pane.rect.inner();
-            let pixels = (
-                (inner.columns * font.cell_width) as i32,
-                (inner.rows * font.cell_height) as i32,
-            );
             let outer: Point<i32, Physical> = (
                 (pane.rect.columns * font.cell_width) as i32,
                 (pane.rect.rows * font.cell_height) as i32,
             )
                 .into();
-            let shrink = |point: Point<i32, Physical>| {
-                let offset = (point - pointer).to_f64().upscale(ghost_scale);
-                (pointer.to_f64() + offset).to_i32_round::<i32>()
-            };
-            let start = shrink(origin + cell.downscale(2));
-            let end = shrink(origin + outer - cell.downscale(2));
-            let thickness = (font.cell_width as i32 / 8).max(1);
-            let color = Color32F::new(
-                ACCENT[0] * alpha,
-                ACCENT[1] * alpha,
-                ACCENT[2] * alpha,
-                alpha,
+            let start = shrink.point(origin + cell.downscale(2));
+            let end = shrink.point(origin + outer - cell.downscale(2));
+            let mut outline = Scene::new(font);
+            let line = outline.line_width();
+            outline.box_lines(
+                start.x,
+                start.y,
+                end.x - start.x + line,
+                end.y - start.y + line,
+                ACCENT,
             );
-            let (width, height) = (end.x - start.x + thickness, end.y - start.y + thickness);
-            let lines = [
-                (start, (width, thickness)),
-                ((start.x, end.y).into(), (width, thickness)),
-                (start, (thickness, height)),
-                ((end.x, start.y).into(), (thickness, height)),
-            ];
-            for (at, size) in lines {
-                elements.push(Element::GhostOutline(SolidColorRenderElement::new(
-                    Id::new(),
-                    Rectangle::new(at, size.into()),
-                    CommitCounter::default(),
-                    color,
-                    Kind::Unspecified,
-                )));
-            }
-            if ghost.as_ref().is_none_or(|(_, bar)| *bar != layout.bar)
-                && let Some(grid) = layout.draw_ghost(pane.id)
-            {
-                let raster = chrome::raster(&grid, font, glyphs);
-                *ghost = renderer
-                    .import_memory(&raster, Fourcc::Abgr8888, pixels.into(), false)
-                    .ok()
-                    .map(|texture| (texture, layout.bar));
-            }
-            if let Some((texture, _)) = ghost.as_ref() {
-                let size: Size<i32, Physical> = pixels.into();
-                let element = TextureRenderElement::from_static_texture(
-                    Id::new(),
-                    renderer.context_id(),
-                    (origin + cell).to_f64(),
-                    texture.clone(),
-                    1,
-                    Transform::Normal,
-                    Some(alpha),
-                    None,
-                    Some(size.to_f64().to_logical(scale).to_i32_round()),
-                    None,
-                    Kind::Unspecified,
-                );
-                elements.push(Element::GhostChrome(RescaleRenderElement::from_element(
-                    element,
-                    pointer,
-                    ghost_scale,
-                )));
-            }
+            paint.scene(&mut elements, &outline, Point::default(), None);
+            let mut ghost = Scene::new(font);
+            layout.draw_ghost(pane.id, &mut ghost);
+            paint.scene(&mut elements, &ghost, origin + cell, Some(shrink));
             if let Some(toplevel) = &pane.toplevel {
                 let client = layout.client_rect(pane);
                 let offset: Point<i32, Physical> = (
@@ -1138,30 +1053,28 @@ impl State {
                     .into();
                 let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                     render_elements_from_surface_tree(
-                        renderer,
+                        paint.renderer,
                         toplevel.wl_surface(),
                         origin + offset,
                         scale,
-                        alpha,
+                        shrink.alpha,
                         Kind::Unspecified,
                     );
                 elements.extend(surfaces.into_iter().map(|surface| {
                     Element::Ghost(RescaleRenderElement::from_element(
                         surface,
-                        pointer,
-                        ghost_scale,
+                        shrink.about,
+                        shrink.scale,
                     ))
                 }));
             }
         }
-        if layout.palette
-            && let Some(texture) = overlay.as_ref()
-        {
-            elements.push(texture_element(renderer, texture));
-        }
-        if let Some((texture, _)) = bars.as_ref() {
-            elements.push(texture_element(renderer, texture));
-        }
+
+        let mut above = Scene::new(font);
+        layout.draw_bars(&mut above);
+        layout.draw_drop(&mut above);
+        paint.scene(&mut elements, &above, Point::default(), None);
+
         for pane in layout.visible() {
             let Some(toplevel) = &pane.toplevel else {
                 continue;
@@ -1179,7 +1092,7 @@ impl State {
             );
             let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                 render_elements_from_surface_tree(
-                    renderer,
+                    paint.renderer,
                     toplevel.wl_surface(),
                     origin,
                     scale,
@@ -1188,11 +1101,13 @@ impl State {
                 );
             elements.extend(surfaces.into_iter().map(Element::Surface));
         }
-        if let Some((texture, _, _)) = chrome.as_ref() {
-            elements.push(texture_element(renderer, texture));
-        }
 
-        let mut frame = renderer
+        let mut below = Scene::new(font);
+        layout.draw(&mut below);
+        paint.scene(&mut elements, &below, Point::default(), None);
+
+        let mut frame = paint
+            .renderer
             .render(&mut framebuffer, size, Transform::Flipped180)
             .unwrap();
         frame
@@ -1205,6 +1120,7 @@ impl State {
             .unwrap();
         let _ = frame.finish().unwrap();
         drop(framebuffer);
+        texts.end_frame();
         if animating {
             backend.window().request_redraw();
         }
@@ -1218,6 +1134,149 @@ impl State {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Shrink {
+    about: Point<i32, Physical>,
+    scale: f64,
+    alpha: f32,
+}
+
+impl Shrink {
+    fn point(&self, point: Point<i32, Physical>) -> Point<i32, Physical> {
+        let offset = (point - self.about).to_f64().upscale(self.scale);
+        (self.about.to_f64() + offset).to_i32_round()
+    }
+}
+
+struct Paint<'a> {
+    renderer: &'a mut GlesRenderer,
+    texts: &'a mut TextCache,
+    font: &'a Font,
+    menu_font: &'a Font,
+    rounded: &'a GlesPixelProgram,
+    scale: f64,
+}
+
+impl Paint<'_> {
+    fn scene(
+        &mut self,
+        elements: &mut Vec<Element>,
+        scene: &Scene,
+        origin: Point<i32, Physical>,
+        shrink: Option<Shrink>,
+    ) {
+        let alpha = shrink.map_or(1.0, |shrink| shrink.alpha);
+        for shape in scene.shapes.iter().rev() {
+            match shape {
+                Shape::Rect { at, size, color } => {
+                    let a = color[3] * alpha;
+                    let solid = SolidColorRenderElement::new(
+                        Id::new(),
+                        Rectangle::new(origin + *at, *size),
+                        CommitCounter::default(),
+                        Color32F::new(color[0] * a, color[1] * a, color[2] * a, a),
+                        Kind::Unspecified,
+                    );
+                    elements.push(match shrink {
+                        Some(shrink) => Element::GhostSolid(RescaleRenderElement::from_element(
+                            solid,
+                            shrink.about,
+                            shrink.scale,
+                        )),
+                        None => Element::Solid(solid),
+                    });
+                }
+                Shape::Rounded {
+                    at,
+                    size,
+                    radius,
+                    fill,
+                    border,
+                } => {
+                    let premultiply = |c: [f32; 4]| {
+                        let a = c[3] * alpha;
+                        (c[0] * a, c[1] * a, c[2] * a, a)
+                    };
+                    let area = Rectangle::new(origin + *at, *size)
+                        .to_f64()
+                        .to_logical(self.scale)
+                        .to_i32_round();
+                    elements.push(Element::Rounded(PixelShaderElement::new(
+                        self.rounded.clone(),
+                        area,
+                        None,
+                        1.0,
+                        vec![
+                            Uniform::new("fill", premultiply(*fill)),
+                            Uniform::new("border", premultiply(*border)),
+                            Uniform::new("radius", *radius as f32),
+                            Uniform::new("border_width", self.font.cell_width as f32 / 8.0),
+                        ],
+                        Kind::Unspecified,
+                    )));
+                }
+                Shape::Text {
+                    at,
+                    text,
+                    face,
+                    color,
+                } => {
+                    if shrink.is_some() {
+                        continue;
+                    }
+                    let font = match face {
+                        Face::Chrome => self.font,
+                        Face::Menu => self.menu_font,
+                    };
+                    let Some(entry) =
+                        self.texts
+                            .get(self.renderer, font, *face, text, *color, self.scale)
+                    else {
+                        continue;
+                    };
+                    let location = origin + *at + entry.offset;
+                    let texture = TextureRenderElement::from_static_texture(
+                        Id::new(),
+                        self.renderer.context_id(),
+                        location.to_f64(),
+                        entry.texture.clone(),
+                        1,
+                        Transform::Normal,
+                        None,
+                        Some(Rectangle::from_size(entry.size.to_f64().to_logical(1.0))),
+                        Some(entry.size.to_f64().to_logical(self.scale).to_i32_round()),
+                        None,
+                        Kind::Unspecified,
+                    );
+                    elements.push(Element::Text(texture));
+                }
+            }
+        }
+    }
+}
+
+fn menu_key(pressed: bool, ctrl: bool, sym: Keysym) -> Key {
+    if !pressed {
+        return Key::Swallow;
+    }
+    let key = match sym.raw() {
+        keysyms::KEY_Escape => MenuKey::Escape,
+        keysyms::KEY_space if ctrl => MenuKey::Escape,
+        keysyms::KEY_Return | keysyms::KEY_KP_Enter => MenuKey::Enter,
+        keysyms::KEY_BackSpace => MenuKey::Backspace,
+        keysyms::KEY_Up => MenuKey::Up,
+        keysyms::KEY_Down => MenuKey::Down,
+        keysyms::KEY_k if ctrl => MenuKey::Up,
+        keysyms::KEY_j if ctrl => MenuKey::Down,
+        _ if ctrl => return Key::Swallow,
+        _ => match sym.key_char().filter(|ch| !ch.is_control()) {
+            Some(ch) => MenuKey::Char(ch),
+            None => return Key::Swallow,
+        },
+    };
+    Key::Menu(key)
+}
+
 fn app_id(surface: &WlSurface) -> Option<String> {
     with_states(surface, |states| {
         states
@@ -1225,58 +1284,6 @@ fn app_id(surface: &WlSurface) -> Option<String> {
             .get::<XdgToplevelSurfaceData>()
             .and_then(|data| data.lock().unwrap().app_id.clone())
     })
-}
-
-fn patch_chrome(
-    renderer: &mut GlesRenderer,
-    texture: &GlesTexture,
-    pixels: &mut [u8],
-    previous: &Grid,
-    current: &Grid,
-    font: &Font,
-    glyphs: &mut Glyphs,
-) {
-    let columns = current.columns as usize;
-    let cell_width = font.cell_width as usize;
-    let cell_height = font.cell_height as usize;
-    let stride = columns * cell_width * 4;
-    for row in 0..current.rows as usize {
-        let old = &previous.cells[row * columns..(row + 1) * columns];
-        let new = &current.cells[row * columns..(row + 1) * columns];
-        let mut column = 0;
-        while column < columns {
-            if old[column] == new[column] {
-                column += 1;
-                continue;
-            }
-            let start = column;
-            while column < columns && old[column] != new[column] {
-                column += 1;
-            }
-            let run = chrome::raster_run(&new[start..column], font, glyphs);
-            let run_stride = (column - start) * cell_width * 4;
-            for y in 0..cell_height {
-                let from = y * run_stride;
-                let to = (row * cell_height + y) * stride + start * cell_width * 4;
-                pixels[to..to + run_stride].copy_from_slice(&run[from..from + run_stride]);
-            }
-            let region = Rectangle::new(
-                (
-                    (start as u32 * font.cell_width) as i32,
-                    (row as u32 * font.cell_height) as i32,
-                )
-                    .into(),
-                (
-                    ((column - start) as u32 * font.cell_width) as i32,
-                    font.cell_height as i32,
-                )
-                    .into(),
-            );
-            if renderer.update_memory(texture, pixels, region).is_err() {
-                return;
-            }
-        }
-    }
 }
 
 fn send_frames_surface_tree(surface: &WlSurface, time: u32) {

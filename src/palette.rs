@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::grid::Rgba;
+use crate::text::Rgba;
 
 const fn hex(rgb: u32) -> Rgba {
     [
