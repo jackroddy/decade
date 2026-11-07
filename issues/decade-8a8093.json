@@ -1,0 +1,28 @@
+{
+  "id": "decade-8a8093",
+  "title": "Ordinary GUI apps launched into decade misbehave",
+  "body": "Jack tried Launch from the palette on 2026-11-07 with ordinary GUI apps. Some opened as a pane and worked. Some opened misaligned in their pane, some drew wrongly, and Chrome and the ChatGPT app never appeared in decade at all. Jack chose not to chase this for now. Apps that know about decade matter more than ones that don't.\n\nThese are likely causes, read from the code and not checked against any app:\n\n- `render` in `src/compositor.rs` draws each client's surface tree at its pane's origin. It ignores the window geometry an xdg toplevel sets with `set_window_geometry`, so an app with client-side shadows or decorations sits offset in its pane.\n- `new_popup` is empty, so menus, tooltips and dropdowns never appear.\n- Chromium-based apps and some GTK apps hand a launch to an instance that is already running outside decade, so no window opens inside it.",
+  "type": "bug",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T07:20:54.715857133Z",
+  "updated_at": "2026-11-07T07:20:54.715857133Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "c741ff2",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
