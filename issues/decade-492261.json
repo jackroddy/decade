@@ -1,0 +1,28 @@
+{
+  "id": "decade-492261",
+  "title": "Usability and UI round",
+  "body": "decade works, but its chrome is a prototype: a plain status line at the bottom, a Ctrl bar drawn over panes, and nothing that says what agents in other workspaces are doing. Jack is moving the next round of work to usability and UI design.\n\nThe pieces:\n\n- a frame around every workspace: a top bar and a collapsible sidebar\n- a protocol for agents to report their state, and the sidebar listing workspaces by what needs attention\n- tabs in workspaces, then tabs in panes\n- an agent scratch pane, where agents may open decade-aware programs to show Jack something\n- a polish pass driven by screenshots, and the dev tool that takes them\n\nThey belong together because the frame is where tabs and agent state are shown, and the polish pass reviews all of it.",
+  "type": "milestone",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T23:31:39.648366295Z",
+  "updated_at": "2026-11-07T23:31:39.648366295Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "bc045c7",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
