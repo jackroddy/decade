@@ -1,0 +1,28 @@
+{
+  "id": "decade-7a0171",
+  "title": "decade takes Jack's Hyprland keybinds while it has focus",
+  "body": "Jack wants to use his usual keybinds inside decade: while a decade window has focus, decade takes them instead of Hyprland. Some of his Hyprland binds have to keep working in Hyprland even then, so the takeover covers only a subset.\n\nToday Hyprland handles every bind before decade sees the key. decade's window comes from winit, which gives decade no way to change that.\n\n## Proposal\n\n- While a decade window has keyboard focus, decade asks Hyprland to inhibit its shortcuts through the keyboard shortcuts inhibitor protocol (`zwp_keyboard_shortcuts_inhibit_manager_v1`). winit does not expose the protocol, so decade binds it itself on winit's Wayland connection, using the display and surface handles from raw-window-handle.\n- The binds that must keep working in Hyprland carry Hyprland's bind flag that ignores an inhibitor (`p`, from memory). That flag is how Jack picks the subset, in his Hyprland config.\n- decade gives its own meaning to the binds it receives, for example Super+H to focus the pane to the left. A bind decade does not handle goes to the focused pane's client.\n\n## Open\n\n- Whether Hyprland 0.56.2 advertises the protocol, and whether its bypass flag is `p`. Nobody has checked either.\n- Whether decade can bind the protocol on winit's connection without conflicting with winit's own event queue.\n- Which binds decade handles, and what each one does inside decade.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T07:26:52.247769708Z",
+  "updated_at": "2026-11-07T07:26:52.247769708Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "2fd6fa5",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
