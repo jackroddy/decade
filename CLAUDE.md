@@ -64,7 +64,10 @@ drop that arm, listed under `### Removed`.
 **Running decade.** Claude never starts decade expecting Jack to test it.
 When Jack has to look at something or press keys, Claude builds decade, asks
 him to run it, and waits for his report. For its own checks, Claude may run
-decade on `headless-dev`. `decade-dev` runs the debug build and `decade` the release build.
+decade on `headless-dev`. To look at the UI, Claude runs `decade script` against a
+server with its own `XDG_RUNTIME_DIR` and `XDG_STATE_HOME`. The command
+sends scripted input and saves the frames it gets back as PNG files, with
+no window and no seat focus. `decade-dev` runs the debug build and `decade` the release build.
 Both are links to `scripts/launch`, which rebuilds first. Claude never asks
 Jack for a screenshot. When Claude needs to know how something looks, Claude
 asks him to describe it.
