@@ -1,0 +1,28 @@
+{
+  "id": "decade-bfeed1",
+  "title": "decade speaks a socket protocol to decade-aware apps",
+  "body": "decade has no socket. In `src/compositor.rs` the only inter-process channel\nis the Wayland socket that `ListeningSocketSource::new_auto` opens, and the\nonly client is the ghostty that `spawn_terminal` starts.\n\n## Proposal\n\nA second unix socket, at a path decade puts in the environment of every\nprocess it spawns as `DECADE_SOCKET`, carrying newline-delimited JSON in\nboth directions. JSON lines so that a decade-aware tool can be written in\nany language in an afternoon; a binary encoding only if a measurement ever\nasks for it.\n\n- Handshake: the client's first line names itself and what it can do, such\n  as `{\"hello\": {\"name\": \"code-pane\", \"accepts\": [\"show\", \"mark\"]}}`.\n  decade answers with the pane the client occupies, if any.\n- Addressing: every message after that carries a target pane, by the name\n  decade assigned or by role, so the chat can say \"the code pane\" without\n  knowing which window it is.\n- First messages, enough for the code pane and follow-along:\n  `show { path, line }`, `mark { path, lines }`, `clear`.\n- Errors: a line back with the offending message and a reason, never\n  silence.\n\ndecade routes: a message for a pane goes to the client occupying it. A\nmessage for decade itself, such as focus, is handled in the compositor.\n\n## Rejected\n\n- Escape sequences over the pty. Structured two-way messages do not fit\n  them; see the closed decision decade-f51dcd.\n- One socket per pane. A single socket with addressing is simpler for the\n  chat, which talks to several panes.\n\n## Open\n\n- Whether a client may occupy a pane it did not open, such as a code pane\n  started by the chat.\n- Versioning of the message set, since external tools will depend on it.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-ee478b",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T01:47:21.303558951Z",
+  "updated_at": "2026-11-07T01:47:21.303558951Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "7932094",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
