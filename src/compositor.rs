@@ -85,7 +85,7 @@ use smithay::{
 };
 
 use crate::apps;
-use crate::channel::{Host, Out, Router};
+use crate::channel::{AGENT, Host, Out};
 use crate::control::{self, viewer_socket_path};
 use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::gpu::Gpu;
@@ -103,7 +103,6 @@ use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
 use crate::workspace::{self, Workspace};
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
-const AGENT_CLIENT: usize = usize::MAX;
 const BTN_LEFT: u32 = 0x110;
 const POOL_SIZE: usize = 3;
 const KEY_LEFTCTRL: u32 = 29;
@@ -166,7 +165,7 @@ enum Chord {
 
 struct ChildEnv {
     wayland: OsString,
-    channel: PathBuf,
+    runtime: PathBuf,
     mcp: Option<String>,
 }
 
@@ -198,8 +197,7 @@ pub struct State {
     cursor: CursorImageStatus,
     display_handle: DisplayHandle,
     loop_handle: LoopHandle<'static, State>,
-    router: Router,
-    sockets: HashMap<usize, UnixStream>,
+    sockets: HashMap<usize, (u32, UnixStream)>,
     next_client: usize,
     env: ChildEnv,
     children: Vec<Child>,
@@ -436,39 +434,10 @@ pub fn run() {
         )
         .unwrap();
 
-    let channel_path = channel_path();
-    let _ = std::fs::remove_file(&channel_path);
-    let listener = UnixListener::bind(&channel_path).unwrap();
-    listener.set_nonblocking(true).unwrap();
-    handle
-        .insert_source(
-            Generic::new(listener, Interest::READ, CalloopMode::Level),
-            |_, listener, state| {
-                loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => state.channel_connected(stream),
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
-                        Err(error) => {
-                            eprintln!("decade: accepting a channel client failed: {error}");
-                            break;
-                        }
-                    }
-                }
-                Ok(PostAction::Continue)
-            },
-        )
-        .unwrap();
-
-    let mut router = Router::new(
-        workspace
-            .layout
-            .panes
-            .iter()
-            .map(|pane| pane.name.clone())
-            .collect(),
-    );
-    router.connected(AGENT_CLIENT);
-    router.handle(AGENT_CLIENT, r#"{"hello":{"name":"agent"}}"#);
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    remove_stale_sockets(&runtime);
     let (mcp_requests, mcp_source) = calloop_channel::channel();
     handle
         .insert_source(mcp_source, |event, _, state| {
@@ -510,12 +479,11 @@ pub fn run() {
         cursor: CursorImageStatus::default_named(),
         display_handle: dh,
         loop_handle: handle.clone(),
-        router,
         sockets: HashMap::new(),
         next_client: 0,
         env: ChildEnv {
             wayland: socket_name,
-            channel: channel_path,
+            runtime,
             mcp,
         },
         children: Vec::new(),
@@ -537,6 +505,7 @@ pub fn run() {
         start: Instant::now(),
     };
 
+    state.listen(0);
     state.spawn_terminal(0, "terminal");
     while !state.stopping {
         let backlog = state
@@ -555,16 +524,10 @@ pub fn run() {
     for child in &mut state.children {
         let _ = child.kill();
     }
-    let _ = std::fs::remove_file(&state.env.channel);
+    for workspace in &state.workspaces {
+        let _ = std::fs::remove_file(state.socket_path(workspace.id));
+    }
     let _ = std::fs::remove_file(&viewer_path);
-}
-
-fn channel_path() -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    remove_stale_sockets(&dir);
-    dir.join(format!("decade-{}.sock", std::process::id()))
 }
 
 fn remove_stale_sockets(dir: &Path) {
@@ -575,8 +538,9 @@ fn remove_stale_sockets(dir: &Path) {
         let name = entry.file_name();
         let Some(pid) = name
             .to_str()
+            .filter(|name| name.ends_with(".sock"))
             .and_then(|name| name.strip_prefix("decade-"))
-            .and_then(|rest| rest.strip_suffix(".sock"))
+            .and_then(|rest| rest.split(['-', '.']).next())
             .and_then(|pid| pid.parse::<u32>().ok())
         else {
             continue;
@@ -595,10 +559,10 @@ impl State {
             .current_dir(&workspace.cwd)
             .env("DECADE_WORKSPACE", &workspace.name)
             .env("WAYLAND_DISPLAY", &self.env.wayland)
-            .env("DECADE_SOCKET", &self.env.channel)
+            .env("DECADE_SOCKET", self.socket_path(workspace.id))
             .env_remove("DISPLAY");
         if let Some(mcp) = &self.env.mcp {
-            command.env("DECADE_MCP", mcp);
+            command.env("DECADE_MCP", format!("{mcp}?workspace={}", workspace.id));
         }
         command
     }
@@ -873,8 +837,9 @@ impl State {
         let taken = self.workspaces.iter().map(|known| known.name.as_str());
         created.name = workspace::unique_name(&created.name, taken);
         self.workspaces.push(created);
-        self.router.add_pane("terminal".to_string());
-        self.spawn_terminal(self.workspaces.len() - 1, "terminal");
+        let index = self.workspaces.len() - 1;
+        self.listen(index);
+        self.spawn_terminal(index, "terminal");
         let viewers: Vec<usize> = self.welcomed().collect();
         for viewer in viewers {
             self.send(viewer, self.workspace_list());
@@ -1371,17 +1336,70 @@ impl State {
         self.send(id, message);
     }
 
-    fn channel_connected(&mut self, stream: UnixStream) {
+    fn socket_path(&self, workspace: u32) -> PathBuf {
+        let pid = std::process::id();
+        self.env
+            .runtime
+            .join(format!("decade-{pid}-w{workspace}.sock"))
+    }
+
+    fn listen(&mut self, workspace: usize) {
+        let id = self.workspaces[workspace].id;
+        let path = self.socket_path(id);
+        let _ = std::fs::remove_file(&path);
+        let listener = match UnixListener::bind(&path) {
+            Ok(listener) => listener,
+            Err(error) => {
+                eprintln!("decade: {}: {error}", path.display());
+                return;
+            }
+        };
+        if let Err(error) = listener.set_nonblocking(true) {
+            eprintln!("decade: {}: {error}", path.display());
+            return;
+        }
+        let inserted = self.loop_handle.insert_source(
+            Generic::new(listener, Interest::READ, CalloopMode::Level),
+            move |_, listener, state| {
+                loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => state.channel_connected(stream, id),
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(error) => {
+                            eprintln!("decade: accepting a channel client failed: {error}");
+                            break;
+                        }
+                    }
+                }
+                Ok(PostAction::Continue)
+            },
+        );
+        match inserted {
+            Ok(token) => self.workspaces[workspace].listener = Some(token),
+            Err(error) => eprintln!("decade: {} is not watched: {error}", path.display()),
+        }
+    }
+
+    fn workspace_index(&self, id: u32) -> Option<usize> {
+        self.workspaces
+            .iter()
+            .position(|workspace| workspace.id == id)
+    }
+
+    fn channel_connected(&mut self, stream: UnixStream, workspace: u32) {
         if stream.set_nonblocking(true).is_err() {
             return;
         }
         let Ok(writer) = stream.try_clone() else {
             return;
         };
+        let Some(index) = self.workspace_index(workspace) else {
+            return;
+        };
         let id = self.next_client;
         self.next_client += 1;
-        self.router.connected(id);
-        self.sockets.insert(id, writer);
+        self.workspaces[index].router.connected(id);
+        self.sockets.insert(id, (workspace, writer));
         let mut buffer: Vec<u8> = Vec::new();
         let inserted = self.loop_handle.insert_source(
             Generic::new(stream, Interest::READ, CalloopMode::Level),
@@ -1420,33 +1438,56 @@ impl State {
     }
 
     fn mcp_request(&mut self, request: mcp::Request) {
+        let Some(workspace) = request.workspace.and_then(|id| self.workspace_index(id)) else {
+            let reason = match request.workspace {
+                Some(id) => format!("workspace {id} is closed"),
+                None => "the MCP address names no workspace".to_string(),
+            };
+            let error = serde_json::json!({ "error": { "reason": reason } });
+            let _ = request.reply.send(vec![error.to_string()]);
+            return;
+        };
         let mut reply = Vec::new();
-        for out in self.router.handle(AGENT_CLIENT, &request.line) {
+        for out in self.workspaces[workspace]
+            .router
+            .handle(AGENT, &request.line)
+        {
             match out {
-                Out::Line(to, text) if to == AGENT_CLIENT => reply.push(text),
+                Out::Line(to, text) if to == AGENT => reply.push(text),
                 Out::Line(to, text) => self.channel_send(to, &text),
-                Out::Host(Host::Focus(pane)) => self.focus_named(&pane),
+                Out::Host(Host::Focus(pane)) => self.focus_named(workspace, &pane),
             }
         }
         let _ = request.reply.send(reply);
     }
 
     fn channel_disconnected(&mut self, id: usize) {
-        self.router.disconnected(id);
-        self.sockets.remove(&id);
+        let Some((workspace, _)) = self.sockets.remove(&id) else {
+            return;
+        };
+        if let Some(index) = self.workspace_index(workspace) {
+            self.workspaces[index].router.disconnected(id);
+        }
     }
 
     fn channel_line(&mut self, id: usize, line: &str) {
-        for out in self.router.handle(id, line) {
+        let Some(workspace) = self
+            .sockets
+            .get(&id)
+            .and_then(|(workspace, _)| self.workspace_index(*workspace))
+        else {
+            return;
+        };
+        for out in self.workspaces[workspace].router.handle(id, line) {
             match out {
                 Out::Line(to, text) => self.channel_send(to, &text),
-                Out::Host(Host::Focus(pane)) => self.focus_named(&pane),
+                Out::Host(Host::Focus(pane)) => self.focus_named(workspace, &pane),
             }
         }
     }
 
     fn channel_send(&mut self, to: usize, text: &str) {
-        let Some(stream) = self.sockets.get(&to) else {
+        let Some((_, stream)) = self.sockets.get(&to) else {
             return;
         };
         let mut stream = stream;
@@ -1587,16 +1628,22 @@ impl State {
         self.request_redraw();
     }
 
-    fn focus_named(&mut self, name: &str) {
-        if let Some(id) = self.layout().by_name(name) {
+    fn focus_named(&mut self, workspace: usize, name: &str) {
+        let Some(id) = self.workspaces[workspace].layout.by_name(name) else {
+            return;
+        };
+        if workspace == self.current() {
             self.focus(id);
+        } else {
+            self.workspaces[workspace].layout.focused = id;
         }
     }
 
     fn new_terminal_pane(&mut self) {
         let name = self.layout().unique_name("terminal");
-        let id = self.layout_mut().add_transient(name.clone());
-        self.router.add_pane(name.clone());
+        let current = self.current();
+        let id = self.workspaces[current].layout.add_transient(name.clone());
+        self.workspaces[current].router.add_pane(name.clone());
         self.spawn_terminal(self.current(), &name);
         self.relayout();
         self.focus(id);
@@ -1609,7 +1656,7 @@ impl State {
         };
         let name = pane.name.clone();
         layout.remove(id);
-        self.router.remove_pane(&name);
+        self.workspaces[workspace].router.remove_pane(&name);
         self.relayout_workspace(workspace);
         if workspace == self.current() {
             let focused = self.layout().focused;
@@ -2611,7 +2658,7 @@ impl CompositorHandler for State {
                     let layout = &mut self.workspaces[workspace].layout;
                     let name = layout.unique_name(app_id.as_deref().unwrap_or("window"));
                     let id = layout.add_transient(name.clone());
-                    self.router.add_pane(name);
+                    self.workspaces[workspace].router.add_pane(name);
                     self.relayout_workspace(workspace);
                     (workspace, id)
                 }

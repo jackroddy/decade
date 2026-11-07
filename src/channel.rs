@@ -5,6 +5,9 @@ use serde_json::{Map, Value, json};
 
 pub const VERSION: u32 = 1;
 
+/// The client id under which MCP tool calls reach a router.
+pub const AGENT: usize = usize::MAX;
+
 #[derive(Deserialize)]
 pub struct Hello {
     pub name: String,

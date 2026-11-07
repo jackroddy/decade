@@ -3,9 +3,18 @@
 The `decade-channel` crate in this repository is the client side of this
 protocol for Rust programs. What follows is the wire itself.
 
-decade listens on a unix socket while it runs. Programs it starts find the
-path in `DECADE_SOCKET` and the name of the pane they were started in, if
-any, in `DECADE_PANE`. Each direction carries one JSON object per line.
+decade listens on one unix socket for each workspace while it runs.
+Programs it starts find these in their environment:
+
+| variable | value |
+|---|---|
+| `DECADE_SOCKET` | the path of their workspace's socket |
+| `DECADE_WORKSPACE` | the workspace's name |
+| `DECADE_PANE` | the name of the pane they were started in, if any |
+
+A client reaches only the panes of the workspace whose socket it connected
+to. Every pane name below means a pane in that workspace. Each direction
+carries one JSON object per line.
 
 ## Hello
 
@@ -61,8 +70,9 @@ payload is the business of the two clients.
 {"panes": {}}
 ```
 
-`focus` moves keyboard focus to the pane and has no reply. `panes` is
-answered with every pane and its occupant:
+`focus` moves keyboard focus to the pane and has no reply. In a workspace
+that is not on screen, the pane has focus once the workspace is shown.
+`panes` is answered with every pane in the workspace and its occupant:
 
 ```json
 {"panes": [{"name": "chat", "client": "coax"}, {"name": "terminal", "client": null}, {"name": "code", "client": null}]}
@@ -83,7 +93,9 @@ JSON. decade never drops a message silently.
 
 Agents do not use this socket. decade is also an MCP server, over streamable
 HTTP at the address in `DECADE_MCP`, which every program decade starts gets
-beside `DECADE_SOCKET`. Its tools are decade's own `focus` and `panes` and, for
+beside `DECADE_SOCKET`. Each workspace has its own address, ending in
+`?workspace=<id>`, and a tool call reaches only the panes of that
+workspace. Its tools are decade's own `focus` and `panes` and, for
 the code pane, `code.show`, `code.mark` and `code.clear`, each with the payload
 described above as its arguments. A tool call becomes the matching socket
 message from a built-in client named `agent`, so a pane sees `"from": "agent"`.

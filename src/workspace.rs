@@ -1,5 +1,8 @@
 use std::path::PathBuf;
 
+use smithay::reexports::calloop::RegistrationToken;
+
+use crate::channel::{AGENT, Router};
 use crate::panes::Layout;
 
 pub struct Workspace {
@@ -7,6 +10,10 @@ pub struct Workspace {
     pub name: String,
     pub cwd: PathBuf,
     pub layout: Layout,
+    pub router: Router,
+
+    /// The event source accepting connections on this workspace's socket.
+    pub listener: Option<RegistrationToken>,
 }
 
 pub fn home() -> PathBuf {
@@ -31,11 +38,17 @@ impl Workspace {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| cwd.display().to_string());
+        let layout = Layout::new(columns, rows);
+        let mut router = Router::new(layout.panes.iter().map(|pane| pane.name.clone()).collect());
+        router.connected(AGENT);
+        router.handle(AGENT, r#"{"hello":{"name":"agent"}}"#);
         Workspace {
             id,
             name,
             cwd,
-            layout: Layout::new(columns, rows),
+            layout,
+            router,
+            listener: None,
         }
     }
 

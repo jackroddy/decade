@@ -15,6 +15,8 @@ use smithay::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
 
 pub struct Request {
+    /// The workspace named in the address the call came in on.
+    pub workspace: Option<u32>,
     pub line: String,
     pub reply: oneshot::Sender<Vec<String>>,
 }
@@ -113,16 +115,23 @@ fn tools() -> Vec<Tool> {
             "Move keyboard focus to a pane",
             schema(json!({
                 "type": "object",
-                "properties": {"pane": {"type": "string", "description": "chat, terminal or code"}},
+                "properties": {"pane": {"type": "string", "description": "a pane name, as panes lists it"}},
                 "required": ["pane"]
             })),
         ),
         Tool::new(
             "panes",
-            "List decade's panes and the program occupying each",
+            "List the panes in this workspace and the program occupying each",
             schema(json!({"type": "object", "properties": {}})),
         ),
     ]
+}
+
+fn workspace_in(query: &str) -> Option<u32> {
+    query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("workspace="))
+        .and_then(|id| id.parse().ok())
 }
 
 fn line_for(name: &str, arguments: Map<String, Value>) -> Option<String> {
@@ -142,9 +151,10 @@ impl ServerHandler for Decade {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("decade", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "decade is the window the user is working in. Its panes are chat, terminal and \
-                 code. The code pane shows one file; use code.show to bring a file into view and \
-                 code.mark to point at lines in it.",
+                "decade is the window the user is working in. These tools reach the panes of the \
+                 workspace this agent was started in, and panes lists them. A pane named code \
+                 shows one file; use code.show to bring a file into view and code.mark to point \
+                 at lines in it.",
             )
     }
 
@@ -159,8 +169,13 @@ impl ServerHandler for Decade {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        let workspace = context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.uri.query())
+            .and_then(workspace_in);
         let Some(line) = line_for(&request.name, request.arguments.unwrap_or_default()) else {
             return Err(ErrorData::invalid_params(
                 format!("no tool named {}", request.name),
@@ -171,7 +186,11 @@ impl ServerHandler for Decade {
         self.requests
             .lock()
             .unwrap()
-            .send(Request { line, reply })
+            .send(Request {
+                workspace,
+                line,
+                reply,
+            })
             .map_err(|_| ErrorData::internal_error("decade's event loop is gone", None))?;
         let answer = answer
             .await
@@ -208,17 +227,25 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn the_workspace_is_read_from_the_query_of_the_address() {
+        assert_eq!(workspace_in("workspace=3"), Some(3));
+        assert_eq!(workspace_in("a=b&workspace=12"), Some(12));
+        assert_eq!(workspace_in("workspace=x"), None);
+        assert_eq!(workspace_in("other=1"), None);
+    }
+
+    #[test]
     fn tools_are_relayed_as_socket_lines_and_answers_become_results() {
         let (sender, source) = channel::channel::<Request>();
         let server = start(sender).unwrap();
-        let url = server.url.clone();
+        let url = format!("{}?workspace=7", server.url);
 
-        let mut event_loop: EventLoop<Vec<String>> = EventLoop::try_new().unwrap();
+        let mut event_loop: EventLoop<Vec<(Option<u32>, String)>> = EventLoop::try_new().unwrap();
         event_loop
             .handle()
             .insert_source(source, |event, _, seen| {
                 if let Event::Msg(request) = event {
-                    seen.push(request.line.clone());
+                    seen.push((request.workspace, request.line.clone()));
                     let reply = if request.line.contains("\"panes\"") {
                         vec![r#"{"panes":[{"name":"code","client":"decade-code"}]}"#.to_string()]
                     } else if request.line.contains("\"terminal\"") {
@@ -281,8 +308,9 @@ mod tests {
             ["code.show", "code.mark", "code.clear", "focus", "panes"]
         );
         assert_eq!(seen.len(), 3);
+        assert!(seen.iter().all(|(workspace, _)| *workspace == Some(7)));
         assert_eq!(
-            serde_json::from_str::<Value>(&seen[0]).unwrap(),
+            serde_json::from_str::<Value>(&seen[0].1).unwrap(),
             json!({"to": "code", "show": {"path": "src/main.rs", "line": 3}})
         );
         assert_eq!(show.is_error, Some(false));

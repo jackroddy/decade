@@ -15,7 +15,10 @@ command line and what the tool writes.
 - A server holds workspaces. Each has a name, a working directory and its
   own panes. A new server starts one workspace in the home directory, named
   after that directory, with one terminal. Programs decade starts run in
-  their workspace's directory, with its name in `DECADE_WORKSPACE`.
+  their workspace's directory, with its name in `DECADE_WORKSPACE`. Each
+  workspace has its own socket in `DECADE_SOCKET` and its own MCP address
+  in `DECADE_MCP`. A client or an agent reaches only the panes of its own
+  workspace, and a pane name means a pane in that workspace.
 - New workspace in the palette takes a path, starting at `~/`, and lists
   the directories that complete it. Tab or Enter on a directory completes
   it, and Open creates a workspace there and shows it. The workspace takes
