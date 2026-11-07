@@ -1,0 +1,30 @@
+{
+  "id": "decade-315351",
+  "title": "An MCP server lets the agent drive panes",
+  "body": "An agent cannot ask decade for anything. ACP has no way for a client to\noffer tools to the agent; the agent's tools are its own or come from MCP\nservers the client names when it opens a session.\n\n## Proposal\n\nAn MCP server whose tools are decade's verbs: show a file, mark lines, draw\non the drawing pane once that exists. Each tool forwards the call over the\ndecade socket and returns the result. The chat passes this server in its\nACP session so the agent loads it. The server is small; its job is a\ntranslation.\n\n## Rejected\n\n- Markers in the agent's prose that the chat parses. Works with any agent\n  and needs no MCP, but it is text the model may format wrong, it shows\n  up in transcripts, and errors have no channel back. Right for a demo,\n  wrong for a foundation.\n\n## Open\n\n- Whether the server is a separate binary or a mode of the chat TUI.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": "decade-ee478b",
+  "blocked_by": [
+    "decade-bfeed1"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T01:47:21.328413009Z",
+  "updated_at": "2026-11-07T01:47:21.328413009Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "7932094",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
