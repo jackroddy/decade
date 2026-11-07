@@ -1,3 +1,4 @@
+mod apps;
 mod channel;
 mod compositor;
 mod draw;

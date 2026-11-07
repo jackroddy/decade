@@ -1,11 +1,13 @@
 use smithay::utils::{Physical, Size};
 
+use crate::apps::App;
 use crate::draw::{Face, Scene};
 use crate::palette;
 use crate::text::Font;
 
 pub const MENU_PX: f32 = 20.0;
 const WIDTH: i32 = 22;
+const APP_ICON: char = '\u{f08c6}';
 const MAX_ROWS: usize = 10;
 const BOX: [f32; 4] = palette::DARK_BACKGROUND;
 const BORDER: [f32; 4] = palette::ACCENT;
@@ -24,10 +26,23 @@ pub enum MenuKey {
     Char(char),
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Action {
+    Launch(Vec<String>),
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Outcome {
+    Open,
+    Close,
+    Run(Action),
+}
+
 pub struct Row {
     icon: char,
     label: String,
     submenu: Option<Vec<Row>>,
+    action: Option<Action>,
 }
 
 pub struct Menu {
@@ -43,6 +58,7 @@ impl Row {
             icon,
             label: label.to_string(),
             submenu: Some(rows),
+            action: None,
         }
     }
 
@@ -51,6 +67,16 @@ impl Row {
             icon: ' ',
             label: label.to_string(),
             submenu: None,
+            action: None,
+        }
+    }
+
+    fn action(icon: char, label: &str, action: Action) -> Row {
+        Row {
+            icon,
+            label: label.to_string(),
+            submenu: None,
+            action: Some(action),
         }
     }
 
@@ -60,10 +86,14 @@ impl Row {
 }
 
 impl Menu {
-    pub fn new() -> Menu {
+    pub fn new(apps: Vec<App>) -> Menu {
         let soon = || vec![Row::note("coming soon")];
+        let launch = apps
+            .into_iter()
+            .map(|app| Row::action(APP_ICON, &app.name, Action::Launch(app.argv)))
+            .collect();
         let rows = vec![
-            Row::submenu('\u{f003b}', "Launch", soon()),
+            Row::submenu('\u{f003b}', "Launch", launch),
             Row::submenu('\u{f0570}', "Layout", soon()),
             Row::submenu('\u{f0493}', "Settings", soon()),
         ];
@@ -91,7 +121,7 @@ impl Menu {
             .collect()
     }
 
-    pub fn key(&mut self, key: MenuKey) -> bool {
+    pub fn key(&mut self, key: MenuKey) -> Outcome {
         match key {
             MenuKey::Up => self.selected = self.selected.saturating_sub(1),
             MenuKey::Down => {
@@ -108,30 +138,33 @@ impl Menu {
                 self.selected = 0;
             }
             MenuKey::Escape => return self.up(),
-            MenuKey::Enter => self.enter(),
+            MenuKey::Enter => return self.enter(),
         }
-        true
+        Outcome::Open
     }
 
-    fn enter(&mut self) {
+    fn enter(&mut self) -> Outcome {
         let Some(&(index, row)) = self.matching().get(self.selected) else {
-            return;
+            return Outcome::Open;
         };
-        if row.submenu.is_none() {
-            return;
+        if let Some(action) = &row.action {
+            return Outcome::Run(action.clone());
         }
-        self.path.push(index);
-        self.query.clear();
-        self.selected = 0;
+        if row.submenu.is_some() {
+            self.path.push(index);
+            self.query.clear();
+            self.selected = 0;
+        }
+        Outcome::Open
     }
 
-    fn up(&mut self) -> bool {
+    fn up(&mut self) -> Outcome {
         if self.path.pop().is_none() {
-            return false;
+            return Outcome::Close;
         }
         self.query.clear();
         self.selected = 0;
-        true
+        Outcome::Open
     }
 
     pub fn draw(&self, scene: &mut Scene, font: &Font) -> Size<i32, Physical> {
@@ -202,7 +235,7 @@ mod tests {
 
     #[test]
     fn typing_filters_the_rows_by_label() {
-        let mut menu = Menu::new();
+        let mut menu = Menu::new(Vec::new());
         menu.key(MenuKey::Char('l'));
         menu.key(MenuKey::Char('a'));
         assert_eq!(labels(&menu), ["Launch", "Layout"]);
@@ -214,7 +247,7 @@ mod tests {
 
     #[test]
     fn the_selection_stays_inside_the_list() {
-        let mut menu = Menu::new();
+        let mut menu = Menu::new(Vec::new());
         menu.key(MenuKey::Up);
         assert_eq!(menu.selected, 0);
         for _ in 0..5 {
@@ -224,13 +257,28 @@ mod tests {
     }
 
     #[test]
+    fn enter_on_an_app_runs_its_command() {
+        let app = App {
+            name: "Files".to_string(),
+            argv: vec!["nautilus".to_string()],
+        };
+        let mut menu = Menu::new(vec![app]);
+        menu.key(MenuKey::Enter);
+        for ch in "fil".chars() {
+            menu.key(MenuKey::Char(ch));
+        }
+        let launch = Action::Launch(vec!["nautilus".to_string()]);
+        assert_eq!(menu.key(MenuKey::Enter), Outcome::Run(launch));
+    }
+
+    #[test]
     fn enter_opens_a_submenu_and_escape_goes_up_then_closes() {
-        let mut menu = Menu::new();
+        let mut menu = Menu::new(Vec::new());
         menu.key(MenuKey::Down);
         menu.key(MenuKey::Enter);
         assert_eq!(menu.path, [1]);
-        assert!(menu.key(MenuKey::Escape));
+        assert_eq!(menu.key(MenuKey::Escape), Outcome::Open);
         assert!(menu.path.is_empty());
-        assert!(!menu.key(MenuKey::Escape));
+        assert_eq!(menu.key(MenuKey::Escape), Outcome::Close);
     }
 }

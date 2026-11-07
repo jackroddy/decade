@@ -76,10 +76,11 @@ use smithay::{
     render_elements,
 };
 
+use crate::apps;
 use crate::channel::{Host, Out, Router};
 use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::mcp;
-use crate::menu::{MENU_PX, Menu, MenuKey};
+use crate::menu::{Action, MENU_PX, Menu, MenuKey, Outcome};
 use crate::palette::ACCENT;
 use crate::panes::{BACKGROUND, BarButton, Boundary, Direction, Kind as PaneKind, Layout, Pane};
 use crate::text::{FONT_PX, Font};
@@ -386,17 +387,32 @@ fn remove_stale_sockets(dir: &Path) {
 }
 
 impl State {
-    fn spawn_terminal(&mut self, pane: &str, command: &[String]) {
-        let mut ghostty = Command::new("ghostty");
-        ghostty
+    fn command(&self, program: &str) -> Command {
+        let mut command = Command::new(program);
+        command
             .env("WAYLAND_DISPLAY", &self.env.wayland)
             .env("DECADE_SOCKET", &self.env.channel)
-            .env("DECADE_PANE", pane);
+            .env_remove("DISPLAY");
         if let Some(mcp) = &self.env.mcp {
-            ghostty.env("DECADE_MCP", mcp);
+            command.env("DECADE_MCP", mcp);
         }
+        command
+    }
+
+    fn launch(&mut self, argv: &[String]) {
+        let Some((program, args)) = argv.split_first() else {
+            return;
+        };
+        match self.command(program).args(args).spawn() {
+            Ok(child) => self.children.push(child),
+            Err(error) => eprintln!("decade: could not start {program}: {error}"),
+        }
+    }
+
+    fn spawn_terminal(&mut self, pane: &str, command: &[String]) {
+        let mut ghostty = self.command("ghostty");
         ghostty
-            .env_remove("DISPLAY")
+            .env("DECADE_PANE", pane)
             .args(["--window-decoration=none", "--gtk-titlebar=false"])
             .arg(format!("--class=decade.{pane}"));
         if !command.is_empty() {
@@ -802,13 +818,18 @@ impl State {
             }
             Some(Key::NewPane) => self.new_terminal_pane(),
             Some(Key::Palette) => {
-                self.menu = Some(Menu::new());
+                self.menu = Some(Menu::new(apps::installed()));
                 self.backend.window().request_redraw();
             }
             Some(Key::Menu(key)) => {
-                let open = self.menu.as_mut().is_some_and(|menu| menu.key(key));
-                if !open {
-                    self.menu = None;
+                let outcome = self.menu.as_mut().map(|menu| menu.key(key));
+                match outcome {
+                    Some(Outcome::Open) | None => {}
+                    Some(Outcome::Close) => self.menu = None,
+                    Some(Outcome::Run(Action::Launch(argv))) => {
+                        self.menu = None;
+                        self.launch(&argv);
+                    }
                 }
                 self.backend.window().request_redraw();
             }
