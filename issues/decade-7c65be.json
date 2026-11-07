@@ -1,0 +1,28 @@
+{
+  "id": "decade-7c65be",
+  "title": "An anchor whose ghostty exits never gets a client back",
+  "body": "`spawn_terminal` in `src/compositor.rs` starts ghostty with `--class=decade.<pane>` in two places: once per starting anchor (`terminal`, `chat`, `code`) when decade starts, and in `new_terminal_pane` for Ctrl+Shift+Enter. Nothing calls it again later. An anchor whose client exits shows \"waiting for decade.<pane>\" until a window with that app id appears, and for a ghostty that decade started, nothing will ever open one. A transient terminal pane pinned with the bar's pin button ends up the same way. Jack found this on 2026-11-06 while testing the pin.\n\nPinning an app with its own app id, such as nautilus, works: start it again from a terminal and it lands back in its pane.\n\n## Proposal\n\nA pane remembers the command decade started it with. When that pane is an anchor and its client exits, decade can start the command again.\n\n## Open\n\n- Whether decade restarts the command right away, or only when someone clicks the waiting pane. An immediate restart loops if the command exits at once.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T06:18:15.363289226Z",
+  "updated_at": "2026-11-07T06:18:15.363289226Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "3ee6949",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
