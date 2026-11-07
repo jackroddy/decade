@@ -83,7 +83,7 @@ use crate::text::{FONT_PX, Font, Glyphs};
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
-const BAR_HOLD: Duration = Duration::from_millis(300);
+const BAR_HOLD: Duration = Duration::from_millis(50);
 const BTN_LEFT: u32 = 0x110;
 
 render_elements! {
