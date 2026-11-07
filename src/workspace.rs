@@ -9,6 +9,22 @@ pub struct Workspace {
     pub layout: Layout,
 }
 
+pub fn home() -> PathBuf {
+    std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
+}
+
+/// The base name, or the base name with the first free count after it.
+pub fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clone) -> String {
+    let free = |name: &str| !taken.clone().any(|taken| taken == name);
+    if free(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base} {n}"))
+        .find(|name| free(name))
+        .unwrap()
+}
+
 impl Workspace {
     pub fn new(id: u32, cwd: PathBuf, columns: u32, rows: u32) -> Workspace {
         let name = cwd
@@ -32,6 +48,14 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_taken_name_gets_the_first_free_count() {
+        assert_eq!(unique_name("decade", ["foam"].into_iter()), "decade");
+        assert_eq!(unique_name("decade", ["decade"].into_iter()), "decade 2");
+        let taken = ["decade", "decade 2", "decade 3"];
+        assert_eq!(unique_name("decade", taken.into_iter()), "decade 4");
+    }
 
     #[test]
     fn a_workspace_is_named_after_its_directory() {

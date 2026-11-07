@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use smithay::utils::{Physical, Size};
 
 use crate::apps::App;
@@ -6,7 +8,10 @@ use crate::palette;
 use crate::text::Font;
 
 const WIDTH: i32 = 22;
+const BROWSE_WIDTH: i32 = 48;
 const APP_ICON: char = '\u{f08c6}';
+const FOLDER_ICON: char = '\u{f024b}';
+const OPEN_ICON: char = '\u{f0770}';
 const MAX_ROWS: usize = 10;
 pub const BOX: [f32; 4] = palette::DARK_BACKGROUND;
 pub const BORDER: [f32; 4] = palette::ACCENT;
@@ -24,6 +29,7 @@ pub enum MenuKey {
     Enter,
     Escape,
     Backspace,
+    Tab,
     Char(char),
 }
 
@@ -31,6 +37,7 @@ pub enum MenuKey {
 pub enum Action {
     Launch(Vec<String>),
     Settings,
+    NewWorkspace(PathBuf),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -43,8 +50,18 @@ pub enum Outcome {
 pub struct Row {
     icon: char,
     label: String,
-    submenu: Option<Vec<Row>>,
-    action: Option<Action>,
+    target: Target,
+}
+
+enum Target {
+    Submenu(Vec<Row>),
+    Run(Action),
+
+    /// A row that turns the query into a path and lists the directories under it.
+    Directory,
+
+    /// A row that replaces the query with this text.
+    Complete(String),
 }
 
 pub struct Menu {
@@ -52,24 +69,18 @@ pub struct Menu {
     path: Vec<usize>,
     query: String,
     selected: usize,
+    home: PathBuf,
+
+    /// The rows listed for the query while a `Directory` row is open.
+    found: Vec<Row>,
 }
 
 impl Row {
-    fn submenu(icon: char, label: &str, rows: Vec<Row>) -> Row {
+    fn new(icon: char, label: &str, target: Target) -> Row {
         Row {
             icon,
             label: label.to_string(),
-            submenu: Some(rows),
-            action: None,
-        }
-    }
-
-    fn action(icon: char, label: &str, action: Action) -> Row {
-        Row {
-            icon,
-            label: label.to_string(),
-            submenu: None,
-            action: Some(action),
+            target,
         }
     }
 
@@ -79,37 +90,67 @@ impl Row {
 }
 
 impl Menu {
-    pub fn new(apps: Vec<App>) -> Menu {
+    pub fn new(apps: Vec<App>, home: PathBuf) -> Menu {
         let launch = apps
             .into_iter()
-            .map(|app| Row::action(APP_ICON, &app.name, Action::Launch(app.argv)))
+            .map(|app| Row::new(APP_ICON, &app.name, Target::Run(Action::Launch(app.argv))))
             .collect();
         let rows = vec![
-            Row::submenu('\u{f003b}', "Launch", launch),
-            Row::action('\u{f0493}', "Settings", Action::Settings),
+            Row::new('\u{f003b}', "Launch", Target::Submenu(launch)),
+            Row::new(FOLDER_ICON, "New workspace", Target::Directory),
+            Row::new('\u{f0493}', "Settings", Target::Run(Action::Settings)),
         ];
         Menu {
             root: rows,
             path: Vec::new(),
             query: String::new(),
             selected: 0,
+            home,
+            found: Vec::new(),
         }
+    }
+
+    fn opened(&self) -> Option<&Row> {
+        let mut rows = self.root.as_slice();
+        let mut row = None;
+        for &index in &self.path {
+            row = Some(&rows[index]);
+            rows = match &rows[index].target {
+                Target::Submenu(rows) => rows,
+                _ => &[],
+            };
+        }
+        row
+    }
+
+    fn browsing(&self) -> bool {
+        self.opened()
+            .is_some_and(|row| matches!(row.target, Target::Directory))
     }
 
     fn rows(&self) -> &[Row] {
-        let mut rows = self.root.as_slice();
-        for &index in &self.path {
-            rows = rows[index].submenu.as_deref().unwrap_or_default();
+        match self.opened().map(|row| &row.target) {
+            None => &self.root,
+            Some(Target::Submenu(rows)) => rows,
+            Some(Target::Directory) => &self.found,
+            Some(_) => &[],
         }
-        rows
     }
 
     fn matching(&self) -> Vec<(usize, &Row)> {
+        let browsing = self.browsing();
         self.rows()
             .iter()
             .enumerate()
-            .filter(|(_, row)| row.matches(&self.query))
+            .filter(|(_, row)| browsing || row.matches(&self.query))
             .collect()
+    }
+
+    fn query_changed(&mut self) {
+        self.selected = 0;
+        if self.browsing() {
+            self.found = browse(&self.query, &self.home);
+        }
     }
 
     pub fn key(&mut self, key: MenuKey) -> Outcome {
@@ -121,15 +162,16 @@ impl Menu {
             }
             MenuKey::Char(ch) => {
                 self.query.push(ch);
-                self.selected = 0;
+                self.query_changed();
             }
             MenuKey::Backspace if self.query.is_empty() => return self.up(),
             MenuKey::Backspace => {
                 self.query.pop();
-                self.selected = 0;
+                self.query_changed();
             }
             MenuKey::Escape => return self.up(),
             MenuKey::Left | MenuKey::Right => {}
+            MenuKey::Tab => self.complete(),
             MenuKey::Enter => return self.enter(),
         }
         Outcome::Open
@@ -139,15 +181,30 @@ impl Menu {
         let Some(&(index, row)) = self.matching().get(self.selected) else {
             return Outcome::Open;
         };
-        if let Some(action) = &row.action {
-            return Outcome::Run(action.clone());
-        }
-        if row.submenu.is_some() {
-            self.path.push(index);
-            self.query.clear();
-            self.selected = 0;
+        match &row.target {
+            Target::Run(action) => return Outcome::Run(action.clone()),
+            Target::Submenu(_) => {
+                self.path.push(index);
+                self.query.clear();
+                self.query_changed();
+            }
+            Target::Directory => {
+                self.path.push(index);
+                self.query = "~/".to_string();
+                self.query_changed();
+            }
+            Target::Complete(_) => self.complete(),
         }
         Outcome::Open
+    }
+
+    fn complete(&mut self) {
+        if let Some((_, row)) = self.matching().get(self.selected)
+            && let Target::Complete(query) = &row.target
+        {
+            self.query = query.clone();
+            self.query_changed();
+        }
     }
 
     fn up(&mut self) -> Outcome {
@@ -155,6 +212,7 @@ impl Menu {
             return Outcome::Close;
         }
         self.query.clear();
+        self.found.clear();
         self.selected = 0;
         Outcome::Open
     }
@@ -163,7 +221,8 @@ impl Menu {
         let (cell_width, cell_height) = (font.cell_width as i32, font.cell_height as i32);
         let pad = cell_height * 2 / 3;
         let row_height = cell_height * 8 / 5;
-        let width = WIDTH * cell_width + pad * 2;
+        let columns = if self.browsing() { BROWSE_WIDTH } else { WIDTH };
+        let width = columns * cell_width + pad * 2;
         let list = pad + row_height * 2;
         let height = list + row_height * MAX_ROWS as i32 + pad;
         scene.rounded(0, 0, (width, height), pad, BOX, BORDER);
@@ -174,10 +233,13 @@ impl Menu {
         for &index in &self.path {
             title.push_str(" › ");
             title.push_str(&rows[index].label);
-            rows = rows[index].submenu.as_deref().unwrap_or_default();
+            rows = match &rows[index].target {
+                Target::Submenu(rows) => rows,
+                _ => &[],
+            };
         }
         scene.text_px(pad, text_y(pad), &title, Face::Menu, BORDER);
-        let query = format!("› {}▏", self.query);
+        let query = format!("› {}▏", tail(&self.query, columns as usize - 3));
         scene.text_px(pad, text_y(pad + row_height), &query, Face::Menu, TEXT);
         scene.rect(pad, list - 1, width - pad * 2, scene.line_width(), DIM);
 
@@ -201,17 +263,71 @@ impl Menu {
             scene.text_px(
                 pad + cell_width * 3,
                 text_y(top),
-                &row.label,
+                &tail(&row.label, columns as usize - 5),
                 Face::Menu,
                 fg,
             );
-            if row.submenu.is_some() {
+            if matches!(row.target, Target::Submenu(_) | Target::Directory) {
                 let x = width - pad - cell_width;
                 scene.text_px(x, text_y(top), "›", Face::Menu, fg);
             }
         }
         (width, height).into()
     }
+}
+
+fn tail(text: &str, max: usize) -> String {
+    let count = text.chars().count();
+    if count <= max {
+        return text.to_string();
+    }
+    let kept: String = text.chars().skip(count + 1 - max).collect();
+    format!("…{kept}")
+}
+
+fn expand(path: &str, home: &Path) -> PathBuf {
+    match path.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+            home.join(rest.trim_start_matches('/'))
+        }
+        _ => PathBuf::from(path),
+    }
+}
+
+/// The rows for a path typed into New workspace: an Open row when the path is
+/// a directory, then the directories that complete its last component.
+fn browse(query: &str, home: &Path) -> Vec<Row> {
+    let Some(slash) = query.rfind('/') else {
+        return Vec::new();
+    };
+    let (parent, partial) = query.split_at(slash + 1);
+    let mut rows = Vec::new();
+    let target = expand(query, home);
+    if target.is_dir() && partial != "." && partial != ".." {
+        let label = format!("Open {query}");
+        rows.push(Row::new(
+            OPEN_ICON,
+            &label,
+            Target::Run(Action::NewWorkspace(target)),
+        ));
+    }
+    let Ok(entries) = std::fs::read_dir(expand(parent, home)) else {
+        return rows;
+    };
+    let partial_lower = partial.to_lowercase();
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| partial.starts_with('.') || !name.starts_with('.'))
+        .filter(|name| name.to_lowercase().starts_with(&partial_lower))
+        .collect();
+    names.sort_by_key(|name| name.to_lowercase());
+    rows.extend(names.into_iter().map(|name| {
+        let query = format!("{parent}{name}/");
+        Row::new(FOLDER_ICON, &name, Target::Complete(query))
+    }));
+    rows
 }
 
 #[cfg(test)]
@@ -227,7 +343,7 @@ mod tests {
 
     #[test]
     fn typing_filters_the_rows_by_label() {
-        let mut menu = Menu::new(Vec::new());
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"));
         menu.key(MenuKey::Char('l'));
         menu.key(MenuKey::Char('a'));
         assert_eq!(labels(&menu), ["Launch"]);
@@ -239,13 +355,13 @@ mod tests {
 
     #[test]
     fn the_selection_stays_inside_the_list() {
-        let mut menu = Menu::new(Vec::new());
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"));
         menu.key(MenuKey::Up);
         assert_eq!(menu.selected, 0);
         for _ in 0..5 {
             menu.key(MenuKey::Down);
         }
-        assert_eq!(menu.selected, 1);
+        assert_eq!(menu.selected, 2);
     }
 
     #[test]
@@ -254,7 +370,7 @@ mod tests {
             name: "Files".to_string(),
             argv: vec!["nautilus".to_string()],
         };
-        let mut menu = Menu::new(vec![app]);
+        let mut menu = Menu::new(vec![app], PathBuf::from("/"));
         menu.key(MenuKey::Enter);
         for ch in "fil".chars() {
             menu.key(MenuKey::Char(ch));
@@ -265,11 +381,84 @@ mod tests {
 
     #[test]
     fn enter_opens_a_submenu_and_escape_goes_up_then_closes() {
-        let mut menu = Menu::new(Vec::new());
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"));
         menu.key(MenuKey::Enter);
         assert_eq!(menu.path, [0]);
         assert_eq!(menu.key(MenuKey::Escape), Outcome::Open);
         assert!(menu.path.is_empty());
         assert_eq!(menu.key(MenuKey::Escape), Outcome::Close);
+    }
+
+    fn tree(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("decade-menu-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["projects/decade", "projects/foam", "Pictures", ".config"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        std::fs::write(root.join("projects/notes.txt"), "").unwrap();
+        root
+    }
+
+    fn browsing(home: &Path, typed: &str) -> Menu {
+        let mut menu = Menu::new(Vec::new(), home.to_path_buf());
+        for ch in "new".chars() {
+            menu.key(MenuKey::Char(ch));
+        }
+        menu.key(MenuKey::Enter);
+        for ch in typed.chars() {
+            menu.key(MenuKey::Char(ch));
+        }
+        menu
+    }
+
+    #[test]
+    fn new_workspace_lists_the_directories_under_the_home_directory() {
+        let home = tree("home");
+        let menu = browsing(&home, "");
+        assert_eq!(menu.query, "~/");
+        assert_eq!(labels(&menu), ["Open ~/", "Pictures", "projects"]);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn the_last_part_of_the_path_narrows_the_directories_and_skips_files() {
+        let home = tree("narrow");
+        let menu = browsing(&home, "projects/");
+        assert_eq!(labels(&menu), ["Open ~/projects/", "decade", "foam"]);
+        let menu = browsing(&home, "projects/f");
+        assert_eq!(labels(&menu), ["foam"]);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn hidden_directories_are_listed_once_the_part_starts_with_a_dot() {
+        let home = tree("hidden");
+        let menu = browsing(&home, ".");
+        assert_eq!(labels(&menu), [".config"]);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn tab_completes_the_selected_directory_and_enter_on_open_runs_it() {
+        let home = tree("complete");
+        let mut menu = browsing(&home, "pro");
+        menu.key(MenuKey::Tab);
+        assert_eq!(menu.query, "~/projects/");
+        menu.key(MenuKey::Down);
+        menu.key(MenuKey::Enter);
+        assert_eq!(menu.query, "~/projects/decade/");
+        let open = Action::NewWorkspace(home.join("projects/decade/"));
+        assert_eq!(menu.key(MenuKey::Enter), Outcome::Run(open));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn escape_leaves_new_workspace_with_an_empty_query() {
+        let home = tree("escape");
+        let mut menu = browsing(&home, "projects/");
+        assert_eq!(menu.key(MenuKey::Escape), Outcome::Open);
+        assert_eq!(menu.query, "");
+        assert_eq!(labels(&menu), ["Launch", "New workspace", "Settings"]);
+        std::fs::remove_dir_all(home).unwrap();
     }
 }

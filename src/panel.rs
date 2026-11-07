@@ -32,7 +32,7 @@ impl Panel {
                 return PanelOutcome::Changed;
             }
             MenuKey::Escape | MenuKey::Backspace => return PanelOutcome::Close,
-            MenuKey::Enter | MenuKey::Char(_) => {}
+            MenuKey::Enter | MenuKey::Tab | MenuKey::Char(_) => {}
         }
         PanelOutcome::Open
     }

@@ -538,7 +538,7 @@ impl Layout {
         None
     }
 
-    pub fn draw(&self, scene: &mut Scene) {
+    pub fn draw(&self, scene: &mut Scene, workspace: &str) {
         for pane in self.visible() {
             if self.dragging == Some(pane.id) {
                 continue;
@@ -569,7 +569,7 @@ impl Layout {
             .map(|pane| pane.name.as_str())
             .unwrap_or("");
         let zoom = if self.zoom.is_some() { "  zoom" } else { "" };
-        let status = format!(" decade  {focused}{zoom}  Super+Shift+Space palette");
+        let status = format!(" {workspace}  {focused}{zoom}  Super+Shift+Space palette");
         scene.text(0, status_row, &status, FOREGROUND);
     }
 
@@ -1200,7 +1200,7 @@ mod tests {
         layout.dragging = Some(0);
         let font = crate::text::Font::load(14.0);
         let mut chrome = Scene::new(&font);
-        layout.draw(&mut chrome);
+        layout.draw(&mut chrome, "decade");
         let waiting = chrome.shapes.iter().any(|shape| {
             matches!(shape, crate::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
         });

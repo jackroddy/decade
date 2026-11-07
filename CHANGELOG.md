@@ -16,6 +16,11 @@ command line and what the tool writes.
   own panes. A new server starts one workspace in the home directory, named
   after that directory, with one terminal. Programs decade starts run in
   their workspace's directory, with its name in `DECADE_WORKSPACE`.
+- New workspace in the palette takes a path, starting at `~/`, and lists
+  the directories that complete it. Tab or Enter on a directory completes
+  it, and Open creates a workspace there and shows it. The workspace takes
+  the directory's name, with a count after it when that name is taken. The
+  status line shows the name of the workspace on screen.
 - Panes are a split tree. A new window with no anchor of its own, or
   Super+Shift+Return, splits the focused pane along its longer side; a pane
   made that way closes when its client exits.

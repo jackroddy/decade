@@ -100,7 +100,7 @@ use crate::panes::{
 use crate::settings::{self, Settings};
 use crate::text::Font;
 use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
-use crate::workspace::Workspace;
+use crate::workspace::{self, Workspace};
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
@@ -206,6 +206,7 @@ pub struct State {
     font: Font,
     texts: TextCache,
     workspaces: Vec<Workspace>,
+    next_workspace: u32,
     unplaced: Vec<ToplevelSurface>,
     menu_font: Font,
     rounded: GlesPixelProgram,
@@ -379,10 +380,9 @@ pub fn run() {
         None => Settings::default(),
     };
     let font = Font::load(settings.font_size * scale as f32);
-    let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from);
     let workspace = Workspace::new(
         0,
-        home,
+        workspace::home(),
         size.w as u32 / font.cell_width,
         size.h as u32 / font.cell_height,
     );
@@ -524,6 +524,7 @@ pub fn run() {
         menu_font: Font::load(settings.palette_size * scale as f32),
         rounded,
         workspaces: vec![workspace],
+        next_workspace: 1,
         unplaced: Vec::new(),
         menu: None,
         panel: None,
@@ -861,6 +862,26 @@ impl State {
             self.workspace_shown();
         }
         self.request_redraw();
+    }
+
+    fn new_workspace(&mut self, cwd: PathBuf) {
+        let id = self.next_workspace;
+        self.next_workspace += 1;
+        let columns = self.size.w as u32 / self.font.cell_width;
+        let rows = self.size.h as u32 / self.font.cell_height;
+        let mut created = Workspace::new(id, cwd, columns, rows);
+        let taken = self.workspaces.iter().map(|known| known.name.as_str());
+        created.name = workspace::unique_name(&created.name, taken);
+        self.workspaces.push(created);
+        self.router.add_pane("terminal".to_string());
+        self.spawn_terminal(self.workspaces.len() - 1, "terminal");
+        let viewers: Vec<usize> = self.welcomed().collect();
+        for viewer in viewers {
+            self.send(viewer, self.workspace_list());
+        }
+        if let Some(active) = self.active {
+            self.show(active, id);
+        }
     }
 
     fn workspace_shown(&mut self) {
@@ -1899,7 +1920,7 @@ impl State {
             }
             Key::NewPane => self.new_terminal_pane(),
             Key::Palette => {
-                self.menu = Some(Menu::new(apps::installed()));
+                self.menu = Some(Menu::new(apps::installed(), workspace::home()));
                 self.request_redraw();
             }
             Key::Menu(key) => {
@@ -1918,6 +1939,10 @@ impl State {
                         Some(Outcome::Run(Action::Launch(argv))) => {
                             self.menu = None;
                             self.launch(&argv);
+                        }
+                        Some(Outcome::Run(Action::NewWorkspace(cwd))) => {
+                            self.menu = None;
+                            self.new_workspace(cwd);
                         }
                         Some(Outcome::Run(Action::Settings)) => {
                             self.menu = None;
@@ -2250,7 +2275,7 @@ impl State {
         }
 
         let mut below = Scene::new(font);
-        layout.draw(&mut below);
+        layout.draw(&mut below, &workspaces[workspace].name);
         paint.scene(&mut elements, &below, Point::default(), None);
 
         let mut frame = paint
@@ -2494,6 +2519,7 @@ fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Key {
         keysyms::KEY_space if modifiers.logo => MenuKey::Escape,
         keysyms::KEY_Return | keysyms::KEY_KP_Enter => MenuKey::Enter,
         keysyms::KEY_BackSpace => MenuKey::Backspace,
+        keysyms::KEY_Tab => MenuKey::Tab,
         keysyms::KEY_Up => MenuKey::Up,
         keysyms::KEY_Down => MenuKey::Down,
         keysyms::KEY_Left => MenuKey::Left,
