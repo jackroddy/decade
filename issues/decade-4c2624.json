@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-07T21:36:22.882814753Z",
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.919739011Z",
-  "updated_at": "2026-11-07T21:21:22.882814753Z",
+  "updated_at": "2026-11-07T21:22:30.771117243Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "2c825f81",
+      "at": "2026-11-07T21:22:30.771116143Z",
+      "author": "Jack Roddy/575e4e76",
+      "text": "Implementation proposal, written 2026-11-07 for the next session. Jack approved starting this issue. The design in the body is Jack's. The items marked as Claude's proposal below still need his yes.\n\n## What exists\n\n- `Layout` in `src/panes.rs` is the one split tree, with panes, focus, zoom, bars and drag state. `State` in `src/compositor.rs` holds one `layout`.\n- `Layout::new` creates the chat, terminal and code anchors. `run` starts a terminal for the terminal anchor, plus `--chat` and `--code` commands when given.\n- `Router` in `src/channel.rs` addresses panes by bare name. `DECADE_PANE` holds the bare name. The MCP tools in `src/mcp.rs` (`focus`, `panes`, `code.*`) use bare names. `docs/protocol.md` documents them.\n- A viewer's `show` message is answered with `showing 0`, and the workspace list is one entry, `decade`.\n\n## Steps\n\n1. Server state: replace the single `layout` with workspaces. Each holds an id, a name, a cwd and a `Layout`, in creation order. Each viewer records which workspace it shows. A new viewer shows the first workspace. `render` draws the viewer's workspace. Input from a viewer acts on the workspace that viewer shows. The active viewer's size still sets the output size, and every workspace's layout uses that size.\n2. Start state: `Layout::new` makes one transient pane named `terminal`, and `run` starts ghostty in it with the home directory as cwd. The three anchors, `--chat` and `--code` go. `main.rs`'s usage loses the flags. This is a command-line change, recorded under `### Removed` in the changelog.\n3. Working directory: `spawn_terminal` and `launch` start programs in the workspace's cwd, and set `DECADE_WORKSPACE` to the workspace name.\n4. New workspace: a \"New workspace\" row in the palette. Claude's proposal for the flow: the query becomes a path, starting at `~/`. The rows are the subdirectories that match the last path component. Enter or Tab on a row completes it into the query. A first row \"Open <path>\" creates the workspace and shows it in this viewer. The name is the directory's base name, with \" 2\", \" 3\" and so on when it is taken.\n5. Closing: \"Close workspace\" in the palette asks for confirmation, then closes every pane in it with `send_close`. When the last pane is gone the workspace goes. Viewers that showed it move to the first remaining workspace. When the last workspace closes, a new home workspace takes its place. Claude's proposal: the server never exits for lack of workspaces.\n6. Wire: `workspaces` lists every workspace with its id and name, in creation order, whenever the list changes. `show` switches the viewer and is answered with `showing`. The viewer side needs nothing new until the picker.\n7. Addresses: pane names are unique within a workspace. The router, the pane socket and the MCP tools take `workspace/pane`. A bare name means the pane in the sender's own workspace, for a pane program, or the active viewer's workspace, for the MCP agent. Claude's proposal for that bare-name rule needs Jack's yes. `docs/protocol.md` changes to match. It is a protocol change, so both crates' versions move at the next release under CLAUDE.md.\n8. Status line: it shows the workspace name where it now shows `decade`.\n\n## Checks\n\n- Unit tests in `src/panes.rs`, or in a new workspaces module, for unique names, the cwd of new panes, and closing the last workspace.\n- On headless-dev: start the viewer with `--class decade-dev`, create a second workspace through the palette (keys cannot be sent from a script, so a test hook or Jack is needed for that step), switch with a `show` sent by a small test client over the wire, and take screenshots with `scripts/devscreen shot`.\n- Jack checks the palette flow by hand.\n\n## Not in this issue\n\n- The Super+Tab picker is decade-d2f047. Until it lands, the only ways to switch are the new-workspace flow and `show` over the wire.\n- Templates are decade-59930c.",
+      "commit": "d1be0b5",
+      "branch": "sessions"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "60ddbe2",
