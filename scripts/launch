@@ -1,0 +1,29 @@
+#!/bin/sh
+# Build decade if its source changed, then run it. Called as decade it runs
+# the release build; called as decade-dev it runs the debug build. A failed
+# build is reported with notify-send, since a launch from the app menu has
+# no terminal.
+
+set -u
+
+PATH=$HOME/.cargo/bin:$PATH
+repo=$(dirname "$(dirname "$(readlink -f "$0")")")
+
+case $(basename "$0") in
+decade-dev)
+    profile=debug
+    flags=
+    ;;
+*)
+    profile=release
+    flags=--release
+    ;;
+esac
+
+cd "$repo" || exit 1
+if ! log=$(cargo build -q $flags 2>&1); then
+    printf '%s\n' "$log" >&2
+    notify-send -u critical "decade did not build" "$(printf '%s\n' "$log" | tail -n 8)"
+    exit 1
+fi
+exec "$repo/target/$profile/decade" "$@"
