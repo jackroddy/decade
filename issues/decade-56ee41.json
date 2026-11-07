@@ -3,26 +3,29 @@
   "title": "A dev command scripts input to a server and saves the frame it draws",
   "body": "Checking a UI change today takes Jack restarting decade and describing what he sees. A headless viewer on headless-dev (`scripts/devscreen`) can be screenshotted, but anything that appears only on input (the palette, the picker, the Ctrl bar, the settings panel, zoom) cannot be reached: Hyprland's `sendshortcut` did not deliver decade's chords, and `wtype` types into whichever window has the seat's focus, which may be one of Jack's.\n\n## Proposal\n\nA dev command connects to a server's viewer socket as a viewer, sends a scripted list of keys and pointer events in the protocol's own messages (`docs/viewer.md`), waits for the next frame, and writes it to a PNG. It needs no Hyprland window and no seat focus. Run against an isolated server (its own `XDG_RUNTIME_DIR` and `XDG_STATE_HOME`), it cannot touch Jack's.\n\n## Open\n\n- The script's syntax: one key chord or pointer action per line is the lean.\n- How the tool reads back a dmabuf frame into pixels for the PNG.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-492261",
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/6b9cbed5",
-  "lease_expires": "2026-11-07T23:46:59.068355857Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T23:31:39.660924417Z",
-  "updated_at": "2026-11-07T23:31:59.068355857Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T23:38:09.299513011Z",
+  "closed_at": "2026-11-07T23:38:09.299513011Z",
+  "close_reason": "Landed in 07bbc2b. The script commands are listed in the changelog entry, and CLAUDE.md tells Claude to use it against an isolated server.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "bc045c7",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "5ff3640",
+      "branch": "sessions"
+    }
   }
 }
