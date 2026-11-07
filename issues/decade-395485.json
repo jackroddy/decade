@@ -1,0 +1,28 @@
+{
+  "id": "decade-395485",
+  "title": "Panes are a split tree with anchored and transient panes",
+  "body": "`src/panes.rs` holds three fixed rectangles and a focused index. A new window\ntakes the first free pane whose app id matches, and a pane whose client exits\nkeeps its rectangle.\n\n## Proposal\n\nA binary split tree: a leaf is a pane, a node is a horizontal or vertical\nsplit with a ratio. `arrange` walks it over the body and gives every pane a\ncell rectangle whose outer ring is its outline; the client gets the inside.\n\nTwo kinds of pane. An anchor has a name and a rule, today an app id, and\nstays as an empty slot saying \"waiting for <rule>\" when its client exits.\nA transient pane is removed when its client exits and its sibling takes the\nspace. The three panes of today become anchors for `decade.chat`,\n`decade.terminal` and `decade.code`.\n\nPlacement at a window's first commit: the empty anchor whose rule matches\nthe app id; otherwise a new transient pane split off the focused pane along\nits longer side. Ctrl+Shift+Enter makes a transient pane the same way and\nstarts a shell in it, named terminal2, terminal3 and so on; the ghostty is\nstarted with that name as its class so it lands there.\n\nThe router addresses panes by name rather than index, since indices move\nwhen the tree changes.\n\n## Out of scope\n\n- Rules other than an app id. Wildcard and typed rules come with anchors\n  over MCP.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-1b6bb6",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-07T05:07:44.93516165Z",
+  "updated_at": "2026-11-07T05:07:44.93516165Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "9494070",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
