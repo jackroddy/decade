@@ -5,21 +5,22 @@ use crate::draw::{Face, Scene};
 use crate::palette;
 use crate::text::Font;
 
-pub const MENU_PX: f32 = 20.0;
 const WIDTH: i32 = 22;
 const APP_ICON: char = '\u{f08c6}';
 const MAX_ROWS: usize = 10;
-const BOX: [f32; 4] = palette::DARK_BACKGROUND;
-const BORDER: [f32; 4] = palette::ACCENT;
-const TEXT: [f32; 4] = palette::FOREGROUND;
-const DIM: [f32; 4] = palette::LIGHT_FOREGROUND;
-const SELECTED: [f32; 4] = palette::ACCENT;
-const SELECTED_TEXT: [f32; 4] = palette::DARK_BACKGROUND;
+pub const BOX: [f32; 4] = palette::DARK_BACKGROUND;
+pub const BORDER: [f32; 4] = palette::ACCENT;
+pub const TEXT: [f32; 4] = palette::FOREGROUND;
+pub const DIM: [f32; 4] = palette::LIGHT_FOREGROUND;
+pub const SELECTED: [f32; 4] = palette::ACCENT;
+pub const SELECTED_TEXT: [f32; 4] = palette::DARK_BACKGROUND;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuKey {
     Up,
     Down,
+    Left,
+    Right,
     Enter,
     Escape,
     Backspace,
@@ -29,6 +30,7 @@ pub enum MenuKey {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Action {
     Launch(Vec<String>),
+    Settings,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -62,15 +64,6 @@ impl Row {
         }
     }
 
-    fn note(label: &str) -> Row {
-        Row {
-            icon: ' ',
-            label: label.to_string(),
-            submenu: None,
-            action: None,
-        }
-    }
-
     fn action(icon: char, label: &str, action: Action) -> Row {
         Row {
             icon,
@@ -87,15 +80,13 @@ impl Row {
 
 impl Menu {
     pub fn new(apps: Vec<App>) -> Menu {
-        let soon = || vec![Row::note("coming soon")];
         let launch = apps
             .into_iter()
             .map(|app| Row::action(APP_ICON, &app.name, Action::Launch(app.argv)))
             .collect();
         let rows = vec![
             Row::submenu('\u{f003b}', "Launch", launch),
-            Row::submenu('\u{f0570}', "Layout", soon()),
-            Row::submenu('\u{f0493}', "Settings", soon()),
+            Row::action('\u{f0493}', "Settings", Action::Settings),
         ];
         Menu {
             root: rows,
@@ -138,6 +129,7 @@ impl Menu {
                 self.selected = 0;
             }
             MenuKey::Escape => return self.up(),
+            MenuKey::Left | MenuKey::Right => {}
             MenuKey::Enter => return self.enter(),
         }
         Outcome::Open
@@ -238,11 +230,11 @@ mod tests {
         let mut menu = Menu::new(Vec::new());
         menu.key(MenuKey::Char('l'));
         menu.key(MenuKey::Char('a'));
-        assert_eq!(labels(&menu), ["Launch", "Layout"]);
+        assert_eq!(labels(&menu), ["Launch"]);
         menu.key(MenuKey::Char('y'));
-        assert_eq!(labels(&menu), ["Layout"]);
+        assert_eq!(labels(&menu), Vec::<&str>::new());
         menu.key(MenuKey::Backspace);
-        assert_eq!(labels(&menu), ["Launch", "Layout"]);
+        assert_eq!(labels(&menu), ["Launch"]);
     }
 
     #[test]
@@ -253,7 +245,7 @@ mod tests {
         for _ in 0..5 {
             menu.key(MenuKey::Down);
         }
-        assert_eq!(menu.selected, 2);
+        assert_eq!(menu.selected, 1);
     }
 
     #[test]
@@ -274,9 +266,8 @@ mod tests {
     #[test]
     fn enter_opens_a_submenu_and_escape_goes_up_then_closes() {
         let mut menu = Menu::new(Vec::new());
-        menu.key(MenuKey::Down);
         menu.key(MenuKey::Enter);
-        assert_eq!(menu.path, [1]);
+        assert_eq!(menu.path, [0]);
         assert_eq!(menu.key(MenuKey::Escape), Outcome::Open);
         assert!(menu.path.is_empty());
         assert_eq!(menu.key(MenuKey::Escape), Outcome::Close);

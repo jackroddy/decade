@@ -2,7 +2,6 @@ use swash::scale::{Render, ScaleContext, Source};
 use swash::{CacheKey, FontRef};
 
 pub const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
-pub const FONT_PX: f32 = 14.0;
 
 pub struct Font {
     data: Vec<u8>,
@@ -128,7 +127,7 @@ mod tests {
 
     #[test]
     fn a_run_covers_its_cells_and_any_glyph_that_overflows_them() {
-        let font = Font::load(FONT_PX);
+        let font = Font::load(14.0);
         let mut context = ScaleContext::new();
         let run = raster_run(&mut context, &font, "ab", [1.0; 4]);
         assert!(run.width >= 2 * font.cell_width as i32);

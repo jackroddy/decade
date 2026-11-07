@@ -80,18 +80,16 @@ use crate::apps;
 use crate::channel::{Host, Out, Router};
 use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::mcp;
-use crate::menu::{Action, MENU_PX, Menu, MenuKey, Outcome};
+use crate::menu::{Action, Menu, MenuKey, Outcome};
 use crate::palette::ACCENT;
+use crate::panel::{Panel, PanelOutcome};
 use crate::panes::{BACKGROUND, BarButton, Boundary, Direction, Kind as PaneKind, Layout, Pane};
-use crate::text::{FONT_PX, Font};
+use crate::settings::{self, Settings};
+use crate::text::Font;
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const AGENT_CLIENT: usize = usize::MAX;
-const BAR_HOLD: Duration = Duration::from_millis(50);
 const BTN_LEFT: u32 = 0x110;
-const GHOST_SCALE: f64 = 0.2;
-const GHOST_ALPHA: f32 = 0.8;
-const GRAB_ANIMATION: Duration = Duration::from_millis(50);
 
 enum Drag {
     Boundary(Boundary),
@@ -153,6 +151,9 @@ pub struct State {
     menu_font: Font,
     rounded: GlesPixelProgram,
     menu: Option<Menu>,
+    panel: Option<Panel>,
+    settings: Settings,
+    settings_path: Option<PathBuf>,
     pointer: Point<f64, Logical>,
     drag: Option<Drag>,
     ctrl_timer: Option<RegistrationToken>,
@@ -221,7 +222,20 @@ pub fn run(commands: Commands) {
     seat.add_keyboard(Default::default(), 200, 25).unwrap();
     seat.add_pointer();
 
-    let font = Font::load(FONT_PX * scale as f32);
+    let mut settings_path = settings::path();
+    let settings = match settings_path.as_deref().map(settings::load) {
+        Some(Ok(settings)) => settings,
+        Some(Err(error)) => {
+            let path = settings_path.take().unwrap_or_default();
+            eprintln!(
+                "decade: {} could not be read, so decade uses the defaults and will not write it: {error}",
+                path.display()
+            );
+            Settings::default()
+        }
+        None => Settings::default(),
+    };
+    let font = Font::load(settings.font_size * scale as f32);
     let layout = Layout::new(
         size.w as u32 / font.cell_width,
         size.h as u32 / font.cell_height,
@@ -326,11 +340,14 @@ pub fn run(commands: Commands) {
         children: Vec::new(),
         font,
         texts: TextCache::new(),
-        menu_font: Font::load(MENU_PX * scale as f32),
+        menu_font: Font::load(settings.palette_size * scale as f32),
         rounded,
         layout,
         unplaced: Vec::new(),
         menu: None,
+        panel: None,
+        settings,
+        settings_path,
         pointer: (0.0, 0.0).into(),
         drag: None,
         ctrl_timer: None,
@@ -516,8 +533,8 @@ impl State {
         let rescaled = scale != self.scale;
         if rescaled {
             self.scale = scale;
-            self.font = Font::load(FONT_PX * scale as f32);
-            self.menu_font = Font::load(MENU_PX * scale as f32);
+            self.font = Font::load(self.settings.font_size * scale as f32);
+            self.menu_font = Font::load(self.settings.palette_size * scale as f32);
             self.texts.clear();
             for pane in &self.layout.panes {
                 if let Some(toplevel) = &pane.toplevel {
@@ -650,7 +667,7 @@ impl State {
 
     fn ctrl_pressed(&mut self) {
         self.cancel_ctrl_timer();
-        let timer = Timer::from_duration(BAR_HOLD);
+        let timer = Timer::from_duration(Duration::from_millis(self.settings.bar_hold_ms));
         self.ctrl_timer = self
             .loop_handle
             .insert_source(timer, |_, _, state| {
@@ -771,7 +788,7 @@ impl State {
     ) {
         let keyboard = self.seat.get_keyboard().unwrap();
         let pressed = event.state() == KeyState::Pressed;
-        let palette = self.menu.is_some();
+        let palette = self.menu.is_some() || self.panel.is_some();
         let mut control_key = false;
         let key = keyboard.input::<Key, _>(
             self,
@@ -822,18 +839,51 @@ impl State {
                 self.backend.window().request_redraw();
             }
             Some(Key::Menu(key)) => {
-                let outcome = self.menu.as_mut().map(|menu| menu.key(key));
-                match outcome {
-                    Some(Outcome::Open) | None => {}
-                    Some(Outcome::Close) => self.menu = None,
-                    Some(Outcome::Run(Action::Launch(argv))) => {
-                        self.menu = None;
-                        self.launch(&argv);
+                if let Some(panel) = &mut self.panel {
+                    let before = self.settings;
+                    match panel.key(key, &mut self.settings) {
+                        PanelOutcome::Open => {}
+                        PanelOutcome::Close => self.panel = None,
+                        PanelOutcome::Changed => self.settings_changed(before),
+                    }
+                } else {
+                    let outcome = self.menu.as_mut().map(|menu| menu.key(key));
+                    match outcome {
+                        Some(Outcome::Open) | None => {}
+                        Some(Outcome::Close) => self.menu = None,
+                        Some(Outcome::Run(Action::Launch(argv))) => {
+                            self.menu = None;
+                            self.launch(&argv);
+                        }
+                        Some(Outcome::Run(Action::Settings)) => {
+                            self.menu = None;
+                            self.panel = Some(Panel::new());
+                        }
                     }
                 }
                 self.backend.window().request_redraw();
             }
             Some(Key::Swallow) | None => {}
+        }
+    }
+
+    fn settings_changed(&mut self, before: Settings) {
+        if let Some(path) = &self.settings_path
+            && let Err(error) = settings::save(path, &self.settings)
+        {
+            eprintln!("decade: could not write {}: {error}", path.display());
+        }
+        let fonts = (self.settings.font_size, self.settings.palette_size);
+        if fonts != (before.font_size, before.palette_size) {
+            self.font = Font::load(self.settings.font_size * self.scale as f32);
+            self.menu_font = Font::load(self.settings.palette_size * self.scale as f32);
+            self.texts.clear();
+            let size = self.backend.window_size();
+            self.layout.resize(
+                size.w as u32 / self.font.cell_width,
+                size.h as u32 / self.font.cell_height,
+            );
+            self.relayout();
         }
     }
 
@@ -1002,6 +1052,8 @@ impl State {
             drag,
             pointer,
             menu,
+            panel,
+            settings,
             rounded,
             ..
         } = self;
@@ -1025,6 +1077,12 @@ impl State {
             let origin = ((size.w - box_size.w) / 2, (size.h - box_size.h) / 3).into();
             paint.scene(&mut elements, &scene, origin, None);
         }
+        if let Some(panel) = panel {
+            let mut scene = Scene::new(paint.menu_font);
+            let box_size = panel.draw(&mut scene, paint.menu_font, settings);
+            let origin = ((size.w - box_size.w) / 2, (size.h - box_size.h) / 3).into();
+            paint.scene(&mut elements, &scene, origin, None);
+        }
 
         let mut animating = false;
         let dragged = match drag {
@@ -1034,13 +1092,18 @@ impl State {
             _ => None,
         };
         if let Some((pane, grab, start)) = dragged {
-            let t = (start.elapsed().as_secs_f64() / GRAB_ANIMATION.as_secs_f64()).min(1.0);
+            let animation = Duration::from_millis(settings.grab_ms).as_secs_f64();
+            let t = if animation > 0.0 {
+                (start.elapsed().as_secs_f64() / animation).min(1.0)
+            } else {
+                1.0
+            };
             animating = t < 1.0;
             let eased = 1.0 - (1.0 - t).powi(3);
             let shrink = Shrink {
                 about: pointer.to_physical(scale).to_i32_round(),
-                scale: 1.0 + (GHOST_SCALE - 1.0) * eased,
-                alpha: 1.0 + (GHOST_ALPHA - 1.0) * eased as f32,
+                scale: 1.0 + (settings.ghost_scale - 1.0) * eased,
+                alpha: 1.0 + (settings.ghost_opacity - 1.0) * eased as f32,
             };
             let origin = shrink.about - grab;
             let cell: Point<i32, Physical> =
@@ -1287,6 +1350,10 @@ fn menu_key(pressed: bool, ctrl: bool, sym: Keysym) -> Key {
         keysyms::KEY_BackSpace => MenuKey::Backspace,
         keysyms::KEY_Up => MenuKey::Up,
         keysyms::KEY_Down => MenuKey::Down,
+        keysyms::KEY_Left => MenuKey::Left,
+        keysyms::KEY_Right => MenuKey::Right,
+        keysyms::KEY_h if ctrl => MenuKey::Left,
+        keysyms::KEY_l if ctrl => MenuKey::Right,
         keysyms::KEY_k if ctrl => MenuKey::Up,
         keysyms::KEY_j if ctrl => MenuKey::Down,
         _ if ctrl => return Key::Swallow,

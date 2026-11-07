@@ -5,7 +5,9 @@ mod draw;
 mod mcp;
 mod menu;
 mod palette;
+mod panel;
 mod panes;
+mod settings;
 mod text;
 
 fn main() {
