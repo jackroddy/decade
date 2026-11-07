@@ -3,7 +3,7 @@
   "title": "Agent channel",
   "body": "The wiring that makes decade more than a compositor. A decade-aware app\ntalks to decade over a unix socket, and the agent chat drives panes from\nwhat it sees in the agent's ACP session. Nothing here exists yet; decade at\ncommit 7932094 is a compositor with chrome and one ghostty pane.\n\nTwo kinds of pane action, by who intends them:\n\n| Kind | Who drives | Needs |\n|---|---|---|\n| Follow along | the chat, from typed ACP events | the socket and a code pane |\n| Agent-driven | the agent, from an intention a tool call cannot imply | an MCP server exposing decade's verbs |\n\nFollow along is deterministic: each ACP event maps to a pane action by a\nfixed rule with no model in the loop. Agent-driven covers the residue, such\nas highlighting only the lines that matter or drawing a diagram, and comes\nlast.\n\n## Pieces\n\n| Issue | Role |\n|---|---|\n| socket protocol | framing, handshake, pane addressing, the first messages |\n| code pane | the first decade-aware client: show a file, go to a line, mark lines |\n| follow along | the chat emits pane messages from ACP tool calls and file requests |\n| MCP server | decade's verbs as tools the agent can call |\n\nThey belong together because each is useless alone and the socket is the\ncontract between all of them.\n\n## Out of scope\n\n- The chat TUI itself. It is its own repository, unnamed as of 2026-11-06.\n- A remote-machine protocol. It rides on the socket once that exists.",
   "type": "milestone",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T01:47:21.29259868Z",
-  "updated_at": "2026-11-07T04:04:23.214458452Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-07T04:18:15.920987664Z",
+  "closed_at": "2026-11-07T04:18:15.920987664Z",
+  "close_reason": "All four pieces landed on 2026-11-06: the socket, the code pane (in decade-apps), follow-along (parked by Jack's call), and decade as an MCP server. The agent channel exists end to end: a pane program speaks the socket, an agent speaks MCP to decade, and decade is the only thing that speaks both.",
+  "resolution": "done",
   "notes": [
     {
       "id": "673da420",
@@ -40,6 +40,9 @@
       "commit": "7932094",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "9494070",
+      "branch": "dev"
+    }
   }
 }
