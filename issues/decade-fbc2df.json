@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T20:50:19.482486754Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:39:08.735009614Z",
-  "updated_at": "2026-11-08T20:35:19.482486754Z",
+  "updated_at": "2026-11-08T20:38:08.034621392Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "84e9b2f9",
+      "at": "2026-11-08T20:38:08.034620602Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "The proposal had one `act` that closes the overlay and then runs the action. Three actions keep the overlay open in the existing behaviour: a settings change keeps the panel, and a workspace closed or moved in the picker keeps the picker. The palette's Close workspace closes the palette. So `menu::Outcome` has two variants that carry an action. `Run(Action)` closes the overlay first, and `Apply(Action)` leaves it open. The picker's New became `Action::StartNewWorkspace`, its Show became `Action::ShowWorkspace`, its Move became `Action::MoveWorkspace`, and the panel's Changed became `Action::ChangeSettings(Settings)`.",
+      "commit": "781975d",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
