@@ -3,7 +3,7 @@
   "title": "Tests that repeat each other or their module's own code",
   "body": "- `wire.rs`: `every_*_message_survives_encoding_and_decoding` is the `split = len` case of `*_messages_decode_when_the_bytes_split_at_any_offset`. `encode_viewer` and `encode_server`, and `drain_viewer` and `drain_server`, are identical pairs. `a_complete_message_whose_fds_have_not_arrived_is_an_error` and `a_buffer_with_fewer_fds_queued_than_planes_is_an_error` assert `MissingFds` from the same path.\n- `save.rs`: the tests build `toml::to_string(&File { version: VERSION, .. })` four times beside the same build in `save()`.\n- `panes.rs`: four tests repeat `Font::load(14.0)`, `Scene::new`, draw, collect texts.\n- `scratch.rs` and `save.rs`: both spawn `sh -c`, poll 100 times at 20 ms, then kill and wait. `first_child` in `scratch.rs` repeats the children read in `shell_cwd`.\n- `compositor.rs`: `crossed` has a four-assert test on `u32 <`.\n\nAbout 100 lines.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T21:18:46.567847597Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:41:30.935558483Z",
-  "updated_at": "2026-11-08T21:03:46.567847597Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T21:05:56.433727827Z",
+  "closed_at": "2026-11-08T21:05:56.433727827Z",
+  "close_reason": "Done in 5ee072b, re-surveyed on the current tree. wire.rs shares encode and decode_split_anywhere and drops three covered tests, save.rs gets to_text, panes.rs gets drawn_texts and workspace.rs gets at_home. The proc test half landed in 8de4c11, and the crossed test no longer exists.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "5ee072b",
+      "branch": "simplify"
+    }
   }
 }
