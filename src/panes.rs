@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use smithay::wayland::shell::xdg::ToplevelSurface;
+use smithay::wayland::compositor::with_states;
+use smithay::wayland::shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData};
 
 use crate::draw::{Face, Scene};
 use crate::frame::fit;
@@ -98,12 +99,49 @@ pub enum Kind {
     Transient,
 }
 
+/// One window in a pane, shown as one of the pane's tabs.
+pub struct Client {
+    pub toplevel: ToplevelSurface,
+    pub app_id: Option<String>,
+    pub pid: Option<u32>,
+
+    /// Whether decade started the client as a terminal tab of the pane.
+    pub terminal_tab: bool,
+}
+
+impl Client {
+    /// The client's title, or the last part of its app id.
+    fn label(&self) -> Option<String> {
+        let title = with_states(self.toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().unwrap().title.clone())
+        });
+        title.filter(|title| !title.is_empty()).or_else(|| {
+            let app_id = self.app_id.as_deref()?;
+            Some(app_id.rsplit('.').next().unwrap_or(app_id).to_string())
+        })
+    }
+}
+
 pub struct Pane {
     pub id: usize,
     pub name: String,
     pub kind: Kind,
     pub rect: CellRect,
-    pub toplevel: Option<ToplevelSurface>,
+
+    /// The pane's tabs, one window each.
+    pub clients: Vec<Client>,
+
+    /// The index in `clients` of the tab drawn.
+    pub shown: usize,
+
+    /// The number in the app id of the next terminal tab decade starts.
+    pub next_tab: u32,
+
+    /// The directories of the terminal tabs to start for a restored pane.
+    pub saved_tabs: Vec<PathBuf>,
 
     /// The app id of the last client in the pane.
     pub app_id: Option<String>,
@@ -118,7 +156,24 @@ pub struct Pane {
 impl Pane {
     /// Whether the pane is a pinned terminal whose shell has exited.
     pub fn restartable(&self) -> bool {
-        self.toplevel.is_none() && self.cwd.is_some() && matches!(self.kind, Kind::Anchor { .. })
+        self.clients.is_empty() && self.cwd.is_some() && matches!(self.kind, Kind::Anchor { .. })
+    }
+
+    /// The window of the tab drawn.
+    pub fn toplevel(&self) -> Option<&ToplevelSurface> {
+        self.clients.get(self.shown).map(|client| &client.toplevel)
+    }
+
+    /// Show the next tab, or the previous one, wrapping at the ends.
+    pub fn step_tab(&mut self, forward: bool) {
+        self.shown = stepped(self.shown, self.clients.len(), forward);
+    }
+
+    /// Remove the tab at `index`, showing the tab after it, or the one
+    /// before it when it was the last.
+    pub fn remove_client(&mut self, index: usize) {
+        self.clients.remove(index);
+        self.shown = shown_after_removal(self.shown, index, self.clients.len());
     }
 
     pub fn new(id: usize, name: String, kind: Kind) -> Pane {
@@ -127,7 +182,10 @@ impl Pane {
             name,
             kind,
             rect: CellRect::EMPTY,
-            toplevel: None,
+            clients: Vec::new(),
+            shown: 0,
+            next_tab: 2,
+            saved_tabs: Vec::new(),
             app_id: None,
             cwd: None,
             pid: None,
@@ -284,11 +342,7 @@ impl Layout {
     }
 
     pub fn client_rect(&self, pane: &Pane) -> CellRect {
-        let inner = pane.rect.inner();
-        if inner.rows < 1 {
-            return CellRect::EMPTY;
-        }
-        inner
+        client_area(pane.rect, pane.clients.len())
     }
 
     pub fn pane_at(&self, column: u32, row: u32) -> Option<usize> {
@@ -353,19 +407,35 @@ impl Layout {
         self.drag_boundary(&boundary, edge, edge);
     }
 
-    pub fn place(&self, app_id: Option<&str>, prefix: &str) -> Option<usize> {
+    /// The pane a new window with this app id goes in, and whether the
+    /// window is a terminal tab decade started for that pane.
+    pub fn place(&self, app_id: Option<&str>, prefix: &str) -> Option<(usize, bool)> {
         let app_id = app_id?;
+        if let Some(pane) = self
+            .panes
+            .iter()
+            .find(|pane| is_terminal_tab(app_id, prefix, &pane.name))
+        {
+            return Some((pane.id, true));
+        }
+
+        // a restored pane's own terminal can arrive after its tabs
+        if let Some(pane) = self.panes.iter().find(|pane| {
+            app_id.strip_prefix(prefix) == Some(&pane.name)
+                && pane.clients.iter().all(|client| client.terminal_tab)
+        }) {
+            return Some((pane.id, false));
+        }
         self.panes
             .iter()
             .find(|pane| {
-                pane.toplevel.is_none()
-                    && (app_id.strip_prefix(prefix) == Some(&pane.name)
-                        || match &pane.kind {
-                            Kind::Anchor { app_id: wanted } => wanted == app_id,
-                            Kind::Transient => pane.app_id.as_deref() == Some(app_id),
-                        })
+                pane.clients.is_empty()
+                    && match &pane.kind {
+                        Kind::Anchor { app_id: wanted } => wanted == app_id,
+                        Kind::Transient => pane.app_id.as_deref() == Some(app_id),
+                    }
             })
-            .map(|pane| pane.id)
+            .map(|pane| (pane.id, false))
     }
 
     pub fn add_transient(&mut self, name: String) -> usize {
@@ -397,7 +467,8 @@ impl Layout {
             return;
         };
         if self.panes.len() == 1 {
-            self.panes[index].toplevel = None;
+            self.panes[index].clients.clear();
+            self.panes[index].shown = 0;
             return;
         }
         self.panes.remove(index);
@@ -572,6 +643,20 @@ impl Layout {
         None
     }
 
+    /// The pane and tab index of the tab label under the cell.
+    pub fn tab_hit(&self, column: u32, row: u32) -> Option<(usize, usize)> {
+        self.visible()
+            .filter(|pane| pane.clients.len() > 1)
+            .find_map(|pane| {
+                let inner = pane.rect.inner();
+                if inner.is_empty() || row != inner.row {
+                    return None;
+                }
+                let index = tab_at(inner, pane.clients.len(), column)?;
+                Some((pane.id, index))
+            })
+    }
+
     /// Draw every visible pane's outline and, for an empty pane, what it
     /// waits for; `scratch` names the workspace's scratch pane.
     pub fn draw(&self, scene: &mut Scene, scratch: Option<&str>) {
@@ -587,6 +672,7 @@ impl Layout {
             let scratched = scratch == Some(pane.name.as_str());
             self.draw_outline(scene, pane, outline, scratched);
             draw_waiting(scene, pane, pane.rect.inner(), scratched);
+            draw_strip(scene, pane, pane.rect.inner(), pane.id == self.focused);
         }
     }
 
@@ -661,6 +747,7 @@ impl Layout {
         };
         let scratched = scratch == Some(pane.name.as_str());
         draw_waiting(scene, pane, inner, scratched);
+        draw_strip(scene, pane, inner, pane.id == self.focused);
         if self.bar {
             self.draw_bar(scene, pane, inner, scratched);
         }
@@ -738,8 +825,106 @@ impl Layout {
     }
 }
 
+/// The row of tab labels at the top of a pane with more than one client.
+fn draw_strip(scene: &mut Scene, pane: &Pane, inner: CellRect, focused: bool) {
+    if pane.clients.len() < 2 || inner.is_empty() {
+        return;
+    }
+    scene.fill(CellRect { rows: 1, ..inner }, BAR);
+    let cells = tab_cells(inner.column, inner.columns, pane.clients.len());
+    for (index, (client, (column, width))) in pane.clients.iter().zip(cells).enumerate() {
+        let color = if index == pane.shown {
+            let (bg, fg) = if focused {
+                (BAR_FOCUSED, BAR_FOCUSED_TEXT)
+            } else {
+                (HOVER, FOREGROUND)
+            };
+            let cell = CellRect {
+                column,
+                row: inner.row,
+                columns: width,
+                rows: 1,
+            };
+            scene.fill(cell, bg);
+            fg
+        } else {
+            DIM
+        };
+        if width > 2 {
+            let label = client.label().unwrap_or_else(|| (index + 1).to_string());
+            let label = fit(&label, width as usize - 2);
+            scene.text(column + 1, inner.row, &label, color);
+        }
+    }
+}
+
+/// The start column and width of each of `count` tab labels sharing a row
+/// `columns` wide from `column`; the last takes the columns left over.
+fn tab_cells(column: u32, columns: u32, count: usize) -> impl Iterator<Item = (u32, u32)> {
+    let count = count as u32;
+    let width = columns / count.max(1);
+    (0..count).map(move |index| {
+        let start = column + index * width;
+        let end = if index + 1 == count {
+            column + columns
+        } else {
+            start + width
+        };
+        (start, end - start)
+    })
+}
+
+fn tab_at(inner: CellRect, count: usize, column: u32) -> Option<usize> {
+    tab_cells(inner.column, inner.columns, count)
+        .position(|(start, width)| column >= start && column < start + width)
+}
+
+/// The cells a pane's client fills: inside the outline, below the tab
+/// strip when the pane has more than one client.
+fn client_area(rect: CellRect, clients: usize) -> CellRect {
+    let inner = rect.inner();
+    let strip = u32::from(clients > 1);
+    if inner.rows <= strip {
+        return CellRect::EMPTY;
+    }
+    CellRect {
+        row: inner.row + strip,
+        rows: inner.rows - strip,
+        ..inner
+    }
+}
+
+fn stepped(shown: usize, count: usize, forward: bool) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    if forward {
+        (shown + 1) % count
+    } else {
+        (shown + count - 1) % count
+    }
+}
+
+fn shown_after_removal(shown: usize, removed: usize, remaining: usize) -> usize {
+    if removed < shown || shown >= remaining {
+        shown.saturating_sub(1)
+    } else {
+        shown
+    }
+}
+
+/// Whether the app id is `{prefix}{pane}.t{n}`, the class of a terminal
+/// decade starts as a tab of the pane.
+fn is_terminal_tab(app_id: &str, prefix: &str, pane: &str) -> bool {
+    app_id
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_prefix(pane))
+        .and_then(|rest| rest.strip_prefix(".t"))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
 fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool) {
-    if inner.is_empty() || pane.toplevel.is_some() {
+    if inner.is_empty() || !pane.clients.is_empty() {
         return;
     }
     let centered = |text: &str| inner.column + inner.columns.saturating_sub(text.len() as u32) / 2;
@@ -1286,7 +1471,7 @@ pub(crate) mod tests {
         let id = layout.add_transient("terminal2".to_string());
         assert_eq!(
             layout.place(Some("decade.w0.terminal2"), "decade.w0."),
-            Some(id)
+            Some((id, false))
         );
         assert_eq!(
             layout.place(Some("decade.w0.terminal3"), "decade.w0."),
@@ -1345,7 +1530,7 @@ pub(crate) mod tests {
         layout.pin(id, "org.gnome.Nautilus".to_string());
         assert_eq!(
             layout.place(Some("org.gnome.Nautilus"), "decade.w0."),
-            Some(id)
+            Some((id, false))
         );
         assert_eq!(layout.pane(id).unwrap().name, "nautilus");
     }
@@ -1480,5 +1665,94 @@ pub(crate) mod tests {
         let texts = texts(&scene);
         assert!(texts.iter().any(|text| text == "agents show things here"));
         assert!(!texts.iter().any(|text| text == "no client"));
+    }
+
+    #[test]
+    fn a_window_with_a_tab_class_goes_into_its_pane_even_when_the_pane_has_a_client() {
+        let mut layout = three_anchors();
+        let id = layout.add_transient("terminal2".to_string());
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal2.t2"), "decade.w0."),
+            Some((id, true))
+        );
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal.t13"), "decade.w0."),
+            Some((1, true))
+        );
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal2.t"), "decade.w0."),
+            None
+        );
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal3.t2"), "decade.w0."),
+            None
+        );
+        assert_eq!(
+            layout.place(Some("decade.w1.terminal2.t2"), "decade.w0."),
+            None
+        );
+    }
+
+    #[test]
+    fn showing_the_next_or_previous_tab_wraps_at_the_ends() {
+        assert_eq!(stepped(0, 3, true), 1);
+        assert_eq!(stepped(2, 3, true), 0);
+        assert_eq!(stepped(0, 3, false), 2);
+        assert_eq!(stepped(1, 3, false), 0);
+        assert_eq!(stepped(0, 1, true), 0);
+        assert_eq!(stepped(0, 0, false), 0);
+    }
+
+    #[test]
+    fn a_tab_whose_client_exits_hands_the_pane_to_a_neighbour() {
+        // shown is the middle of three and goes: the tab after it moves
+        // into its index
+        assert_eq!(shown_after_removal(1, 1, 2), 1);
+        // shown is the last and goes: the one before it
+        assert_eq!(shown_after_removal(2, 2, 2), 1);
+        // a tab before the shown one goes: the shown one keeps showing
+        assert_eq!(shown_after_removal(2, 0, 2), 1);
+        // a tab after the shown one goes
+        assert_eq!(shown_after_removal(0, 2, 2), 0);
+        assert_eq!(shown_after_removal(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn a_click_on_the_strip_picks_the_tab_whose_label_holds_the_column() {
+        let inner = CellRect {
+            column: 1,
+            row: 1,
+            columns: 10,
+            rows: 5,
+        };
+        let cells: Vec<(u32, u32)> = tab_cells(inner.column, inner.columns, 3).collect();
+        assert_eq!(cells, [(1, 3), (4, 3), (7, 4)]);
+        assert_eq!(tab_at(inner, 3, 1), Some(0));
+        assert_eq!(tab_at(inner, 3, 4), Some(1));
+        assert_eq!(tab_at(inner, 3, 10), Some(2));
+        assert_eq!(tab_at(inner, 3, 11), None);
+        assert_eq!(tab_at(inner, 3, 0), None);
+        let layout = three_anchors();
+        assert_eq!(layout.tab_hit(2, 1), None);
+    }
+
+    #[test]
+    fn a_pane_with_two_or_more_clients_gives_the_strip_its_top_row() {
+        let rect = CellRect {
+            column: 0,
+            row: 0,
+            columns: 20,
+            rows: 10,
+        };
+        let one = client_area(rect, 1);
+        assert_eq!(one, rect.inner());
+        assert_eq!(client_area(rect, 0), one);
+        let two = client_area(rect, 2);
+        assert_eq!(two.row, one.row + 1);
+        assert_eq!(two.rows, one.rows - 1);
+        assert_eq!((two.column, two.columns), (one.column, one.columns));
+        assert_eq!(client_area(rect, 3), two);
+        let short = CellRect { rows: 3, ..rect };
+        assert_eq!(client_area(short, 2), CellRect::EMPTY);
     }
 }

@@ -94,6 +94,10 @@ struct SavedPane {
     cwd: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     app_id: Option<String>,
+
+    /// The directory of each terminal tab decade started in the pane.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tabs: Vec<PathBuf>,
 }
 
 pub fn path() -> Option<PathBuf> {
@@ -183,7 +187,7 @@ fn saved_tab(layout: &Layout) -> SavedTab {
         .panes
         .iter()
         .map(|pane| {
-            let cwd = pane
+            let mut cwd = pane
                 .cwd
                 .as_ref()
                 .map(|cwd| pane.pid.and_then(shell_cwd).unwrap_or_else(|| cwd.clone()));
@@ -191,11 +195,24 @@ fn saved_tab(layout: &Layout) -> SavedTab {
                 Kind::Anchor { app_id } => (true, app_id.clone()),
                 Kind::Transient => (false, pane.app_id.clone().unwrap_or_default()),
             };
+            let mut tabs: Vec<PathBuf> = pane
+                .clients
+                .iter()
+                .filter(|client| client.terminal_tab)
+                .filter_map(|client| client.pid.and_then(shell_cwd).or_else(|| pane.cwd.clone()))
+                .collect();
+
+            // with the pane's own terminal gone, its first tab takes its
+            // place, so a restore starts as many terminals as are running
+            if cwd.is_some() && !tabs.is_empty() && tabs.len() == pane.clients.len() {
+                cwd = Some(tabs.remove(0));
+            }
             SavedPane {
                 name: pane.name.clone(),
                 pinned,
                 app_id: (cwd.is_none() && !app_id.is_empty()).then_some(app_id),
                 cwd,
+                tabs,
             }
         })
         .collect();
@@ -301,6 +318,7 @@ impl SavedTab {
                 let mut pane = Pane::new(id, saved.name.clone(), kind);
                 pane.cwd = saved.cwd.clone();
                 pane.app_id = saved.app_id.clone();
+                pane.saved_tabs = saved.tabs.clone();
                 pane
             })
             .collect();
@@ -419,7 +437,7 @@ mod tests {
         let layout = first_layout(&saved(&workspace));
         assert_eq!(
             layout.place(Some("org.gnome.Nautilus"), "decade.w0."),
-            Some(2)
+            Some((2, false))
         );
     }
 
@@ -565,5 +583,23 @@ cwd = "/tmp"
         std::fs::write(&path, "version = 9\n").unwrap();
         assert!(load(&path).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_directories_of_a_panes_terminal_tabs_read_back_onto_the_pane() {
+        let mut saved = saved(&workspace());
+        let tabs = vec![PathBuf::from("/tmp"), PathBuf::from("/home/jack")];
+        saved.tabs[0].panes[1].tabs = tabs.clone();
+        let text = toml::to_string(&File {
+            version: VERSION,
+            sidebar_open: true,
+            workspaces: vec![saved],
+        })
+        .unwrap();
+        let back = &read(&text).unwrap().workspaces[0];
+        let layout = first_layout(back);
+        assert_eq!(layout.pane(1).unwrap().saved_tabs, tabs);
+        assert!(layout.pane(0).unwrap().saved_tabs.is_empty());
+        assert!(!text.contains("tabs = []"));
     }
 }

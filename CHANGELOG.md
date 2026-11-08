@@ -138,6 +138,14 @@ command line and what the tool writes.
 - Under Hyprland, while decade's window is the only one on its workspace,
   Hyprland passes decade the keys it would otherwise take. Binds marked
   `dont_inhibit` keep working in Hyprland.
+- A pane holds tabs, and each tab holds one program. Super+Shift+T starts
+  a terminal as a new tab of the focused pane. The terminal starts in the
+  pane's directory, or in the workspace's when the pane has none.
+  Super+Shift+[ and Super+Shift+] show the previous and next tab. A pane
+  with more than one tab shows a row of labels at its top. A click on a
+  label shows that tab. When a tab's program exits, decade shows the tab
+  beside it. The x on the Ctrl bar closes the tab shown. decade saves the
+  directory of each terminal tab and starts those terminals again.
 
 ### Changed
 

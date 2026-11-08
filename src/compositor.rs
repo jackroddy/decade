@@ -96,7 +96,8 @@ use crate::menu::{Action, Menu, MenuKey, Outcome};
 use crate::palette::{self, ACCENT};
 use crate::panel::{Panel, PanelOutcome};
 use crate::panes::{
-    BACKGROUND, BarButton, Boundary, CellRect, Direction, Drop, Kind as PaneKind, Layout, Pane,
+    self as panes, BACKGROUND, BarButton, Boundary, CellRect, Direction, Drop, Kind as PaneKind,
+    Layout, Pane,
 };
 use crate::picker::{self, Grid, Picker};
 use crate::save;
@@ -163,6 +164,9 @@ enum Key {
     NewTab,
     PreviousTab,
     NextTab,
+    NewPaneTab,
+    PreviousPaneTab,
+    NextPaneTab,
     Palette,
     Picker,
     Restart,
@@ -547,6 +551,17 @@ pub fn run() {
         for (pane, cwd) in terminals {
             state.spawn_terminal(workspace, &pane, &cwd);
         }
+        let mut tabs = Vec::new();
+        for (tab, entry) in state.workspaces[workspace].tabs.iter_mut().enumerate() {
+            for pane in &mut entry.layout.panes {
+                for cwd in std::mem::take(&mut pane.saved_tabs) {
+                    tabs.push((tab, pane.id, cwd));
+                }
+            }
+        }
+        for (tab, id, cwd) in tabs {
+            state.spawn_pane_tab(workspace, tab, id, &cwd);
+        }
     }
     let every = Timer::from_duration(SAVE_EVERY);
     let _ = handle.insert_source(every, |_, _, state| {
@@ -677,19 +692,36 @@ impl State {
         }
     }
 
-    /// A ghostty whose window goes in the pane.
-    fn ghostty(&self, workspace: usize, pane: &str) -> Command {
+    /// A ghostty whose window goes in the pane, with the app id `class`
+    /// after the workspace's prefix.
+    fn ghostty(&self, workspace: usize, pane: &str, class: &str) -> Command {
         let prefix = self.workspaces[workspace].app_id_prefix();
         let mut ghostty = self.command(workspace, "ghostty");
         ghostty
             .env("DECADE_PANE", pane)
             .args(["--window-decoration=none", "--gtk-titlebar=false"])
-            .arg(format!("--class={prefix}{pane}"));
+            .arg(format!("--class={prefix}{class}"));
         ghostty
     }
 
+    /// Start a ghostty that goes in the pane as a new tab.
+    fn spawn_pane_tab(&mut self, workspace: usize, tab: usize, id: usize, cwd: &Path) {
+        let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane_mut(id) else {
+            return;
+        };
+        let name = pane.name.clone();
+        let class = format!("{name}.t{}", pane.next_tab);
+        pane.next_tab += 1;
+        let mut ghostty = self.ghostty(workspace, &name, &class);
+        ghostty.current_dir(cwd);
+        match ghostty.spawn() {
+            Ok(child) => self.children.push(child),
+            Err(error) => eprintln!("decade: could not start ghostty: {error}"),
+        }
+    }
+
     fn spawn_terminal(&mut self, workspace: usize, pane: &str, cwd: &Path) {
-        let mut ghostty = self.ghostty(workspace, pane);
+        let mut ghostty = self.ghostty(workspace, pane, pane);
         ghostty.current_dir(cwd);
         match ghostty.spawn() {
             Ok(child) => {
@@ -911,9 +943,9 @@ impl State {
             .find_map(|(index, workspace)| {
                 workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
                     let pane = entry.layout.panes.iter().find(|pane| {
-                        pane.toplevel
-                            .as_ref()
-                            .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+                        pane.clients
+                            .iter()
+                            .any(|client| client.toplevel.wl_surface() == surface)
                     })?;
                     Some((index, tab, pane.id))
                 })
@@ -986,17 +1018,15 @@ impl State {
         };
         let workspace = &mut self.workspaces[index];
         workspace.closing = true;
-        for pane in workspace.panes() {
-            if let Some(toplevel) = &pane.toplevel {
-                toplevel.send_close();
-            }
+        for client in workspace.panes().flat_map(|pane| &pane.clients) {
+            client.toplevel.send_close();
         }
         self.finish_closing(index);
     }
 
     fn finish_closing(&mut self, index: usize) {
         let workspace = &self.workspaces[index];
-        let clients = workspace.panes().any(|pane| pane.toplevel.is_some());
+        let clients = workspace.panes().any(|pane| !pane.clients.is_empty());
         if !workspace.closing || clients {
             return;
         }
@@ -1072,7 +1102,7 @@ impl State {
                 continue;
             }
             for pane in &workspace.layout().panes {
-                if let Some(toplevel) = &pane.toplevel {
+                if let Some(toplevel) = pane.toplevel() {
                     send_frames_surface_tree(toplevel.wl_surface(), time);
                 }
             }
@@ -1772,14 +1802,22 @@ impl State {
             &launch.program,
             &std::env::var_os("PATH").unwrap_or_default(),
         )?;
-        let occupant = shown
+        let occupants: Vec<ToplevelSurface> = shown
             .by_name(name)
             .and_then(|(tab, id)| shown.tabs[tab].layout.pane(id))
-            .and_then(|pane| pane.toplevel.clone());
-        let Some(occupant) = occupant else {
+            .map(|pane| {
+                pane.clients
+                    .iter()
+                    .map(|client| client.toplevel.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if occupants.is_empty() {
             return self.start_scratch(workspace, launch);
-        };
-        occupant.send_close();
+        }
+        for occupant in &occupants {
+            occupant.send_close();
+        }
         let reply = format!(
             "asked the program in pane {name} to close; {} starts there once it has",
             launch.program
@@ -1796,7 +1834,7 @@ impl State {
             .ok_or(NO_SCRATCH)?
             .to_string();
         let mut command = if launch.terminal {
-            let mut ghostty = self.ghostty(workspace, &name);
+            let mut ghostty = self.ghostty(workspace, &name, &name);
             ghostty.arg("-e").arg(&launch.program).args(&launch.args);
             ghostty
         } else {
@@ -1840,7 +1878,7 @@ impl State {
             }) else {
                 continue;
             };
-            if workspace.tabs[tab].layout.pane(id)?.toplevel.is_some() {
+            if !workspace.tabs[tab].layout.pane(id)?.clients.is_empty() {
                 continue;
             }
             scratch.expected = None;
@@ -1959,14 +1997,13 @@ impl State {
             self.font = Font::load(self.settings.font_size * scale as f32);
             self.menu_font = Font::load(self.settings.palette_size * scale as f32);
             self.texts.clear();
-            for pane in self
+            for client in self
                 .workspaces
                 .iter()
                 .flat_map(|workspace| workspace.panes())
+                .flat_map(|pane| &pane.clients)
             {
-                if let Some(toplevel) = &pane.toplevel {
-                    self.send_scale(toplevel.wl_surface());
-                }
+                self.send_scale(client.toplevel.wl_surface());
             }
         }
         self.resize_layouts();
@@ -2132,27 +2169,27 @@ impl State {
         let Some(pane) = layout.pane(id) else {
             return;
         };
-        let Some(toplevel) = &pane.toplevel else {
-            return;
-        };
         let (_, size) = self.client_geometry(pane);
         if size.w <= 0 || size.h <= 0 {
             return;
         }
         let focused =
             workspace == self.current() && tab == shown.active_tab && layout.focused == id;
-        toplevel.with_pending_state(|state| {
-            state.size = Some(size);
-            if focused {
-                state.states.set(xdg_toplevel::State::Activated);
+        for (index, client) in pane.clients.iter().enumerate() {
+            let toplevel = &client.toplevel;
+            toplevel.with_pending_state(|state| {
+                state.size = Some(size);
+                if focused && index == pane.shown {
+                    state.states.set(xdg_toplevel::State::Activated);
+                } else {
+                    state.states.unset(xdg_toplevel::State::Activated);
+                }
+            });
+            if toplevel.is_initial_configure_sent() {
+                toplevel.send_pending_configure();
             } else {
-                state.states.unset(xdg_toplevel::State::Activated);
+                toplevel.send_configure();
             }
-        });
-        if toplevel.is_initial_configure_sent() {
-            toplevel.send_pending_configure();
-        } else {
-            toplevel.send_configure();
         }
     }
 
@@ -2165,7 +2202,7 @@ impl State {
         let surface = self
             .layout()
             .pane(id)
-            .and_then(|pane| pane.toplevel.as_ref())
+            .and_then(|pane| pane.toplevel())
             .map(|toplevel| toplevel.wl_surface().clone());
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
@@ -2212,6 +2249,31 @@ impl State {
         self.focus(id);
     }
 
+    /// Start a terminal as a new tab of the focused pane, in the pane's
+    /// directory or else the workspace's.
+    fn new_pane_tab(&mut self) {
+        let current = self.current();
+        let shown = &self.workspaces[current];
+        let id = shown.layout().focused;
+        let Some(pane) = shown.layout().pane(id) else {
+            return;
+        };
+        let cwd = pane.cwd.clone().unwrap_or_else(|| shown.cwd.clone());
+        let tab = shown.active_tab;
+        self.spawn_pane_tab(current, tab, id, &cwd);
+    }
+
+    /// Show tab `index` of the pane in the current workspace's active tab.
+    fn show_pane_tab(&mut self, id: usize, index: usize) {
+        let Some(pane) = self.layout_mut().pane_mut(id) else {
+            return;
+        };
+        if index < pane.clients.len() {
+            pane.shown = index;
+            self.focus(id);
+        }
+    }
+
     fn new_tab(&mut self) {
         let current = self.current();
         let area = self.pane_area();
@@ -2255,10 +2317,8 @@ impl State {
         }
         let closed = &mut shown.tabs[tab];
         closed.closing = true;
-        for pane in &closed.layout.panes {
-            if let Some(toplevel) = &pane.toplevel {
-                toplevel.send_close();
-            }
+        for client in closed.layout.panes.iter().flat_map(|pane| &pane.clients) {
+            client.toplevel.send_close();
         }
         self.finish_closing_tab(index, tab);
     }
@@ -2270,7 +2330,7 @@ impl State {
             .layout
             .panes
             .iter()
-            .any(|pane| pane.toplevel.is_some());
+            .any(|pane| !pane.clients.is_empty());
         if !closed.closing || clients {
             return;
         }
@@ -2344,7 +2404,7 @@ impl State {
         };
         let current = self.current();
         let scratched = self.workspaces[current].scratch_pane() == Some(pane.name.as_str());
-        match (&pane.toplevel, &pane.kind) {
+        match (pane.toplevel(), &pane.kind) {
             (Some(toplevel), _) => toplevel.send_close(),
             (None, PaneKind::Transient) => {
                 let tab = self.workspaces[current].active_tab;
@@ -2432,8 +2492,7 @@ impl State {
         let focus = self.pane_under_pointer().and_then(|id| {
             let pane = self.layout().pane(id)?;
             let (origin, _) = self.client_geometry(pane);
-            pane.toplevel
-                .as_ref()
+            pane.toplevel()
                 .map(|toplevel| (toplevel.wl_surface().clone(), origin.to_f64()))
         });
         pointer.motion(
@@ -2597,7 +2656,7 @@ impl State {
         let terminal = self
             .layout()
             .pane(self.layout().focused)
-            .and_then(|pane| pane.toplevel.as_ref())
+            .and_then(|pane| pane.toplevel())
             .and_then(|toplevel| app_id(toplevel.wl_surface()))
             .is_some_and(|app_id| app_id.starts_with("decade."));
         let keys: &[u32] = match (terminal, chord) {
@@ -2695,6 +2754,16 @@ impl State {
                 let step = if key == Key::NextTab { 1 } else { count - 1 };
                 self.show_tab((shown.active_tab + step) % count);
             }
+            Key::NewPaneTab => self.new_pane_tab(),
+            Key::PreviousPaneTab | Key::NextPaneTab => {
+                let focused = self.layout().focused;
+                if let Some(pane) = self.layout_mut().pane_mut(focused)
+                    && pane.clients.len() > 1
+                {
+                    pane.step_tab(key == Key::NextPaneTab);
+                    self.focus(focused);
+                }
+            }
             Key::Palette => self.open_palette(),
             Key::Sidebar => self.toggle_sidebar(),
             Key::NextNeeding => {
@@ -2791,7 +2860,13 @@ impl State {
                 self.toggle_scratch(id);
                 return true;
             }
-            _ => {}
+            Some(_) => {}
+            None => {
+                if let Some((id, index)) = self.layout().tab_hit(column, row) {
+                    self.show_pane_tab(id, index);
+                    return true;
+                }
+            }
         }
         if let Some(boundary) = self.layout().boundary_at(column, row) {
             self.drag = Some(Drag::Boundary(boundary));
@@ -2825,9 +2900,9 @@ impl State {
             return;
         };
         let client = pane
-            .toplevel
-            .as_ref()
-            .map(|toplevel| toplevel.wl_surface().clone());
+            .clients
+            .first()
+            .map(|client| client.toplevel.wl_surface().clone());
         let current = self.current();
         let scratched = self.workspaces[current].scratch_pane() == Some(pane.name.as_str());
         match &pane.kind {
@@ -2864,7 +2939,7 @@ impl State {
         shown.toggle_scratch(&name);
         if let Some((tab, before)) = before
             && let Some(pane) = shown.tabs[tab].layout.pane(before)
-            && pane.toplevel.is_none()
+            && pane.clients.is_empty()
             && matches!(pane.kind, PaneKind::Transient)
         {
             self.remove_pane(current, tab, before);
@@ -3083,7 +3158,7 @@ impl State {
             let mut ghost = Scene::new(font);
             layout.draw_ghost(pane.id, &mut ghost, scratch);
             paint.scene(&mut elements, &ghost, origin + cell, Some(shrink));
-            if let Some(toplevel) = &pane.toplevel {
+            if let Some(toplevel) = pane.toplevel() {
                 let client = layout.client_rect(pane);
                 let offset: Point<i32, Physical> = (
                     ((client.column - pane.rect.column) * font.cell_width) as i32,
@@ -3115,7 +3190,7 @@ impl State {
         paint.scene(&mut elements, &above, Point::default(), None);
 
         for pane in layout.visible().filter(|_| picker.is_none()) {
-            let Some(toplevel) = &pane.toplevel else {
+            let Some(toplevel) = pane.toplevel() else {
                 continue;
             };
             if layout.dragging == Some(pane.id) {
@@ -3183,7 +3258,7 @@ impl State {
 
         let time = start.elapsed().as_millis() as u32;
         for pane in layout.visible() {
-            if let Some(toplevel) = &pane.toplevel {
+            if let Some(toplevel) = pane.toplevel() {
                 send_frames_surface_tree(toplevel.wl_surface(), time);
             }
         }
@@ -3334,7 +3409,7 @@ fn paint_picker(
                 (cell.size.h - (height as f64 * scale) as i32) / 2,
             ));
         for pane in layout.visible() {
-            let Some(toplevel) = &pane.toplevel else {
+            let Some(toplevel) = pane.toplevel() else {
                 continue;
             };
             let client = layout.client_rect(pane);
@@ -3544,6 +3619,9 @@ fn repeats(key: Key) -> bool {
         | Key::NewTab
         | Key::PreviousTab
         | Key::NextTab
+        | Key::NewPaneTab
+        | Key::PreviousPaneTab
+        | Key::NextPaneTab
         | Key::Palette
         | Key::Picker
         | Key::Restart
@@ -3584,8 +3662,11 @@ fn super_key(sym: u32, shift: bool) -> Option<Key> {
         keysyms::KEY_b if !shift => Some(Key::Sidebar),
         keysyms::KEY_a if !shift => Some(Key::NextNeeding),
         keysyms::KEY_t if !shift => Some(Key::NewTab),
+        keysyms::KEY_t | keysyms::KEY_T => Some(Key::NewPaneTab),
         keysyms::KEY_bracketleft if !shift => Some(Key::PreviousTab),
         keysyms::KEY_bracketright if !shift => Some(Key::NextTab),
+        keysyms::KEY_bracketleft | keysyms::KEY_braceleft => Some(Key::PreviousPaneTab),
+        keysyms::KEY_bracketright | keysyms::KEY_braceright => Some(Key::NextPaneTab),
         _ => None,
     }
 }
@@ -3687,7 +3768,9 @@ impl CompositorHandler for State {
                 .client()
                 .and_then(|client| client.get_credentials(&self.display_handle).ok())
                 .map(|credentials| credentials.pid as u32);
-            let expected = pid.and_then(|pid| self.expecting(pid));
+            let expected = pid
+                .and_then(|pid| self.expecting(pid))
+                .map(|(index, tab, id)| (index, tab, id, false));
             let placed = expected.or_else(|| {
                 self.workspaces
                     .iter()
@@ -3695,12 +3778,13 @@ impl CompositorHandler for State {
                     .find_map(|(index, workspace)| {
                         let prefix = workspace.app_id_prefix();
                         workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
-                            let id = entry.layout.place(app_id.as_deref(), &prefix)?;
-                            Some((index, tab, id))
+                            let (id, terminal_tab) =
+                                entry.layout.place(app_id.as_deref(), &prefix)?;
+                            Some((index, tab, id, terminal_tab))
                         })
                     })
             });
-            let (workspace, tab, id) = match placed {
+            let (workspace, tab, id, terminal_tab) = match placed {
                 Some(placed) => placed,
                 None => {
                     let workspace = self.current();
@@ -3710,13 +3794,28 @@ impl CompositorHandler for State {
                     shown.router.add_pane(name);
                     let tab = shown.active_tab;
                     self.relayout_workspace(workspace);
-                    (workspace, tab, id)
+                    (workspace, tab, id, false)
                 }
             };
             if let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane_mut(id) {
-                pane.toplevel = Some(toplevel);
-                pane.app_id = app_id;
+                if !terminal_tab {
+                    pane.app_id = app_id.clone();
+                }
+                let client = panes::Client {
+                    toplevel,
+                    app_id,
+                    pid,
+                    terminal_tab,
+                };
+                if terminal_tab {
+                    pane.clients.push(client);
+                    pane.shown = pane.clients.len() - 1;
+                } else {
+                    pane.clients.insert(0, client);
+                    pane.shown = 0;
+                }
             }
+            self.configure(workspace, tab, id);
 
             // ghostty draws itself focused until its first keyboard leave,
             // so each new window gets focus once before it returns to the
@@ -3728,7 +3827,10 @@ impl CompositorHandler for State {
         }
         if let Some((workspace, tab, id)) = self.pane_of_surface(surface)
             && let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane(id)
-            && !pane.toplevel.as_ref().unwrap().is_initial_configure_sent()
+            && pane
+                .clients
+                .iter()
+                .any(|client| !client.toplevel.is_initial_configure_sent())
         {
             self.configure(workspace, tab, id);
         }
@@ -3755,7 +3857,22 @@ impl XdgShellHandler for State {
         let Some(pane) = shown.tabs[tab].layout.pane_mut(id) else {
             return;
         };
-        pane.toplevel = None;
+        if let Some(index) = pane
+            .clients
+            .iter()
+            .position(|client| client.toplevel == surface)
+        {
+            pane.remove_client(index);
+        }
+        if !pane.clients.is_empty() {
+            self.configure(workspace, tab, id);
+            if workspace == current && tab == self.workspaces[workspace].active_tab {
+                let focused = self.layout().focused;
+                self.focus(focused);
+            }
+            self.request_redraw();
+            return;
+        }
         let transient = matches!(pane.kind, PaneKind::Transient);
         let scratched = shown
             .scratch
