@@ -1,0 +1,30 @@
+{
+  "id": "decade-814c88",
+  "title": "render is 240 lines and computes the frame and grid a second way",
+  "body": "`State::render` in `compositor.rs` runs about 240 lines: overlays and scrim, the drag ghost (70 lines, which also settles `animating`), bars and drop markers, client surfaces, chrome and frame, then GL submit and frame callbacks. It opens with `let State { .. } = self` so `gpu` can be borrowed mutably. That destructure is why `build_frame` is a free function beside `State::frame`, which only forwards to it with the current workspace, and why `render` recomputes `grid` by hand instead of calling `State::grid`. `paint_picker` likewise rebuilds `Grid::new(workspaces.len() + 1, size, cell_height)`, the expression `State::picker_grid` already holds.\n\n## Proposal\n\nCompute the frame and picker grid before the destructure, through `fn frame(&self, workspace) -> Frame` and `picker_grid()`. Extract `paint_ghost(..) -> bool` and `paint_clients(..)`. `render` keeps ordering and submit. `build_frame` and the second grid computation go.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:39:48.098845798Z",
+  "updated_at": "2026-11-08T07:39:48.098845798Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
