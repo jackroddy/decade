@@ -3,7 +3,7 @@
   "title": "Clippy pedantic hits about duplication and indirection",
   "body": "From `cargo clippy --all-targets -- -W clippy::pedantic -W clippy::nursery`, keeping only the hits about duplication and indirection. Line numbers are at the commit this issue was created on.\n\n| lint | sites |\n|---|---|\n| redundant clone | `channel.rs` 229 (two), 239 (two) |\n| `clone_from` candidate | `channel.rs` 252, `compositor.rs` 3802, `save.rs` 319 to 321, `workspace.rs` 147 |\n| argument taken by value and not consumed | `decade-channel/src/lib.rs` 185, 198; `channel.rs` 221 (`hello` takes `Value`), 261; `compositor.rs` 302, 1831, 2561, 2965; `mcp.rs` 198; `viewer.rs` 833; `viewer/clipboard.rs` 85; `workspace.rs` 50 |\n| `&mut` taken and never mutated | `compositor.rs` 1475, 2143, 2166; `viewer.rs` 680; `viewer/clipboard.rs` 214 |\n| identical match arms | `compositor.rs` 3539, `script.rs` 309, `viewer.rs` 579 |\n| single-pattern `match` that is an `if let` | `compositor.rs` 1544, 3787 |\n| `map_or` candidate | `compositor.rs` 1499, 1757, 2627; `control.rs` 89; `viewer/clipboard.rs` 278; `panes.rs` 529, 551 |\n| redundant closure | `compositor.rs` 2003, 2602, 2886; `settings.rs` 127; `wire.rs` 1518 |\n| `filter_map(..).next()` is `find_map` | `gpu.rs` 28 |\n| `async fn` with no await | `mcp.rs` 238 (`list_tools`) |\n| `Arc::default()` and `XkbConfig::default()` | `mcp.rs` 68, `compositor.rs` 396 |\n| `Eq` derivable | `decade-channel/src/lib.rs` 41, 56, 63 |\n| `unused_self` | `panes.rs` 344 (`client_rect`) |\n\nDropped as style: about 163 `use_self`, about 300 cast lints, `long_literal_lacking_separators`, and the `()` match arms.",
   "type": "chore",
-  "status": "open",
+  "status": "in_progress",
   "priority": 4,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T21:22:39.758523809Z",
   "defer_until": null,
   "created_at": "2026-11-08T18:44:01.253135833Z",
-  "updated_at": "2026-11-08T18:44:01.253135833Z",
+  "updated_at": "2026-11-08T21:07:39.758523809Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
