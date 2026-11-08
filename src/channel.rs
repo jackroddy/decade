@@ -1,43 +1,11 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use decade_channel::{AgentState, Error, Focus, Hello, Pane, Reply, Status, VERSION, Welcome};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
-
-pub const VERSION: u32 = 1;
 
 /// The client id under which MCP tool calls reach a router.
 pub const AGENT: usize = usize::MAX;
-
-#[derive(Deserialize)]
-pub struct Hello {
-    pub name: String,
-    #[serde(default)]
-    pub accepts: Vec<String>,
-    #[serde(default)]
-    pub pane: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct Focus {
-    pub pane: String,
-}
-
-/// What the agent in a pane is doing, least urgent first.
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum AgentState {
-    Idle,
-    Working,
-    Done,
-    Attention,
-}
-
-#[derive(Deserialize)]
-struct Status {
-    state: AgentState,
-    #[serde(default)]
-    message: Option<String>,
-}
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -48,12 +16,6 @@ struct Envelope {
     panes: Option<Value>,
     #[serde(flatten)]
     rest: Map<String, Value>,
-}
-
-#[derive(Serialize)]
-struct PaneInfo<'a> {
-    name: &'a str,
-    client: Option<&'a str>,
 }
 
 pub struct Client {
@@ -174,15 +136,15 @@ impl Router {
             })];
         }
         if envelope.panes.is_some() {
-            let panes: Vec<PaneInfo> = self
+            let panes = self
                 .panes
                 .iter()
-                .map(|name| PaneInfo {
-                    name,
-                    client: self.occupant(name).and_then(|(_, c)| c.name.as_deref()),
+                .map(|name| Pane {
+                    name: name.clone(),
+                    client: self.occupant(name).and_then(|(_, c)| c.name.clone()),
                 })
                 .collect();
-            return vec![Out::Line(id, json!({ "panes": panes }).to_string())];
+            return vec![reply(id, Reply::Panes(panes))];
         }
         let Some(to) = envelope.to else {
             return vec![error_line(
@@ -250,19 +212,29 @@ impl Router {
         client.name = Some(hello.name);
         client.accepts = hello.accepts;
         client.pane = pane.clone();
-        let welcome = json!({
-            "welcome": { "pane": pane, "version": VERSION }
-        });
-        out.push(Out::Line(id, welcome.to_string()));
+        out.push(reply(
+            id,
+            Reply::Welcome(Welcome {
+                pane,
+                version: VERSION,
+            }),
+        ));
         out
     }
 }
 
 fn error_line(id: usize, reason: &str, message: Value) -> Out {
-    Out::Line(
+    reply(
         id,
-        json!({ "error": { "reason": reason, "message": message } }).to_string(),
+        Reply::Error(Error {
+            reason: reason.to_string(),
+            message,
+        }),
     )
+}
+
+fn reply(id: usize, reply: Reply) -> Out {
+    Out::Line(id, serde_json::to_string(&reply).unwrap())
 }
 
 #[cfg(test)]
@@ -427,26 +399,6 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("claimed none")
-        );
-    }
-
-    #[test]
-    fn attention_is_the_most_urgent_state_and_idle_the_least() {
-        let mut states = [
-            AgentState::Done,
-            AgentState::Idle,
-            AgentState::Attention,
-            AgentState::Working,
-        ];
-        states.sort();
-        assert_eq!(
-            states,
-            [
-                AgentState::Idle,
-                AgentState::Working,
-                AgentState::Done,
-                AgentState::Attention
-            ]
         );
     }
 }

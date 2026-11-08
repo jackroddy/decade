@@ -1,10 +1,10 @@
 use std::cmp::Reverse;
 
-use crate::channel::AgentState;
 use crate::draw::Scene;
 use crate::palette;
 use crate::panes::CellRect;
 use crate::text::Rgba;
+use decade_channel::AgentState;
 
 /// The rows above the panes that the top bar takes.
 pub const TOP: u32 = 1;

@@ -85,7 +85,7 @@ use smithay::{
 };
 
 use crate::apps;
-use crate::channel::{AGENT, AgentState, Host, Out};
+use crate::channel::{AGENT, Host, Out};
 use crate::control::{self, viewer_socket_path};
 use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::frame::{self, Hit, fit};
@@ -106,6 +106,7 @@ use crate::settings::{self, Settings};
 use crate::text::{Font, Rgba};
 use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
 use crate::workspace::{self, Workspace};
+use decade_channel::AgentState;
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
 const BTN_LEFT: u32 = 0x110;

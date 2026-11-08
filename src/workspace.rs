@@ -3,9 +3,10 @@ use std::path::PathBuf;
 
 use smithay::reexports::calloop::RegistrationToken;
 
-use crate::channel::{AGENT, AgentState, Router};
+use crate::channel::{AGENT, Router};
 use crate::panes::{CellRect, Layout, Pane};
 use crate::scratch::Scratch;
+use decade_channel::AgentState;
 
 pub struct Workspace {
     pub id: u32,

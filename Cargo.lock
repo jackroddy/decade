@@ -333,6 +333,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "calloop 0.14.5",
+ "decade-channel",
  "fontdb",
  "rmcp",
  "rustix 0.38.44",

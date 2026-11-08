@@ -16,4 +16,7 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
   `focus` and `panes` write to it. `parse` turns one line into a `Message`.
 - The `code` module with the `show`, `mark` and `clear` verbs and their
   payload types, shared by the code pane and whoever drives it.
+- `Hello`, `Focus`, `Status`, `Welcome`, `Error`, `Pane` and `AgentState`
+  are the messages a client and decade exchange. `Reply` holds the lines
+  decade writes other than forwarded verbs. decade uses these same types.
 

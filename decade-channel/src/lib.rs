@@ -28,20 +28,72 @@ pub enum Message {
     Closed,
 }
 
-/// What the agent in this client's pane is doing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What the agent in a pane is doing, least urgent first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentState {
-    Attention,
-    Done,
-    Working,
     Idle,
+    Working,
+    Done,
+    Attention,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pane {
     pub name: String,
     pub client: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Hello {
+    pub name: String,
+    #[serde(default)]
+    pub accepts: Vec<String>,
+    #[serde(default)]
+    pub pane: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Focus {
+    pub pane: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Status {
+    pub state: AgentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Welcome {
+    pub pane: Option<String>,
+    pub version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Error {
+    pub reason: String,
+    #[serde(default)]
+    pub message: Value,
+}
+
+/// A line decade writes to a client, other than a forwarded verb.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Reply {
+    Welcome(Welcome),
+    Error(Error),
+    Panes(Vec<Pane>),
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Request {
+    Hello(Hello),
+    Focus(Focus),
+    Status(Status),
+    Panes {},
 }
 
 pub mod code {
@@ -73,13 +125,13 @@ pub fn parse(line: &str) -> Result<Message, String> {
         return Err("not an object".to_string());
     };
     if let Some(welcome) = object.remove("welcome") {
-        let pane = welcome["pane"].as_str().map(str::to_string);
-        let version = welcome["version"].as_u64().unwrap_or(0) as u32;
+        let Welcome { pane, version } =
+            serde_json::from_value(welcome).map_err(|e| format!("bad welcome: {e}"))?;
         return Ok(Message::Welcome { pane, version });
     }
     if let Some(error) = object.remove("error") {
-        let reason = error["reason"].as_str().unwrap_or("").to_string();
-        let message = error.get("message").cloned().unwrap_or(Value::Null);
+        let Error { reason, message } =
+            serde_json::from_value(error).map_err(|e| format!("bad error: {e}"))?;
         return Ok(Message::Error { reason, message });
     }
     if let Some(panes) = object.remove("panes") {
@@ -131,23 +183,11 @@ impl Channel {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || read_lines(reader, tx));
         let mut channel = Channel { writer: stream };
-        let mut hello = Map::new();
-        hello.insert("name".into(), Value::String(name.to_string()));
-        hello.insert(
-            "accepts".into(),
-            Value::Array(
-                accepts
-                    .iter()
-                    .map(|a| Value::String(a.to_string()))
-                    .collect(),
-            ),
-        );
-        hello.insert(
-            "pane".into(),
-            pane.map(|p| Value::String(p.to_string()))
-                .unwrap_or(Value::Null),
-        );
-        channel.write(object("hello", Value::Object(hello)))?;
+        channel.write(&Request::Hello(Hello {
+            name: name.to_string(),
+            accepts: accepts.iter().map(|a| a.to_string()).collect(),
+            pane: pane.map(str::to_string),
+        }))?;
         Ok((channel, rx))
     }
 
@@ -156,43 +196,32 @@ impl Channel {
         let mut message = Map::new();
         message.insert("to".into(), Value::String(to.to_string()));
         message.insert(verb.to_string(), payload);
-        self.write(Value::Object(message))
+        self.write(&message)
     }
 
     pub fn focus(&mut self, pane: &str) -> io::Result<()> {
-        let mut focus = Map::new();
-        focus.insert("pane".into(), Value::String(pane.to_string()));
-        self.write(object("focus", Value::Object(focus)))
+        self.write(&Request::Focus(Focus {
+            pane: pane.to_string(),
+        }))
     }
 
     /// Report the state of the agent in the pane this client claimed.
     pub fn status(&mut self, state: AgentState, message: Option<&str>) -> io::Result<()> {
-        let mut status = Map::new();
-        status.insert(
-            "state".into(),
-            serde_json::to_value(state).map_err(io::Error::other)?,
-        );
-        if let Some(message) = message {
-            status.insert("message".into(), Value::String(message.to_string()));
-        }
-        self.write(object("status", Value::Object(status)))
+        self.write(&Request::Status(Status {
+            state,
+            message: message.map(str::to_string),
+        }))
     }
 
     pub fn panes(&mut self) -> io::Result<()> {
-        self.write(object("panes", Value::Object(Map::new())))
+        self.write(&Request::Panes {})
     }
 
-    fn write(&mut self, value: Value) -> io::Result<()> {
-        let mut line = value.to_string();
+    fn write(&mut self, message: &impl Serialize) -> io::Result<()> {
+        let mut line = serde_json::to_string(message).map_err(io::Error::other)?;
         line.push('\n');
         self.writer.write_all(line.as_bytes())
     }
-}
-
-fn object(key: &str, value: Value) -> Value {
-    let mut map = Map::new();
-    map.insert(key.to_string(), value);
-    Value::Object(map)
 }
 
 fn read_lines(stream: UnixStream, tx: Sender<Message>) {
@@ -349,5 +378,59 @@ mod tests {
         drop(channel);
         assert_eq!(rx.recv().unwrap(), Message::Closed);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn attention_is_the_most_urgent_state_and_idle_the_least() {
+        let mut states = [
+            AgentState::Done,
+            AgentState::Idle,
+            AgentState::Attention,
+            AgentState::Working,
+        ];
+        states.sort();
+        assert_eq!(
+            states,
+            [
+                AgentState::Idle,
+                AgentState::Working,
+                AgentState::Done,
+                AgentState::Attention
+            ]
+        );
+    }
+
+    #[test]
+    fn requests_are_written_as_one_key_objects() {
+        let line = |request: Request| serde_json::to_value(request).unwrap();
+        assert_eq!(
+            line(Request::Focus(Focus {
+                pane: "code".into()
+            })),
+            json!({"focus": {"pane": "code"}})
+        );
+        assert_eq!(
+            line(Request::Status(Status {
+                state: AgentState::Working,
+                message: None
+            })),
+            json!({"status": {"state": "working"}})
+        );
+        assert_eq!(line(Request::Panes {}), json!({"panes": {}}));
+    }
+
+    #[test]
+    fn a_reply_parses_back_into_the_message_it_was_written_from() {
+        let reply = Reply::Welcome(Welcome {
+            pane: Some("code".into()),
+            version: VERSION,
+        });
+        assert_eq!(
+            parse(&serde_json::to_string(&reply).unwrap()).unwrap(),
+            Message::Welcome {
+                pane: Some("code".into()),
+                version: VERSION
+            }
+        );
     }
 }
