@@ -3,7 +3,7 @@
   "title": "viewer_message is 264 lines and forwards keys three ways",
   "body": "`State::viewer_message` in `compositor.rs` is a 264-line match. The `Hello` arm (about 38 lines) is the welcome handshake and the `Keys` arm (about 40) syncs lock state and pressed keys from the host; both are functions inlined into the dispatch. `keyboard.input::<(), _>(.., Keycode::new(k + 8), state, SERIAL_COUNTER.next_serial(), time, |_, _, _| FilterResult::Forward)` is written at three sites, and the held-key bookkeeping `list.retain(..); if pressed { list.push(..) }` at three. The compositor's `Scroll` struct has the same seven fields as `ViewerMessage::Scroll`, and the arm destructures the variant to rebuild the struct. `out_of_range` is a second full match over `ViewerMessage` that checks sizes, keycodes and selection numbers after decoding. `Key::Swallow` exists because the keyboard filter must return a `Key`; `run_key` matches it to nothing and `repeats` lists it.\n\n## Proposal\n\n- `welcome(id, ..)` and `sync_keys(id, locked, keycodes)` extracted.\n- `forward_key(&mut self, evdev, KeyState, time)` and a `hold(list, code, pressed)` helper.\n- `ViewerMessage::Scroll(wire::Scroll)` passed straight to `pointer_scroll`.\n- `keyboard.input::<Option<Key>, _>` with `menu_key` returning `Option<Key>`, so `Swallow` goes.\n- The selection check moves into decoding; see \"Selection numbers decode once into an enum at the wire boundary\".",
   "type": "chore",
-  "status": "open",
+  "status": "in_progress",
   "priority": 3,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T21:05:43.324958414Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:39:48.130398712Z",
-  "updated_at": "2026-11-08T07:39:48.130398712Z",
+  "updated_at": "2026-11-08T20:50:43.324958414Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
