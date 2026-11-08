@@ -42,6 +42,7 @@ pub enum Shape {
         radius: i32,
         fill: Rgba,
         border: Rgba,
+        border_width: i32,
     },
 }
 
@@ -93,6 +94,7 @@ impl Scene {
             radius,
             fill,
             border,
+            border_width: self.line_width(),
         });
     }
 
@@ -242,6 +244,7 @@ impl Paint<'_> {
                     radius,
                     fill,
                     border,
+                    border_width,
                 } => {
                     let area = Rectangle::new(origin + *at, *size)
                         .to_f64()
@@ -256,7 +259,7 @@ impl Paint<'_> {
                             Uniform::new("fill", premultiply(*fill)),
                             Uniform::new("border", premultiply(*border)),
                             Uniform::new("radius", *radius as f32),
-                            Uniform::new("border_width", self.text.chrome.cell_width as f32 / 8.0),
+                            Uniform::new("border_width", *border_width as f32),
                         ],
                         Kind::Unspecified,
                     )));
