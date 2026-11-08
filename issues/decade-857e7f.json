@@ -3,7 +3,7 @@
   "title": "Text draws in a bold weight as well as regular",
   "body": "`text.rs` loads one face of JetBrains Mono, Regular, through `font_file`, and `draw::Face` picks only between the chrome and palette sizes and icons. The header and sidebar redesign wants names in a heavier weight, and Jack wants weights available across decade.\n\n## Proposal\n\n`Text` loads the Bold face of the same family beside Regular, at the same sizes, and a run of text names its weight. The texture cache keys on the weight. JetBrains Mono's SemiBold is not installed on Jack's machine, so Bold is the heavy weight. If the family has no Bold, decade falls back to Regular.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-30d5e3",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T22:23:19.310539769Z",
-  "updated_at": "2026-11-08T22:23:19.310539769Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T22:31:39.561567732Z",
+  "closed_at": "2026-11-08T22:31:39.561567732Z",
+  "close_reason": "Landed in a33337f with the cards that first use it. `Font` holds a regular and a bold face, and `Face::ChromeBold` draws with the bold one.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "6bcc95b",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "dd82e89",
+      "branch": "dev"
+    }
   }
 }
