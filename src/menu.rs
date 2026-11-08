@@ -4,11 +4,12 @@ use smithay::utils::{Physical, Size};
 
 use crate::apps::App;
 use crate::draw::{Face, Scene};
+use crate::frame::fit;
 use crate::palette;
 use crate::text::Font;
 
-const WIDTH: i32 = 22;
-const BROWSE_WIDTH: i32 = 48;
+/// The width in cells of the palette, the New workspace browser and the settings panel.
+pub const WIDTH: i32 = 40;
 const APP_ICON: char = '\u{f08c6}';
 const FOLDER_ICON: char = '\u{f024b}';
 const OPEN_ICON: char = '\u{f0770}';
@@ -251,10 +252,11 @@ impl Menu {
         let (cell_width, cell_height) = (font.cell_width as i32, font.cell_height as i32);
         let pad = cell_height * 2 / 3;
         let row_height = cell_height * 8 / 5;
-        let columns = if self.browsing() { BROWSE_WIDTH } else { WIDTH };
-        let width = columns * cell_width + pad * 2;
-        let list = pad + row_height * 2;
-        let height = list + row_height * MAX_ROWS as i32 + pad;
+        let width = WIDTH * cell_width + pad * 2;
+        let list = pad + row_height * 2 + pad / 2;
+        let matching = self.matching();
+        let shown = matching.len().clamp(1, MAX_ROWS) as i32;
+        let height = list + row_height * (shown + 1) + pad;
         scene.rounded(0, 0, (width, height), pad, BOX, BORDER);
 
         let text_y = |top: i32| top + (row_height - cell_height) / 2;
@@ -269,14 +271,18 @@ impl Menu {
             };
         }
         scene.text_px(pad, text_y(pad), &title, Face::Menu, BORDER);
-        let query = format!("› {}▏", tail(&self.query, columns as usize - 3));
+        let query = format!("› {}▏", tail(&self.query, WIDTH as usize - 3));
         scene.text_px(pad, text_y(pad + row_height), &query, Face::Menu, TEXT);
-        scene.rect(pad, list - 1, width - pad * 2, scene.line_width(), DIM);
+        let line = scene.line_width();
+        let rule = pad + row_height * 2 + pad / 4 - line / 2;
+        scene.rect(pad, rule, width - pad * 2, line, DIM);
 
-        let matching = self.matching();
+        let browsing = self.browsing();
         if matching.is_empty() {
-            scene.text_px(pad, text_y(list), "no matches", Face::Menu, DIM);
+            let empty = if browsing { "no folders" } else { "no matches" };
+            scene.text_px(pad, text_y(list), empty, Face::Menu, DIM);
         }
+        let room = WIDTH as usize - 5;
         let skip = self.selected.saturating_sub(MAX_ROWS - 1);
         for (i, (_, row)) in matching.iter().enumerate().skip(skip).take(MAX_ROWS) {
             let top = list + (i - skip) as i32 * row_height;
@@ -290,18 +296,24 @@ impl Menu {
             if row.icon != ' ' {
                 scene.text_px(pad, text_y(top), &row.icon.to_string(), Face::Menu, fg);
             }
-            scene.text_px(
-                pad + cell_width * 3,
-                text_y(top),
-                &tail(&row.label, columns as usize - 5),
-                Face::Menu,
-                fg,
-            );
+            let label = if matches!(row.target, Target::Run(Action::NewWorkspace(_))) {
+                tail(&row.label, room)
+            } else {
+                fit(&row.label, room)
+            };
+            scene.text_px(pad + cell_width * 3, text_y(top), &label, Face::Menu, fg);
             if matches!(row.target, Target::Submenu(_) | Target::Directory) {
                 let x = width - pad - cell_width;
                 scene.text_px(x, text_y(top), "›", Face::Menu, fg);
             }
         }
+        let hint = if browsing {
+            "tab complete · enter open · esc back"
+        } else {
+            "enter open · esc back"
+        };
+        let top = list + shown * row_height;
+        scene.text_px(pad, text_y(top), hint, Face::Menu, DIM);
         (width, height).into()
     }
 }

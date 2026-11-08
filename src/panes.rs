@@ -2,14 +2,15 @@ use std::path::PathBuf;
 
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
-use crate::draw::Scene;
+use crate::draw::{Face, Scene};
+use crate::frame::fit;
 use crate::palette;
 use crate::text::Rgba;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;
 const PANE: Rgba = palette::DARK_BACKGROUND;
-const OUTLINE: Rgba = palette::SELECTION;
+const OUTLINE: Rgba = palette::MUTED;
 const FOCUS: Rgba = palette::ACCENT;
 const DROP: Rgba = palette::CYAN;
 const BAR: Rgba = palette::LIGHTER_BACKGROUND;
@@ -24,7 +25,7 @@ const MIN_PANE: u32 = 4;
 const EDGE_BAND: u32 = 2;
 const BUTTON_WIDTH: u32 = 4;
 const PIN_ICON: char = '\u{f0403}';
-const UNPINNED_ICON: char = '\u{f0930}';
+const UNPINNED_ICON: char = '\u{f0931}';
 const ZOOM_ICON: char = '\u{f0293}';
 const UNZOOM_ICON: char = '\u{f0294}';
 const CLOSE_ICON: char = '\u{f0156}';
@@ -580,8 +581,55 @@ impl Layout {
             } else {
                 OUTLINE
             };
-            scene.outline(pane.rect, outline);
+            self.draw_outline(scene, pane, outline);
             draw_waiting(scene, pane, pane.rect.inner());
+        }
+    }
+
+    /// The pane's outline, with a tag on its top edge when it is pinned
+    /// or zoomed.
+    fn draw_outline(&self, scene: &mut Scene, pane: &Pane, color: Rgba) {
+        let (cell_width, cell_height) = scene.cell();
+        let line = scene.line_width();
+        let rect = pane.rect;
+        let area = self.area;
+
+        // half a cell where the pane meets the edge of the area and a
+        // quarter where it meets another pane, so the gap between two
+        // outlines is as wide as the margin at the edge
+        let inset = |outer: bool, cell: i32| if outer { cell / 2 } else { cell / 4 };
+        let left = inset(rect.column == area.column, cell_width);
+        let top = inset(rect.row == area.row, cell_height);
+        let right = inset(
+            rect.column + rect.columns == area.column + area.columns,
+            cell_width,
+        );
+        let bottom = inset(rect.row + rect.rows == area.row + area.rows, cell_height);
+        scene.outline(rect, [left, top, right, bottom], color);
+
+        let (x, y) = scene.px(rect.column, rect.row);
+        let (width, _) = scene.px(rect.columns, 0);
+        let line_y = y + top;
+        let text_y = line_y + line / 2 - cell_height / 2;
+        let mut end = x + width - right - cell_width * 2;
+        let pinned = matches!(pane.kind, Kind::Anchor { .. });
+        let zoomed = self.zoom == Some(pane.id);
+        for (text, face) in [
+            (PIN_ICON.to_string(), Face::Icon),
+            ("zoom".to_string(), Face::Chrome),
+        ]
+        .into_iter()
+        .zip([pinned, zoomed])
+        .filter_map(|(tag, shown)| shown.then_some(tag))
+        {
+            let start = end - text.chars().count() as i32 * cell_width;
+            if start - cell_width < x + left + cell_width {
+                break;
+            }
+            let gap = cell_width / 2;
+            scene.rect(start - gap, line_y, end - start + gap * 2, line, BACKGROUND);
+            scene.text_px(start, text_y, &text, face, color);
+            end = start - cell_width;
         }
     }
 
@@ -623,12 +671,15 @@ impl Layout {
             (BAR, DIM)
         };
         scene.fill(CellRect { rows: 1, ..inner }, bg);
-        scene.text(start + 1, row, &pane.name, fg);
+        let buttons = bar_buttons(start, width);
+        let room = buttons[0].1.saturating_sub(start + 2) as usize;
+        scene.text(start + 1, row, &fit(&pane.name, room), fg);
         let pinned = matches!(pane.kind, Kind::Anchor { .. });
         let zoomed = self.zoom == Some(pane.id);
-        for (button, x) in bar_buttons(start, width) {
+        for (button, x) in buttons {
             let (icon, color) = match button {
-                BarButton::Pin if pinned => (PIN_ICON, if focused { fg } else { FOREGROUND }),
+                BarButton::Pin if focused => (if pinned { PIN_ICON } else { UNPINNED_ICON }, fg),
+                BarButton::Pin if pinned => (PIN_ICON, FOREGROUND),
                 BarButton::Pin => (UNPINNED_ICON, UNPINNED),
                 BarButton::Zoom if zoomed => (UNZOOM_ICON, fg),
                 BarButton::Zoom => (ZOOM_ICON, fg),
@@ -653,7 +704,7 @@ impl Layout {
                 }
                 _ => color,
             };
-            scene.text(x + 1, row, &icon.to_string(), color);
+            scene.icon(x + 1, row, icon, color);
         }
     }
 
@@ -674,24 +725,28 @@ fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect) {
     if inner.is_empty() || pane.toplevel.is_some() {
         return;
     }
-    scene.fill(inner, PANE);
-    let middle = inner.row + inner.rows / 2;
     let centered = |text: &str| inner.column + inner.columns.saturating_sub(text.len() as u32) / 2;
     if pane.restartable() {
+        scene.fill(inner, BACKGROUND);
+
+        // the message, a blank row, then a button three rows tall
+        let top = inner.row + inner.rows.saturating_sub(5) / 2;
         let text = "shell exited";
-        scene.text(centered(text), middle.saturating_sub(1), text, DIM);
-        let button = " restart ";
+        scene.text(centered(text), top, text, FOREGROUND);
+        let button = "  restart  ";
         let column = centered(button);
         let rect = CellRect {
             column,
-            row: middle + 1,
+            row: top + 2,
             columns: button.len() as u32,
-            rows: 1,
+            rows: 3,
         };
         scene.fill(rect, BAR_FOCUSED);
-        scene.text(column, middle + 1, button, BAR_FOCUSED_TEXT);
+        scene.text(column, top + 3, button, BAR_FOCUSED_TEXT);
         return;
     }
+    scene.fill(inner, PANE);
+    let middle = inner.row + inner.rows / 2;
     let text = match &pane.kind {
         Kind::Anchor { app_id } => format!("waiting for {app_id}"),
         Kind::Transient => "no client".to_string(),
@@ -1344,6 +1399,24 @@ pub(crate) mod tests {
         let texts = texts(&scene);
         assert!(texts.iter().any(|text| text == "shell exited"));
         assert!(texts.iter().any(|text| text == "restart"));
+    }
+
+    #[test]
+    fn a_long_name_on_the_ctrl_bar_is_cut_before_the_icons() {
+        let mut layout = Layout::new(AREA);
+        layout.panes[0].name = "x".repeat(200);
+        layout.bar = true;
+        let font = crate::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw_bars(&mut scene);
+        let inner = layout.panes[0].rect.inner();
+        let pin = bar_buttons(inner.column, inner.columns)[0].1;
+        let name = texts(&scene)
+            .into_iter()
+            .find(|text| text.starts_with('x'))
+            .unwrap();
+        assert!(name.ends_with('…'));
+        assert!(inner.column + 1 + name.chars().count() as u32 <= pin);
     }
 
     #[test]

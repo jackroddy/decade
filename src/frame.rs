@@ -141,17 +141,52 @@ impl Frame {
     }
 
     /// The top bar's tab buttons and the `+` after them, each with its
-    /// first column and label.
+    /// first column and label, up to the ones that would reach the counts.
     fn tab_buttons(&self) -> Vec<(u32, String, Hit)> {
         let mut column = CLOSED_WIDTH + self.name().chars().count() as u32 + 1;
+        let end = self.counts_start();
         let mut buttons = Vec::new();
         let tabs = (0..self.tabs).map(|tab| (format!(" {} ", tab + 1), Hit::Tab(tab)));
         for (label, hit) in tabs.chain([(" + ".to_string(), Hit::NewTab)]) {
             let width = label.chars().count() as u32;
+            if column + width >= end {
+                break;
+            }
             buttons.push((column, label, hit));
             column += width;
         }
         buttons
+    }
+
+    /// The agent counts at the right of the top bar, each with its first
+    /// column, text and colour.
+    fn counts(&self) -> Vec<(u32, String, Rgba)> {
+        let mut right = self.columns.saturating_sub(5);
+        let mut counts = Vec::new();
+        for state in [AgentState::Working, AgentState::Done, AgentState::Attention] {
+            let count = self
+                .entries
+                .iter()
+                .filter(|entry| entry.state == Some(state))
+                .count();
+            if count == 0 {
+                continue;
+            }
+            let (glyph, color) = mark(Some(state));
+            let text = format!("{glyph} {count}");
+            right = right.saturating_sub(text.chars().count() as u32);
+            counts.push((right, text, color));
+            right = right.saturating_sub(2);
+        }
+        counts
+    }
+
+    /// The first column of the counts, or of the menu button when there
+    /// are none.
+    fn counts_start(&self) -> u32 {
+        self.counts()
+            .last()
+            .map_or(self.columns.saturating_sub(2), |&(column, _, _)| column)
     }
 
     fn lines(&self) -> Vec<(u32, Line)> {
@@ -243,30 +278,18 @@ impl Frame {
             scene.text(start, 0, &label, color);
             column = start + width + 1;
         }
-        let pane = fit(&self.pane, self.room() / 2);
+        let end = self.counts_start().saturating_sub(1);
+        let room = (end.saturating_sub(column) as usize).min(self.room() / 2);
+        let pane = fit(&self.pane, room);
         scene.text(column, 0, &pane, DIM);
         column += pane.chars().count() as u32 + 2;
-        if self.zoom {
+        if self.zoom && column + 4 <= end {
             scene.text(column, 0, "zoom", palette::ACCENT);
         }
 
-        let mut right = self.columns.saturating_sub(2);
-        scene.text(right, 0, &MENU.to_string(), DIM);
-        right = right.saturating_sub(3);
-        for state in [AgentState::Working, AgentState::Done, AgentState::Attention] {
-            let count = self
-                .entries
-                .iter()
-                .filter(|entry| entry.state == Some(state))
-                .count();
-            if count == 0 {
-                continue;
-            }
-            let (glyph, color) = mark(Some(state));
-            let text = format!("{glyph} {count}");
-            right = right.saturating_sub(text.chars().count() as u32);
-            scene.text(right, 0, &text, color);
-            right = right.saturating_sub(2);
+        scene.text(self.columns.saturating_sub(2), 0, &MENU.to_string(), DIM);
+        for (column, text, color) in self.counts() {
+            scene.text(column, 0, &text, color);
         }
     }
 
@@ -410,6 +433,18 @@ mod tests {
         let (start, _, hit) = buttons.last().unwrap();
         assert_eq!(*hit, Hit::NewTab);
         assert!(*start < 60);
+    }
+
+    #[test]
+    fn tab_buttons_stop_before_they_reach_the_agent_counts() {
+        let mut frame = frame(true);
+        frame.columns = 40;
+        frame.tabs = 30;
+        let start = frame.counts_start();
+        let buttons = frame.tab_buttons();
+        assert!(buttons.len() < 31);
+        let (column, label, _) = buttons.last().unwrap();
+        assert!(column + label.chars().count() as u32 <= start);
     }
 
     #[test]

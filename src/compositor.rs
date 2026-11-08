@@ -88,7 +88,7 @@ use crate::apps;
 use crate::channel::{AGENT, AgentState, Host, Out};
 use crate::control::{self, viewer_socket_path};
 use crate::draw::{Face, Scene, Shape, TextCache};
-use crate::frame::{self, Hit};
+use crate::frame::{self, Hit, fit};
 use crate::gpu::Gpu;
 use crate::hypr::Hyprland;
 use crate::mcp;
@@ -101,7 +101,7 @@ use crate::panes::{
 use crate::picker::{self, Grid, Picker};
 use crate::save;
 use crate::settings::{self, Settings};
-use crate::text::Font;
+use crate::text::{Font, Rgba};
 use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
 use crate::workspace::{self, Workspace};
 
@@ -128,6 +128,7 @@ const PICKER_TICK: Duration = Duration::from_millis(500);
 const SAVE_DELAY: Duration = Duration::from_secs(1);
 const SAVE_EVERY: Duration = Duration::from_secs(60);
 const CLOSE_ICON: char = '\u{f0156}';
+const SCRIM: Rgba = [0.0, 0.0, 0.0, 0.35];
 const CLIPBOARD: u32 = 0;
 const PRIMARY: u32 = 1;
 
@@ -798,6 +799,9 @@ impl State {
             }
         }
         if self.active == Some(id) {
+            self.menu = None;
+            self.panel = None;
+            self.close_picker();
             let next = self.welcomed().next();
             self.set_active(next);
         }
@@ -2848,22 +2852,36 @@ impl State {
         };
         let mut elements: Vec<Element> = Vec::new();
 
+        let overlay_origin = |box_size: Size<i32, Physical>| -> Point<i32, Physical> {
+            let top = (size.h / 7).min((size.h - box_size.h).max(0));
+            ((size.w - box_size.w) / 2, top).into()
+        };
         if let Some(menu) = menu {
             let mut scene = Scene::new(paint.menu_font);
             let box_size = menu.draw(&mut scene, paint.menu_font);
-            let origin = ((size.w - box_size.w) / 2, (size.h - box_size.h) / 3).into();
-            paint.scene(&mut elements, &scene, origin, None);
+            paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
         }
         if let Some(panel) = panel {
             let mut scene = Scene::new(paint.menu_font);
             let box_size = panel.draw(&mut scene, paint.menu_font, settings);
-            let origin = ((size.w - box_size.w) / 2, (size.h - box_size.h) / 3).into();
-            paint.scene(&mut elements, &scene, origin, None);
+            paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
         }
 
         if let Some(picker) = picker {
             let pointer = pointer.to_physical(scale).to_i32_round();
-            paint_picker(&mut paint, &mut elements, picker, workspaces, size, pointer);
+            paint_picker(
+                &mut paint,
+                &mut elements,
+                picker,
+                (workspaces, current),
+                size,
+                pointer,
+            );
+        }
+        if menu.is_some() || panel.is_some() || picker.is_some() {
+            let mut scrim = Scene::new(font);
+            scrim.rect(0, 0, size.w, size.h, SCRIM);
+            paint.scene(&mut elements, &scrim, Point::default(), None);
         }
 
         let mut animating = false;
@@ -3060,34 +3078,39 @@ fn paint_picker(
     paint: &mut Paint,
     elements: &mut Vec<Element>,
     picker: &Picker,
-    workspaces: &[Workspace],
+    (workspaces, current): (&[Workspace], usize),
     size: Size<i32, Physical>,
     pointer: Point<i32, Physical>,
 ) {
     let (cell_width, cell_height) = (paint.font.cell_width, paint.font.cell_height);
+    let (menu_width, menu_height) = (
+        paint.menu_font.cell_width as i32,
+        paint.menu_font.cell_height as i32,
+    );
     let grid = Grid::new(workspaces.len() + 1, size, cell_height as i32);
     let mut over = Scene::new(paint.font);
     let mut under = Scene::new(paint.font);
     let line = over.line_width();
-    let label_width =
-        |text: &str| (text.chars().count() as u32 * paint.menu_font.cell_width) as i32;
+    let label_width = |text: &str| text.chars().count() as i32 * menu_width;
     let drop_target = picker.dragging.and_then(|_| grid.cell_at(pointer));
     let mut surfaces = Vec::new();
     for (i, cell) in grid.cells.iter().enumerate() {
-        let outline = if drop_target == Some(i) {
-            palette::CYAN
+        let (outline, stroke) = if drop_target == Some(i) {
+            (palette::CYAN, line)
         } else if picker.selected == i {
-            ACCENT
+            (ACCENT, line * 2)
         } else {
-            palette::MUTED
+            (palette::MUTED, line)
         };
-        over.box_lines(
-            cell.loc.x - line,
-            cell.loc.y - line,
-            cell.size.w + line * 2,
-            cell.size.h + line * 2,
-            outline,
-        );
+        for ring in 1..=stroke / line {
+            over.box_lines(
+                cell.loc.x - line * ring,
+                cell.loc.y - line * ring,
+                cell.size.w + line * ring * 2,
+                cell.size.h + line * ring * 2,
+                outline,
+            );
+        }
         under.rect(
             cell.loc.x,
             cell.loc.y,
@@ -3095,23 +3118,26 @@ fn paint_picker(
             cell.size.h,
             palette::DARK_BACKGROUND,
         );
-        let label_y =
-            cell.loc.y + cell.size.h + (grid.label - paint.menu_font.cell_height as i32) / 2;
+        let room = (cell.size.w / menu_width).max(1) as usize;
+        let label_y = cell.loc.y + cell.size.h + (grid.label - menu_height) / 2;
         let Some(workspace) = workspaces.get(i) else {
-            let text = "+ New workspace";
-            let x = cell.loc.x + (cell.size.w - label_width(text)) / 2;
-            let y = cell.loc.y + (cell.size.h - paint.menu_font.cell_height as i32) / 2;
-            over.text_px(x, y, text, Face::Menu, palette::FOREGROUND);
+            let text = fit("+ New workspace", room);
+            let x = cell.loc.x + (cell.size.w - label_width(&text)) / 2;
+            let y = cell.loc.y + (cell.size.h - menu_height) / 2;
+            over.text_px(x, y, &text, Face::Menu, palette::FOREGROUND);
             continue;
         };
         let confirming = picker.confirming == Some(workspace.id);
         let label = if confirming {
-            format!("close {}? press x again", workspace.name)
+            "close? x again".to_string()
         } else if workspace.closing {
             format!("{} closing", workspace.name)
+        } else if i == current {
+            format!("● {}", workspace.name)
         } else {
             workspace.name.clone()
         };
+        let label = fit(&label, room);
         let label_color = if confirming {
             palette::RED
         } else {
@@ -3125,8 +3151,8 @@ fn paint_picker(
         } else {
             palette::LIGHT_FOREGROUND
         };
-        let icon_x = button.loc.x + (button.size.w - paint.menu_font.cell_width as i32) / 2;
-        let icon_y = button.loc.y + (button.size.h - paint.menu_font.cell_height as i32) / 2;
+        let icon_x = button.loc.x + (button.size.w - menu_width) / 2;
+        let icon_y = button.loc.y + (button.size.h - menu_height) / 2;
         over.text_px(
             icon_x,
             icon_y,
@@ -3162,6 +3188,13 @@ fn paint_picker(
             }));
         }
     }
+    let hint = fit(
+        "tab move · enter show · esc close · x close",
+        (size.w / menu_width).max(1) as usize,
+    );
+    let hint_y = size.h - (cell_height as i32 * 2 + menu_height) / 2;
+    let hint_x = (size.w - label_width(&hint)) / 2;
+    over.text_px(hint_x, hint_y, &hint, Face::Menu, palette::LIGHT_FOREGROUND);
     paint.scene(elements, &over, Point::default(), None);
     elements.extend(surfaces);
     paint.scene(elements, &under, Point::default(), None);
@@ -3260,6 +3293,7 @@ impl Paint<'_> {
                     let font = match face {
                         Face::Chrome => self.font,
                         Face::Menu => self.menu_font,
+                        Face::Icon => self.font,
                     };
                     let Some(entry) =
                         self.texts

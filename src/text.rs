@@ -99,7 +99,58 @@ pub fn raster_run(context: &mut ScaleContext, font: &Font, text: &str, color: Rg
             }
         }
     }
-    let pixels = coverage
+    Run {
+        pixels: tint(&coverage, color),
+        width,
+        height,
+        left,
+        top,
+    }
+}
+
+/// The ink height every icon is drawn at, as a fraction of the font size.
+//
+// the height of the close and fullscreen glyphs in the Material Design
+// set; the pin glyphs are taller and are drawn at this height too
+const ICON_HEIGHT: f32 = 0.68;
+
+/// One glyph rasterized so its ink is no taller than `ICON_HEIGHT` and
+/// centred in a cell.
+pub fn raster_icon(context: &mut ScaleContext, font: &Font, icon: char, color: Rgba) -> Run {
+    let font_ref = font.as_ref();
+    let glyph = font_ref.charmap().map(icon);
+    let render = |context: &mut ScaleContext, px: f32| {
+        let mut scaler = context.builder(font_ref).size(px).hint(true).build();
+        Render::new(&[Source::Outline]).render(&mut scaler, glyph)
+    };
+    let Some(mut image) = render(context, font.px) else {
+        return Run {
+            pixels: Vec::new(),
+            width: 0,
+            height: 0,
+            left: 0,
+            top: 0,
+        };
+    };
+    let most = font.px * ICON_HEIGHT;
+    if image.placement.height as f32 > most + 0.5 {
+        let px = font.px * most / image.placement.height as f32;
+        if let Some(smaller) = render(context, px) {
+            image = smaller;
+        }
+    }
+    let (width, height) = (image.placement.width as i32, image.placement.height as i32);
+    Run {
+        pixels: tint(&image.data, color),
+        width,
+        height,
+        left: (font.cell_width as i32 - width) / 2,
+        top: (font.cell_height as i32 - height) / 2,
+    }
+}
+
+fn tint(coverage: &[u8], color: Rgba) -> Vec<u8> {
+    coverage
         .iter()
         .flat_map(|&value| {
             let alpha = value as f32 / 255.0 * color[3];
@@ -111,14 +162,7 @@ pub fn raster_run(context: &mut ScaleContext, font: &Font, text: &str, color: Rg
                 (alpha * 255.0).round() as u8,
             ]
         })
-        .collect();
-    Run {
-        pixels,
-        width,
-        height,
-        left,
-        top,
-    }
+        .collect()
 }
 
 #[cfg(test)]
@@ -136,5 +180,17 @@ mod tests {
         assert!(run.pixels.iter().any(|&byte| byte > 0));
         let icon = raster_run(&mut context, &font, "\u{f0156}", [1.0; 4]);
         assert!(icon.width > font.cell_width as i32);
+    }
+
+    #[test]
+    fn every_icon_is_drawn_no_taller_than_the_shared_icon_height() {
+        let font = Font::load(28.0);
+        let mut context = ScaleContext::new();
+        let heights: Vec<i32> = ['\u{f0403}', '\u{f0931}', '\u{f0293}', '\u{f0156}']
+            .into_iter()
+            .map(|icon| raster_icon(&mut context, &font, icon, [1.0; 4]).height)
+            .collect();
+        let most = (28.0 * ICON_HEIGHT).round() as i32 + 1;
+        assert!(heights.iter().all(|&height| height > 0 && height <= most));
     }
 }

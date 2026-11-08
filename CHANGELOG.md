@@ -147,6 +147,28 @@ command line and what the tool writes.
 - The window opens on a headless Hyprland output during development; see
   `scripts/devscreen`.
 - Clients in panes render on the same GPU as decade.
+- The palette, the New workspace browser and the settings panel share one
+  width and one top edge. The palette is as tall as its rows. A dim scrim
+  covers the window behind the palette, the settings panel and the picker.
+  Each of them has a footer of key hints.
+- The picker outlines the selected workspace two strokes thick. A dot marks
+  the current workspace. Labels are cut to their cell. After one press on a
+  workspace's x its label is "close? x again" in red. The x is larger.
+- An open palette, settings panel or picker closes when the active viewer
+  disconnects.
+- Long names are cut with an ellipsis on the Ctrl bar, in the top bar and
+  in the palette. decade draws no tab button in the top bar where it would
+  reach the agent counts.
+- The New workspace browser shows "no folders" when nothing matches.
+- Settings values line up in one column. "Bar hold" is now "Ctrl bar
+  delay" and "Grab animation" is now "Drag pickup time".
+- A pane whose shell exited keeps its normal background and shows a larger
+  restart button.
+- The Ctrl bar's icons share one size and stay dark on the focused bar. The
+  pin is filled when pinned and outlined when not.
+- The gaps between panes match the margin at the edge of the pane area.
+  Unfocused outlines are brighter. A pinned pane shows a pin on its top
+  edge, and a zoomed pane shows a zoom tag there.
 
 ## [0.1.0] - 2026-11-05
 

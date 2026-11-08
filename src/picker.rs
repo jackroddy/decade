@@ -4,6 +4,9 @@ use crate::menu::MenuKey;
 
 const DRAG_THRESHOLD: i32 = 8;
 
+/// The least width and height in physical pixels of a cell's close button.
+const MIN_BUTTON: i32 = 24;
+
 pub struct Picker {
     /// The selected cell: a workspace, or past the last one the new-workspace cell.
     pub selected: usize,
@@ -79,7 +82,7 @@ impl Grid {
 
     pub fn close_button(&self, cell: usize, cell_height: i32) -> Rectangle<i32, Physical> {
         let thumbnail = self.cells[cell];
-        let side = cell_height * 3 / 2;
+        let side = (cell_height * 3 / 2).max(MIN_BUTTON);
         let at = thumbnail.loc + Point::from((thumbnail.size.w - side, 0));
         Rectangle::new(at, (side, side).into())
     }
@@ -247,6 +250,12 @@ mod tests {
             picker.press(on_x, &ids, &grid, CELL),
             Outcome::CloseWorkspace(5)
         );
+    }
+
+    #[test]
+    fn the_close_button_is_at_least_the_least_button_size_with_a_small_font() {
+        let button = grid(3).close_button(0, 8);
+        assert!(button.size.w >= MIN_BUTTON && button.size.h >= MIN_BUTTON);
     }
 
     #[test]
