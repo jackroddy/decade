@@ -2,26 +2,21 @@ use std::os::unix::io::OwnedFd;
 use std::time::Duration;
 
 use smithay::backend::allocator::dmabuf::Dmabuf;
-use smithay::backend::renderer::element::solid::SolidColorRenderElement;
+use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, render_elements_from_surface_tree,
 };
-use smithay::backend::renderer::element::texture::TextureRenderElement;
 use smithay::backend::renderer::element::utils::{CropRenderElement, RescaleRenderElement};
-use smithay::backend::renderer::element::{Id, Kind};
-use smithay::backend::renderer::gles::element::PixelShaderElement;
-use smithay::backend::renderer::gles::{GlesPixelProgram, GlesRenderer, GlesTexture, Uniform};
-use smithay::backend::renderer::utils::{CommitCounter, draw_render_elements};
+use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::utils::draw_render_elements;
 use smithay::backend::renderer::{Bind, Color32F, Frame, Renderer};
-use smithay::render_elements;
 use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
 
-use crate::draw::{Face, Scene, Shape, TextCache};
+use crate::draw::{Element, Face, Paint, Scene, Shrink};
 use crate::frame::{self, fit};
 use crate::palette::{self, ACCENT, Rgba};
 use crate::panes::{BACKGROUND, Chrome};
 use crate::picker::{Grid, Picker};
-use crate::text::Font;
 use crate::workspace::Workspace;
 
 use super::input::Drag;
@@ -293,17 +288,6 @@ impl State {
     }
 }
 
-render_elements! {
-    Element<=GlesRenderer>;
-    Surface = CropRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
-    Text = TextureRenderElement<GlesTexture>,
-    Rounded = PixelShaderElement,
-    Solid = SolidColorRenderElement,
-    Ghost = RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
-    GhostSolid = RescaleRenderElement<SolidColorRenderElement>,
-    Thumbnail = CropRenderElement<RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>>,
-}
-
 pub(super) fn build_frame(
     workspaces: &[Workspace],
     shown: usize,
@@ -481,125 +465,4 @@ fn paint_picker(
     paint.scene(elements, &over, Point::default(), None);
     elements.extend(surfaces);
     paint.scene(elements, &under, Point::default(), None);
-}
-
-#[derive(Clone, Copy)]
-struct Shrink {
-    about: Point<i32, Physical>,
-    scale: f64,
-    alpha: f32,
-}
-
-impl Shrink {
-    fn point(&self, point: Point<i32, Physical>) -> Point<i32, Physical> {
-        let offset = (point - self.about).to_f64().upscale(self.scale);
-        (self.about.to_f64() + offset).to_i32_round()
-    }
-}
-
-struct Paint<'a> {
-    renderer: &'a mut GlesRenderer,
-    texts: &'a mut TextCache,
-    font: &'a Font,
-    menu_font: &'a Font,
-    rounded: &'a GlesPixelProgram,
-    scale: f64,
-}
-
-impl Paint<'_> {
-    fn scene(
-        &mut self,
-        elements: &mut Vec<Element>,
-        scene: &Scene,
-        origin: Point<i32, Physical>,
-        shrink: Option<Shrink>,
-    ) {
-        let alpha = shrink.map_or(1.0, |shrink| shrink.alpha);
-        for shape in scene.shapes.iter().rev() {
-            match shape {
-                Shape::Rect { at, size, color } => {
-                    let a = color[3] * alpha;
-                    let solid = SolidColorRenderElement::new(
-                        Id::new(),
-                        Rectangle::new(origin + *at, *size),
-                        CommitCounter::default(),
-                        Color32F::new(color[0] * a, color[1] * a, color[2] * a, a),
-                        Kind::Unspecified,
-                    );
-                    elements.push(match shrink {
-                        Some(shrink) => Element::GhostSolid(RescaleRenderElement::from_element(
-                            solid,
-                            shrink.about,
-                            shrink.scale,
-                        )),
-                        None => Element::Solid(solid),
-                    });
-                }
-                Shape::Rounded {
-                    at,
-                    size,
-                    radius,
-                    fill,
-                    border,
-                } => {
-                    let premultiply = |c: [f32; 4]| {
-                        let a = c[3] * alpha;
-                        (c[0] * a, c[1] * a, c[2] * a, a)
-                    };
-                    let area = Rectangle::new(origin + *at, *size)
-                        .to_f64()
-                        .to_logical(self.scale)
-                        .to_i32_round();
-                    elements.push(Element::Rounded(PixelShaderElement::new(
-                        self.rounded.clone(),
-                        area,
-                        None,
-                        1.0,
-                        vec![
-                            Uniform::new("fill", premultiply(*fill)),
-                            Uniform::new("border", premultiply(*border)),
-                            Uniform::new("radius", *radius as f32),
-                            Uniform::new("border_width", self.font.cell_width as f32 / 8.0),
-                        ],
-                        Kind::Unspecified,
-                    )));
-                }
-                Shape::Text {
-                    at,
-                    text,
-                    face,
-                    color,
-                } => {
-                    if shrink.is_some() {
-                        continue;
-                    }
-                    let font = match face {
-                        Face::Menu => self.menu_font,
-                        Face::Chrome | Face::Icon => self.font,
-                    };
-                    let Some(entry) =
-                        self.texts
-                            .get(self.renderer, font, *face, text, *color, self.scale)
-                    else {
-                        continue;
-                    };
-                    let location = origin + *at + entry.offset;
-                    let texture = TextureRenderElement::from_static_texture(
-                        Id::new(),
-                        self.renderer.context_id(),
-                        location.to_f64(),
-                        entry.texture.clone(),
-                        1,
-                        Transform::Normal,
-                        None,
-                        Some(Rectangle::from_size(entry.size.to_f64().to_logical(1.0))),
-                        Some(entry.size.to_f64().to_logical(self.scale).to_i32_round()),
-                        None,
-                        Kind::Unspecified,
-                    );
-                    elements.push(Element::Text(texture));
-                }
-            }
-        }
-    }
 }
