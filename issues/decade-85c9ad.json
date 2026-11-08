@@ -1,0 +1,30 @@
+{
+  "id": "decade-85c9ad",
+  "title": "Agent state per pane lives apart from the router's client claims",
+  "body": "`Workspace.agents: HashMap<String, Agent { state, message, client }>` is keyed by pane name and stores the client id, while `Router` already knows which client holds which pane. Cleanup is written three times: by client id on disconnect (`retain(.. agent.client != id)`), and by pane name at both pane-removal sites. `Host::Status` carries `client` and `pane` only so the compositor can rebuild that link.\n\nSeparately, `Router::connected` inserts a `Client { name: None, .. }` before hello, and `hello` repeats the literal through `entry().or_insert`. The \"say hello first\" check tests `name`, and reads end in `unwrap_or_default()` and `unwrap_or(\"another client\")`.\n\n## Proposal\n\n`status: Option<(AgentState, Option<String>)>` on `channel::Client`, so disconnect and pane removal clear it with the claim, and `Workspace::agent_state` takes the max over the router's clients. Insert a client only at `hello`, with `name: String`; \"hello first\" becomes `!clients.contains_key(&id)`.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:41:01.521678501Z",
+  "updated_at": "2026-11-08T07:41:01.521678501Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
