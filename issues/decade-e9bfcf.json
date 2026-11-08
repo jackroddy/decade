@@ -1,0 +1,30 @@
+{
+  "id": "decade-e9bfcf",
+  "title": "The server tracks seen per viewer to fill a field the viewer ignores",
+  "body": "`Viewer.seen` in `compositor.rs` is written at three sites in `tell_selection` and the offer path so that `ServerMessage::Offer.seen` can carry it. `viewer.rs` reads `Offer { selection, serial, mimes, .. }`, and `docs/viewer.md` says the viewer adopts every server offer it receives, so the field has no reader by design. The viewer-to-server `seen` stays; `crossed()` reads it.\n\n## Proposal\n\nDrop `seen` from the server-to-viewer `Offer` and drop `Viewer.seen`. A protocol change, but the protocol is unreleased.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:39:48.17125981Z",
+  "updated_at": "2026-11-08T07:39:48.17125981Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
