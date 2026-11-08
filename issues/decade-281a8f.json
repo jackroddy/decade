@@ -1,0 +1,30 @@
+{
+  "id": "decade-281a8f",
+  "title": "A viewer's frame pool becomes its own struct",
+  "body": "`Viewer` in `compositor.rs` has seventeen fields, and seven of them belong to the buffer pool: `formats`, `formats_due`, `linear`, `pool`, `next_buffer`, `ready` and `wants_frame`. `render_to`, about 105 lines, first finds or allocates a slot and announces it with `ServerMessage::Buffer`, then renders into it and sends `Frame`. The rule \"drop a slot whose size is stale once it is not lent out, and send `Forget`\" is written twice: in the `Release` arm of `viewer_message` for slots that come back stale, and in `forget_stale` for idle slots at a resize.\n\n`Gpu::allocate_linear` in `gpu.rs` is `Gpu::allocate` with an empty format list, since `allocate` already falls back to `Xrgb8888` with the linear modifier when nothing matches. The compositor's `|| viewer.formats.is_empty()` branch picks between the two.\n\n## Proposal\n\nA `Pool` struct on `Viewer` with `slot(size, gpu) -> Option<usize>`, `release(id, size)` and `forget_stale(size)`, so the stale rule has one home and `render_to` keeps only rendering and sending, about 30 lines. `allocate_linear` goes and the call becomes `allocate(w, h, if viewer.linear { &[] } else { &viewer.formats })`.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:39:08.683316423Z",
+  "updated_at": "2026-11-08T07:39:08.683316423Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
