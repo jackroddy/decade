@@ -1,0 +1,30 @@
+{
+  "id": "decade-149700",
+  "title": "Closing a workspace and closing a tab are two copies of one mechanism",
+  "body": "`Workspace.closing` and `Tab.closing` in `workspace.rs` are separate flags. `close_workspace` and `finish_closing` in `compositor.rs` mark the workspace, `send_close` every client, and remove the workspace once no client remains. `close_tab` and `finish_closing_tab` do the same for a tab. Every site that reacts to a client leaving checks both flags, in order: `toplevel_destroyed`, `remove_pane` and the `commit` handler. `close_tab` already escalates to `close_workspace` when every other tab is closing.\n\n## Proposal\n\n`close_workspace` marks every tab closing. `finish_closing_tab` removes the workspace (sockets, listener, viewer moves) when it removes the last tab. `Workspace.closing` becomes `tabs.iter().all(|tab| tab.closing)`, read only by the picker label. One flag, one finish path and the two-step check at three sites go.\n\n## Open\n\nA workspace whose tabs have already gone must still tear down. Check the path where the last tab closes while a viewer shows the workspace.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:39:08.703929516Z",
+  "updated_at": "2026-11-08T07:39:08.703929516Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
