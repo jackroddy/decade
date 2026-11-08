@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T19:41:16.266638738Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.036957546Z",
-  "updated_at": "2026-11-08T19:26:16.266638738Z",
+  "updated_at": "2026-11-08T19:28:59.180292418Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "9b7d93a6",
+      "at": "2026-11-08T19:28:59.180291798Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "Checked against the code at 49896bf. The table holds: no reader exists for any listed item. `decade-apps` uses only `decade-channel`, never `wire.rs`.\n\nChose option 2 with `Release.fence` kept. `output`, `workspaces` and `showing` stay for a viewer sidebar and the remote viewer in decade-e3a784. `show` went with the rest, so a viewer cannot pick its workspace over the wire until a viewer has UI for it. `Frame.fence` stays because the server sends a real fence. `Formats.device` went: the server allocates on its own render node and never read it. A multi-GPU host may want it back.\n\nOpcodes were renumbered to stay dense, since the protocol is unreleased and every client ships in the same binary.",
+      "commit": "363bbd2",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
