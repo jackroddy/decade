@@ -1,0 +1,30 @@
+{
+  "id": "decade-1d5570",
+  "title": "A pane drag is tracked on State and again on every Layout",
+  "body": "`State.drag` holds `Drag::Pane { id, .. }` while `Layout.dragging` in `panes.rs` holds the same id; `start_pane_drag` and `drop` set and clear both. `Layout.drag_cell` is the pointer cell during that drag, and `Layout.bar` and `Layout.hover` are the pointer's chrome state. All four sit on every tab's `Layout`, though only the layout on screen can have them, so `workspace_shown` and `show_tab` each reset the same fields on the layout being hidden. `pointer_moved` takes `drag` out of `State` and puts it back to get past the borrow. `Layout::draw`, `draw_bars`, `draw_drop` and `draw_ghost` read the four fields, and the tests near `panes.rs` lines 1452 and 1508 set them.\n\n## Proposal\n\nThe drag cell lives in `Drag::Pane`; `bar` and `hover` live on `State`. The draw methods take them as arguments, or as one small view struct together with the scratch name they already take. Renders of other workspaces pass none. Both reset blocks and the duplicate id go.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:39:08.714276392Z",
+  "updated_at": "2026-11-08T07:39:08.714276392Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
