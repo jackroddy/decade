@@ -3,7 +3,7 @@
   "title": "Does the viewer protocol keep messages and fields no client reads?",
   "body": "The viewer protocol is unreleased: v0.1.0 has no `docs/viewer.md`. These parts of `wire.rs` have no reader today.\n\n| item | sender | reader |\n|---|---|---|\n| `Output`, `Workspaces`, `Showing` | the server, on every size change, list change and show | `viewer.rs` drops all three with `=> {}`; `script.rs` and `control::list` with `_ =>` |\n| `ViewerMessage::Show` | nobody; only wire tests build it | the server's `show()` is reached from the picker and palette |\n| `List` from a welcomed viewer | nobody | a branch in `viewer_message` keeps the viewer connected |\n| `CursorImage`, `Cursor` | nobody; `send_cursor` maps `CursorImageStatus::Surface` to `CursorShape(\"default\")` | the viewer maps both to `Shape::Default` |\n| `Buffer.opaque` | always `true` | ignored with `..` |\n| `Frame.damage` and the `Rect` type | always `Vec::new()` | the viewer damages the whole buffer |\n| `Release.fence` | always `None` from both clients | read as `Release { id, .. }` |\n| `Formats.device` | the viewer computes `main_device()` and script calls `dev_id()` to send it | read as `Formats { formats, .. }` |\n| `Error.code` | both sides | no receiver reads it |\n| `Close.reason` | always 1 | the viewer prints a string equal to `message` |\n| `PointerLeft` | the viewer | the server handles it with `=> {}` |\n\nThe `fenced` flag before `damage` and the fd after it give `Frame` its own encode layout; without damage it is an id plus a fence, like `Release`. Together these are about 300 lines of `wire.rs` and tests plus three doc sections.\n\n## Options\n\n1. Delete everything without a reader now and add it back when a viewer has UI for it. No compatibility cost, the most code removed, and the record of what the protocol was planned to carry goes with it.\n2. Keep `Output`, `Workspaces` and `Showing` for a viewer sidebar, and delete the rest. The remote viewer (decade-e3a784) may want them.\n3. Keep all of it and only fix the `allow(dead_code)` so the compiler shows what is unused.\n\nI lean to option 2 with `Release.fence` kept, since `docs/viewer.md` argues for the fence on purpose.",
   "type": "decision",
-  "status": "open",
+  "status": "in_progress",
   "priority": 3,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T19:41:16.266638738Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.036957546Z",
-  "updated_at": "2026-11-08T07:40:26.036957546Z",
+  "updated_at": "2026-11-08T19:26:16.266638738Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
