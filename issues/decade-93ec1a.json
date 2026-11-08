@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T21:24:12.111934813Z",
   "defer_until": null,
   "created_at": "2026-11-08T18:44:01.264619509Z",
-  "updated_at": "2026-11-08T21:09:12.111934813Z",
+  "updated_at": "2026-11-08T21:09:47.31613185Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "cd88c992",
+      "at": "2026-11-08T21:09:47.31613115Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "Re-surveyed on the current tree. Of the rows marked yes, only the three directory names were still written out more than once. `files::DIR` covers them now. The others had already gone:\n\n- `DECADE_PANE` is set in one place on the server, `Children::command` in `children.rs`.\n- The 4096-byte read chunk lives only in `lines.rs`.\n- The 5 ms retry is `wire::OUTBOX_RETRY`, used by the compositor and the viewer.\n\nLeft as they are:\n\n- `XDG_RUNTIME_DIR` in `hypr.rs`: Hyprland's sockets sit under the real runtime directory, so `Hyprland::find` gives up when the variable is unset. `files::runtime_dir` falls back to the temp directory instead. They are different lookups.\n- The repeat rate: `1000 / rate` in `start_repeat` converts a per-second rate to milliseconds. The `rate.min(1000)` clamp in `viewers.rs` keeps that interval at 1 ms or more. Naming one constant for both would hide the unit conversion.\n- The JSON schema keys in `mcp.rs`: the `json!` literals read as JSON Schema itself. A helper per field would hide the schema behind another notation.",
+      "commit": "80f88cd",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
