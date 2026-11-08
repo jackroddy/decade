@@ -3,7 +3,7 @@
   "title": "The server tracks seen per viewer to fill a field the viewer ignores",
   "body": "`Viewer.seen` in `compositor.rs` is written at three sites in `tell_selection` and the offer path so that `ServerMessage::Offer.seen` can carry it. `viewer.rs` reads `Offer { selection, serial, mimes, .. }`, and `docs/viewer.md` says the viewer adopts every server offer it receives, so the field has no reader by design. The viewer-to-server `seen` stays; `crossed()` reads it.\n\n## Proposal\n\nDrop `seen` from the server-to-viewer `Offer` and drop `Viewer.seen`. A protocol change, but the protocol is unreleased.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T19:44:01.76119668Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:39:48.17125981Z",
-  "updated_at": "2026-11-08T19:29:01.76119668Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T19:29:51.63730643Z",
+  "closed_at": "2026-11-08T19:29:51.63730643Z",
+  "close_reason": "Landed in 1b87e2f. The server's offer has no seen field, and Viewer.seen is gone. docs/viewer.md gives the two directions' offer layouts.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "1b87e2f",
+      "branch": "simplify"
+    }
   }
 }
