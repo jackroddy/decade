@@ -152,7 +152,7 @@ impl Workspace {
     pub fn add_pane(&mut self, tab: usize, base: &str, cwd: Option<PathBuf>) -> usize {
         let name = self.unique_pane_name(base);
         let layout = &mut self.tabs[tab].layout;
-        let id = layout.add_transient(name.clone());
+        let id = layout.add_transient(name);
         if let Some(pane) = layout.pane_mut(id) {
             pane.cwd = cwd;
         }

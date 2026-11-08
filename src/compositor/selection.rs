@@ -43,7 +43,7 @@ impl State {
     /// Pass a viewer's request for the selection's data to the client
     /// that owns it, if the request is for the server's newest offer.
     pub(super) fn viewer_request(
-        &mut self,
+        &self,
         selection: Selection,
         serial: u32,
         mime: String,
@@ -74,7 +74,7 @@ impl State {
         }
     }
 
-    pub(super) fn clear_selection(&mut self, selection: Selection) {
+    pub(super) fn clear_selection(&self, selection: Selection) {
         match selection {
             Selection::Clipboard => clear_data_device_selection(&self.display_handle, &self.seat),
             Selection::Primary => clear_primary_selection(&self.display_handle, &self.seat),

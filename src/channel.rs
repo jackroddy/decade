@@ -209,17 +209,13 @@ impl Router {
         let mut pane = None;
         if let Some(wanted) = &hello.pane {
             if !panes.contains(&wanted.as_str()) {
-                out.push(error_line(
-                    id,
-                    &format!("no pane named {wanted}"),
-                    value.clone(),
-                ));
+                out.push(error_line(id, &format!("no pane named {wanted}"), value));
             } else {
                 match self.occupant(wanted) {
                     Some((other, occupant)) if other != id => out.push(error_line(
                         id,
                         &format!("pane {wanted} is occupied by {}", occupant.name),
-                        value.clone(),
+                        value,
                     )),
                     _ => pane = Some(wanted.clone()),
                 }

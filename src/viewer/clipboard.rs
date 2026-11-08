@@ -204,7 +204,7 @@ impl Viewer {
     }
 
     pub(super) fn server_request(
-        &mut self,
+        &self,
         selection: Selection,
         serial: u32,
         mime: String,

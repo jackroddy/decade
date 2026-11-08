@@ -24,13 +24,12 @@ pub struct Gpu {
 
 impl Gpu {
     pub fn open() -> Result<Gpu, String> {
-        let devices = EGLDevice::enumerate().map_err(|error| error.to_string())?;
-        let (device, node) = devices
-            .filter_map(|device| {
+        let (device, node) = EGLDevice::enumerate()
+            .map_err(|error| error.to_string())?
+            .find_map(|device| {
                 let node = device.try_get_render_node().ok().flatten()?;
                 Some((device, node))
             })
-            .next()
             .ok_or("no GPU with a render node")?;
         let path = node
             .dev_path_with_type(NodeType::Render)

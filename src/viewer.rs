@@ -779,7 +779,7 @@ impl Viewer {
         self.show_pending();
     }
 
-    fn watch(&mut self, id: u32, fence: OwnedFd) -> Option<RegistrationToken> {
+    fn watch(&self, id: u32, fence: OwnedFd) -> Option<RegistrationToken> {
         let source = Generic::new(fence, Interest::READ, Mode::OneShot);
         let inserted = self
             .loop_handle

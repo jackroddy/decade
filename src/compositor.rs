@@ -936,7 +936,7 @@ impl State {
         self.save_due = due.ok();
     }
 
-    fn save(&mut self) {
+    fn save(&self) {
         let Some(path) = &self.save_path else {
             return;
         };
@@ -959,7 +959,7 @@ impl State {
         self.schedule_save();
     }
 
-    fn configure(&mut self, workspace: usize, tab: usize, id: usize) {
+    fn configure(&self, workspace: usize, tab: usize, id: usize) {
         let shown = &self.workspaces[workspace];
         let layout = &shown.tabs[tab].layout;
         let Some(pane) = layout.pane(id) else {
