@@ -1,0 +1,30 @@
+{
+  "id": "decade-701a8d",
+  "title": "A cell rect is turned into pixels at nine sites",
+  "body": "`((rect.column * font.cell_width) as i32, (rect.row * font.cell_height) as i32)` and the matching `columns`/`rows` size form appear at nine sites in `compositor.rs`: `pane_origin`, `client_geometry`, the ghost's `outer` and `offset` in `render`, the client loop in `render` twice, the picker thumbnails twice, and the grid in `render`. `Scene::px` in `draw.rs` does the same arithmetic but needs a `Scene`.\n\n## Proposal\n\n`Font::px_rect(&self, CellRect) -> Rectangle<i32, Physical>`, or a free function beside `CellRect`. The sites take `.loc` and `.size` from it. About 45 lines become about 12.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:39:48.109082265Z",
+  "updated_at": "2026-11-08T07:39:48.109082265Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
