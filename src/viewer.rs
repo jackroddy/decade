@@ -1,7 +1,6 @@
 mod clipboard;
 
 use std::collections::HashMap;
-use std::io::{self, Read};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 
@@ -55,6 +54,7 @@ use wayland_protocols::wp::viewporter::client::{
 use crate::control::connect_or_start;
 use crate::hypr::{self, Hyprland};
 use crate::inhibit::Shortcuts;
+use crate::lines::Lines;
 use crate::palette::BACKGROUND;
 use crate::wire::{self, Decoder, Format, Outbox, Plane, SCALE, ServerMessage, ViewerMessage};
 use clipboard::Clipboard;
@@ -782,31 +782,20 @@ impl Viewer {
                 return;
             }
         };
-        let mut buffer: Vec<u8> = Vec::new();
+        let mut lines = Lines::default();
         let inserted = event_loop.handle().insert_source(
             Generic::new(stream, Interest::READ, Mode::Level),
             move |_, stream, viewer: &mut Viewer| {
-                let mut chunk = [0u8; 4096];
-                loop {
-                    match (&**stream).read(&mut chunk) {
-                        Ok(0) => return Ok(PostAction::Remove),
-                        Ok(n) => {
-                            buffer.extend_from_slice(&chunk[..n]);
-                            let mut recount = false;
-                            while let Some(end) = buffer.iter().position(|&b| b == b'\n') {
-                                let line: Vec<u8> = buffer.drain(..=end).collect();
-                                recount |= hypr::wants_recount(&String::from_utf8_lossy(&line));
-                            }
-                            if recount {
-                                viewer.recount_alone();
-                            }
-                        }
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            return Ok(PostAction::Continue);
-                        }
-                        Err(_) => return Ok(PostAction::Remove),
-                    }
+                let mut recount = false;
+                let open = lines.read(stream, |line| recount |= hypr::wants_recount(line));
+                if recount {
+                    viewer.recount_alone();
                 }
+                Ok(if open {
+                    PostAction::Continue
+                } else {
+                    PostAction::Remove
+                })
             },
         );
         if inserted.is_ok() {

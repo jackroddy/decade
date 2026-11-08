@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::os::unix::io::OwnedFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -90,6 +90,7 @@ use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::files;
 use crate::frame::{self, Hit, fit};
 use crate::gpu::Gpu;
+use crate::lines::Lines;
 use crate::mcp;
 use crate::menu::{Action, Menu, MenuKey, Outcome};
 use crate::palette::Rgba;
@@ -1582,36 +1583,20 @@ impl State {
         self.next_client += 1;
         self.workspaces[index].router.connected(id);
         self.sockets.insert(id, (workspace, writer));
-        let mut buffer: Vec<u8> = Vec::new();
+        let mut lines = Lines::default();
         let inserted = self.loop_handle.insert_source(
             Generic::new(stream, Interest::READ, CalloopMode::Level),
             move |_, stream, state| {
-                let mut chunk = [0u8; 4096];
-                loop {
-                    match (&**stream).read(&mut chunk) {
-                        Ok(0) => {
-                            state.channel_disconnected(id);
-                            return Ok(PostAction::Remove);
-                        }
-                        Ok(n) => {
-                            buffer.extend_from_slice(&chunk[..n]);
-                            while let Some(end) = buffer.iter().position(|&b| b == b'\n') {
-                                let line: Vec<u8> = buffer.drain(..=end).collect();
-                                let line = String::from_utf8_lossy(&line[..end]);
-                                if !line.trim().is_empty() {
-                                    state.channel_line(id, &line);
-                                }
-                            }
-                        }
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            return Ok(PostAction::Continue);
-                        }
-                        Err(_) => {
-                            state.channel_disconnected(id);
-                            return Ok(PostAction::Remove);
-                        }
+                let open = lines.read(stream, |line| {
+                    if !line.trim().is_empty() {
+                        state.channel_line(id, line);
                     }
+                });
+                if open {
+                    return Ok(PostAction::Continue);
                 }
+                state.channel_disconnected(id);
+                Ok(PostAction::Remove)
             },
         );
         if inserted.is_err() {
