@@ -77,7 +77,6 @@ use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
 use crate::workspace::{self, Workspace};
 
 use input::{Drag, Repeat};
-use render::build_frame;
 use selection::Offered;
 use viewers::Viewer;
 
@@ -852,17 +851,6 @@ impl State {
         {
             tab.layout.resize(area);
         }
-    }
-
-    fn frame(&self) -> frame::Frame {
-        let (columns, rows) = self.grid();
-        build_frame(
-            &self.workspaces,
-            self.current(),
-            columns,
-            rows,
-            self.sidebar_open,
-        )
     }
 
     fn toggle_sidebar(&mut self) {

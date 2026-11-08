@@ -1,5 +1,5 @@
 use std::os::unix::io::OwnedFd;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::element::Kind;
@@ -15,8 +15,9 @@ use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
 use crate::draw::{Element, Face, Paint, Scene, Shrink};
 use crate::frame::{self, fit};
 use crate::palette::{self, ACCENT, Rgba};
-use crate::panes::{BACKGROUND, Chrome};
+use crate::panes::{BACKGROUND, Chrome, Layout};
 use crate::picker::{Grid, Picker};
+use crate::settings::Settings;
 use crate::workspace::Workspace;
 
 use super::input::Drag;
@@ -34,6 +35,9 @@ impl State {
         workspace: usize,
     ) -> Result<(Option<OwnedFd>, bool), String> {
         let current = self.current();
+        let picker_grid =
+            (workspace == current && self.picker.is_some()).then(|| self.picker_grid());
+        let frame = picker_grid.is_none().then(|| self.frame(workspace));
         let State {
             gpu,
             size,
@@ -52,7 +56,6 @@ impl State {
             picker,
             settings,
             rounded,
-            sidebar_open,
             ..
         } = self;
         let layout = workspaces[workspace].layout();
@@ -85,6 +88,7 @@ impl State {
         };
         let scale = *scale;
         let size = *size;
+        let pointer = pointer.to_physical(scale).to_i32_round();
         let damage = Rectangle::from_size(size);
         let mut framebuffer = gpu
             .renderer
@@ -114,13 +118,11 @@ impl State {
             let box_size = panel.draw(&mut scene, paint.menu_font, settings);
             paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
         }
-
-        if let Some(picker) = picker {
-            let pointer = pointer.to_physical(scale).to_i32_round();
+        if let (Some(picker), Some(grid)) = (picker, &picker_grid) {
             paint_picker(
                 &mut paint,
                 &mut elements,
-                picker,
+                (picker, grid),
                 (workspaces, current),
                 size,
                 pointer,
@@ -133,64 +135,14 @@ impl State {
         }
 
         let mut animating = false;
-        let dragged = match drag {
-            Some(Drag::Pane {
-                id, grab, start, ..
-            }) => layout.pane(*id).map(|pane| (pane, *grab, *start)),
-            _ => None,
-        };
-        if let Some((pane, grab, start)) = dragged {
-            let animation = Duration::from_millis(settings.grab_ms).as_secs_f64();
-            let t = if animation > 0.0 {
-                (start.elapsed().as_secs_f64() / animation).min(1.0)
-            } else {
-                1.0
-            };
-            animating = t < 1.0;
-            let eased = 1.0 - (1.0 - t).powi(3);
-            let shrink = Shrink {
-                about: pointer.to_physical(scale).to_i32_round(),
-                scale: 1.0 + (settings.ghost_scale - 1.0) * eased,
-                alpha: 1.0 + (settings.ghost_opacity - 1.0) * eased as f32,
-            };
-            let origin = shrink.about - grab;
-            let cell: Point<i32, Physical> =
-                (font.cell_width as i32, font.cell_height as i32).into();
-            let outer = font.px_rect(pane.rect).size;
-            let start = shrink.point(origin + cell.downscale(2));
-            let end = shrink.point(origin + outer - cell.downscale(2));
-            let mut outline = Scene::new(font);
-            let line = outline.line_width();
-            outline.box_lines(
-                start.x,
-                start.y,
-                end.x - start.x + line,
-                end.y - start.y + line,
-                ACCENT,
-            );
-            paint.scene(&mut elements, &outline, Point::default(), None);
-            let mut ghost = Scene::new(font);
-            layout.draw_ghost(pane.id, &mut ghost, chrome);
-            paint.scene(&mut elements, &ghost, origin + cell, Some(shrink));
-            if let Some(toplevel) = pane.toplevel() {
-                let offset = font.px_rect(pane.client_rect()).loc - font.px_rect(pane.rect).loc;
-                let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                    render_elements_from_surface_tree(
-                        paint.renderer,
-                        toplevel.wl_surface(),
-                        origin + offset,
-                        scale,
-                        shrink.alpha,
-                        Kind::Unspecified,
-                    );
-                elements.extend(surfaces.into_iter().map(|surface| {
-                    Element::Ghost(RescaleRenderElement::from_element(
-                        surface,
-                        shrink.about,
-                        shrink.scale,
-                    ))
-                }));
-            }
+        if let Some(Drag::Pane {
+            id, grab, start, ..
+        }) = drag
+            && layout.pane(*id).is_some()
+        {
+            let shrink;
+            (shrink, animating) = ghost_shrink(settings, *start, pointer);
+            paint_ghost(&mut paint, &mut elements, layout, chrome, shrink, *grab);
         }
 
         let mut above = Scene::new(font);
@@ -205,43 +157,11 @@ impl State {
         }
         paint.scene(&mut elements, &above, Point::default(), None);
 
-        for pane in layout.visible().filter(|_| picker.is_none()) {
-            let Some(toplevel) = pane.toplevel() else {
-                continue;
-            };
-            if chrome.dragging == Some(pane.id) {
-                continue;
-            }
-            let rect = pane.client_rect();
-            if rect.columns == 0 || rect.rows == 0 {
-                continue;
-            }
-            let crop = font.px_rect(rect);
-            let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                render_elements_from_surface_tree(
-                    paint.renderer,
-                    toplevel.wl_surface(),
-                    crop.loc,
-                    scale,
-                    1.0,
-                    Kind::Unspecified,
-                );
-            elements.extend(
-                surfaces
-                    .into_iter()
-                    .filter_map(|surface| CropRenderElement::from_element(surface, scale, crop))
-                    .map(Element::Surface),
-            );
-        }
-
-        if picker.is_none() {
+        if let Some(frame) = frame {
+            paint_clients(&mut paint, &mut elements, layout, chrome);
             let mut below = Scene::new(font);
             layout.draw(&mut below, chrome);
-            let grid = (
-                size.w as u32 / font.cell_width,
-                size.h as u32 / font.cell_height,
-            );
-            build_frame(workspaces, workspace, grid.0, grid.1, *sidebar_open).draw(&mut below);
+            frame.draw(&mut below);
             paint.scene(&mut elements, &below, Point::default(), None);
         }
 
@@ -269,50 +189,153 @@ impl State {
         }
         Ok((sync.export(), animating))
     }
+
+    /// The top bar and sidebar drawn around the workspace's panes.
+    pub(super) fn frame(&self, shown: usize) -> frame::Frame {
+        let entries = (self.workspaces.iter().enumerate())
+            .map(|(i, workspace)| {
+                let urgent = workspace.agents.values().max_by_key(|agent| agent.state);
+                frame::Entry {
+                    id: workspace.id,
+                    name: workspace.name.clone(),
+                    state: workspace.agent_state(),
+                    message: urgent.and_then(|agent| agent.message.clone()),
+                    current: i == shown,
+                }
+            })
+            .collect();
+        let (columns, rows) = self.grid();
+        let shown = &self.workspaces[shown];
+        let layout = shown.layout();
+        let pane = layout
+            .pane(layout.focused)
+            .map(|pane| pane.name.clone())
+            .unwrap_or_default();
+        frame::Frame::new(
+            columns,
+            rows,
+            self.sidebar_open,
+            entries,
+            (shown.tabs.len(), shown.active_tab),
+            pane,
+            layout.zoom.is_some(),
+        )
+    }
 }
 
-pub(super) fn build_frame(
-    workspaces: &[Workspace],
-    shown: usize,
-    columns: u32,
-    rows: u32,
-    open: bool,
-) -> frame::Frame {
-    let entries = workspaces
-        .iter()
-        .enumerate()
-        .map(|(i, workspace)| {
-            let urgent = workspace.agents.values().max_by_key(|agent| agent.state);
-            frame::Entry {
-                id: workspace.id,
-                name: workspace.name.clone(),
-                state: workspace.agent_state(),
-                message: urgent.and_then(|agent| agent.message.clone()),
-                current: i == shown,
-            }
-        })
-        .collect();
-    let shown = &workspaces[shown];
-    let layout = shown.layout();
-    let pane = layout
-        .pane(layout.focused)
-        .map(|pane| pane.name.clone())
-        .unwrap_or_default();
-    frame::Frame::new(
-        columns,
-        rows,
-        open,
-        entries,
-        (shown.tabs.len(), shown.active_tab),
-        pane,
-        layout.zoom.is_some(),
-    )
+/// How far the ghost of a pane grabbed at `start` has shrunk about the
+/// pointer, and whether it is still shrinking.
+fn ghost_shrink(
+    settings: &Settings,
+    start: Instant,
+    about: Point<i32, Physical>,
+) -> (Shrink, bool) {
+    let animation = Duration::from_millis(settings.grab_ms).as_secs_f64();
+    let t = if animation > 0.0 {
+        (start.elapsed().as_secs_f64() / animation).min(1.0)
+    } else {
+        1.0
+    };
+    let eased = 1.0 - (1.0 - t).powi(3);
+    let shrink = Shrink {
+        about,
+        scale: 1.0 + (settings.ghost_scale - 1.0) * eased,
+        alpha: 1.0 + (settings.ghost_opacity - 1.0) * eased as f32,
+    };
+    (shrink, t < 1.0)
+}
+
+/// Draw the pane being dragged as a ghost held at `grab` from the
+/// pointer: its outline, its chrome and its client.
+fn paint_ghost(
+    paint: &mut Paint,
+    elements: &mut Vec<Element>,
+    layout: &Layout,
+    chrome: Chrome,
+    shrink: Shrink,
+    grab: Point<i32, Physical>,
+) {
+    let Some(pane) = chrome.dragging.and_then(|id| layout.pane(id)) else {
+        return;
+    };
+    let font = paint.font;
+    let origin = shrink.about - grab;
+    let cell: Point<i32, Physical> = (font.cell_width as i32, font.cell_height as i32).into();
+    let outer = font.px_rect(pane.rect).size;
+    let start = shrink.point(origin + cell.downscale(2));
+    let end = shrink.point(origin + outer - cell.downscale(2));
+    let mut outline = Scene::new(font);
+    let line = outline.line_width();
+    outline.box_lines(
+        start.x,
+        start.y,
+        end.x - start.x + line,
+        end.y - start.y + line,
+        ACCENT,
+    );
+    paint.scene(elements, &outline, Point::default(), None);
+    let mut ghost = Scene::new(font);
+    layout.draw_ghost(pane.id, &mut ghost, chrome);
+    paint.scene(elements, &ghost, origin + cell, Some(shrink));
+    let Some(toplevel) = pane.toplevel() else {
+        return;
+    };
+    let offset = font.px_rect(pane.client_rect()).loc - font.px_rect(pane.rect).loc;
+    let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+        render_elements_from_surface_tree(
+            paint.renderer,
+            toplevel.wl_surface(),
+            origin + offset,
+            paint.scale,
+            shrink.alpha,
+            Kind::Unspecified,
+        );
+    elements.extend(surfaces.into_iter().map(|surface| {
+        Element::Ghost(RescaleRenderElement::from_element(
+            surface,
+            shrink.about,
+            shrink.scale,
+        ))
+    }));
+}
+
+/// Draw the client of every visible pane but the one being dragged,
+/// cropped to the pane.
+fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, layout: &Layout, chrome: Chrome) {
+    for pane in layout.visible() {
+        let Some(toplevel) = pane.toplevel() else {
+            continue;
+        };
+        if chrome.dragging == Some(pane.id) {
+            continue;
+        }
+        let rect = pane.client_rect();
+        if rect.columns == 0 || rect.rows == 0 {
+            continue;
+        }
+        let crop = paint.font.px_rect(rect);
+        let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+            render_elements_from_surface_tree(
+                paint.renderer,
+                toplevel.wl_surface(),
+                crop.loc,
+                paint.scale,
+                1.0,
+                Kind::Unspecified,
+            );
+        elements.extend(
+            surfaces
+                .into_iter()
+                .filter_map(|surface| CropRenderElement::from_element(surface, paint.scale, crop))
+                .map(Element::Surface),
+        );
+    }
 }
 
 fn paint_picker(
     paint: &mut Paint,
     elements: &mut Vec<Element>,
-    picker: &Picker,
+    (picker, grid): (&Picker, &Grid),
     (workspaces, current): (&[Workspace], usize),
     size: Size<i32, Physical>,
     pointer: Point<i32, Physical>,
@@ -322,7 +345,6 @@ fn paint_picker(
         paint.menu_font.cell_width as i32,
         paint.menu_font.cell_height as i32,
     );
-    let grid = Grid::new(workspaces.len() + 1, size, cell_height as i32);
     let mut over = Scene::new(paint.font);
     let mut under = Scene::new(paint.font);
     let line = over.line_width();

@@ -129,7 +129,7 @@ impl State {
         }
         if button == BTN_LEFT && pressed {
             let (column, row) = self.pointer_cell();
-            if let Some(hit) = self.frame().hit(column, row) {
+            if let Some(hit) = self.frame(self.current()).hit(column, row) {
                 self.frame_hit(hit);
                 return;
             }
@@ -373,7 +373,7 @@ impl State {
             Key::Palette => self.open_palette(),
             Key::Sidebar => self.toggle_sidebar(),
             Key::NextNeeding => {
-                if let Some(id) = self.frame().next_needing() {
+                if let Some(id) = self.frame(self.current()).next_needing() {
                     self.show_on_active(id);
                 }
             }
