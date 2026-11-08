@@ -3,7 +3,7 @@
   "title": "scratch.rs and save.rs each read /proc their own way",
   "body": "`scratch::parent` reads `/proc/<pid>/stat` to find a process's parent. `save::shell_cwd` reads `/proc/<pid>/task/*/children` to find a shell's child and then its cwd. The two modules read `/proc` with no shared code, and the test helper `first_child` in `scratch.rs` repeats the children read from `shell_cwd`. Both tests spawn `sh -c`, poll 100 times at 20 ms, then kill and wait.\n\n## Proposal\n\nOne `proc` helper, in `scratch.rs` or its own small module, with `parent(pid)`, `children(pid)` and `cwd(pid)`. `shell_cwd` and `descends_from` call it, and the two tests share one spawn-and-poll helper. The test half is also listed under \"Tests that repeat each other or their module's own code\".",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T21:17:51.385123796Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T18:44:01.275794574Z",
-  "updated_at": "2026-11-08T21:02:51.385123796Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T21:03:40.597322037Z",
+  "closed_at": "2026-11-08T21:03:40.597322037Z",
+  "close_reason": "Done in 8de4c11. proc.rs holds parent, first_child and cwd. scratch::descends_from and save::shell_cwd call it, and the process tests share proc::tests::under_shell.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "8de4c11",
+      "branch": "simplify"
+    }
   }
 }
