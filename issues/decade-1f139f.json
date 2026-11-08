@@ -1,0 +1,28 @@
+{
+  "id": "decade-1f139f",
+  "title": "Define the seam between the drawing kit and decade's renderer",
+  "body": "`draw.rs` holds `Scene`, a display list of shapes in cells and pixels, beside `Paint`, which turns a scene into smithay GLES elements. `text.rs` rasterizes runs with swash and also uploads them as `GlesTexture`s through smithay's `ImportMem`. `Scene` imports `CellRect` from `panes.rs`, and `text.rs` imports `Settings`.\n\n## Proposal\n\nA `src/ui/` module holds `Scene`, its shapes, `CellRect`, `Rgba`, font loading, and rasterizing to CPU bitmaps. It imports nothing from smithay and nothing else from decade. decade's renderer keeps `Paint`, the texture upload and cache, and the font sizes taken from `Settings`. decade's own widgets stay outside `ui`.\n\nA test reads the source under `src/ui/` and fails if any file names `smithay` or `crate::server`, so the seam is checked on every test run.\n\n## Open\n\n- whether `Face` sizes belong to the kit or stay with decade's settings\n- whether the texture cache key moves with the rasterizer or stays with the upload",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-4a4e0f",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T22:30:49.63403366Z",
+  "updated_at": "2026-11-08T22:30:49.63403366Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "6bcc95b",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
