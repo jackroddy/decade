@@ -8,7 +8,7 @@ use crate::text::fit;
 use decade_channel::AgentState;
 
 /// The rows above the panes that the top bar takes.
-pub const TOP: u32 = 1;
+const TOP: u32 = 1;
 const OPEN_WIDTH: u32 = 24;
 const CLOSED_WIDTH: u32 = 3;
 const DIAMOND: char = '◆';
@@ -22,7 +22,7 @@ const TEXT: Rgba = palette::FOREGROUND;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 const MUTED: Rgba = palette::MUTED;
 
-pub fn sidebar_width(open: bool) -> u32 {
+fn sidebar_width(open: bool) -> u32 {
     if open { OPEN_WIDTH } else { CLOSED_WIDTH }
 }
 

@@ -77,11 +77,11 @@ impl Grid {
         }
     }
 
-    pub fn cell_at(&self, point: Point<i32, Physical>) -> Option<usize> {
+    fn cell_at(&self, point: Point<i32, Physical>) -> Option<usize> {
         self.cells.iter().position(|cell| cell.contains(point))
     }
 
-    pub fn close_button(&self, cell: usize) -> Rectangle<i32, Physical> {
+    fn close_button(&self, cell: usize) -> Rectangle<i32, Physical> {
         let thumbnail = self.cells[cell];
         let side = self.button;
         let at = thumbnail.loc + Point::from((thumbnail.size.w - side, 0));

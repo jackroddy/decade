@@ -13,7 +13,7 @@ use crate::palette::Rgba;
 use crate::panes::CellRect;
 use crate::settings::Settings;
 
-pub const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
+const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 
 /// `text` cut to `max` characters, with an ellipsis where it was cut.
 pub fn fit(text: &str, max: usize) -> String {

@@ -48,14 +48,14 @@ pub fn home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }
 
-/// The base name, or the base name with the first free count after it.
-pub fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clone) -> String {
-    let free = |name: &str| !taken.clone().any(|taken| taken == name);
+/// `base` if `free` accepts it, or else `base`, `separator` and the first
+/// count from 2 that `free` accepts.
+pub fn unique_name(base: &str, separator: &str, free: impl Fn(&str) -> bool) -> String {
     if free(base) {
         return base.to_string();
     }
     (2..)
-        .map(|n| format!("{base} {n}"))
+        .map(|n| format!("{base}{separator}{n}"))
         .find(|name| free(name))
         .unwrap()
 }
@@ -143,14 +143,8 @@ impl Workspace {
 
     /// The base name, or the base name with the first free count after it,
     /// free across every tab.
-    pub fn unique_pane_name(&self, base: &str) -> String {
-        if self.by_name(base).is_none() {
-            return base.to_string();
-        }
-        (2..)
-            .map(|n| format!("{base}{n}"))
-            .find(|name| self.by_name(name).is_none())
-            .unwrap()
+    fn unique_pane_name(&self, base: &str) -> String {
+        unique_name(base, "", |name| self.by_name(name).is_none())
     }
 
     /// Add an empty pane named after `base` beside the focused pane of tab
@@ -255,10 +249,11 @@ mod tests {
 
     #[test]
     fn a_taken_name_gets_the_first_free_count() {
-        assert_eq!(unique_name("decade", ["foam"].into_iter()), "decade");
-        assert_eq!(unique_name("decade", ["decade"].into_iter()), "decade 2");
-        let taken = ["decade", "decade 2", "decade 3"];
-        assert_eq!(unique_name("decade", taken.into_iter()), "decade 4");
+        let free_of = |taken: &'static [&str]| move |name: &str| !taken.contains(&name);
+        assert_eq!(unique_name("decade", " ", free_of(&["foam"])), "decade");
+        assert_eq!(unique_name("decade", " ", free_of(&["decade"])), "decade 2");
+        let taken = &["decade", "decade 2", "decade 3"];
+        assert_eq!(unique_name("decade", " ", free_of(taken)), "decade 4");
     }
 
     #[test]

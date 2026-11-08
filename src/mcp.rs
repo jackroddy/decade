@@ -45,11 +45,8 @@ pub enum Call {
     ScratchOpen(Launch),
 }
 
-pub struct Server {
-    pub url: String,
-}
-
-pub fn start(requests: Sender<Request>) -> io::Result<Server> {
+/// Start the MCP server on a thread and return its URL.
+pub fn start(requests: Sender<Request>) -> io::Result<String> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     let url = format!("http://127.0.0.1:{port}/mcp");
@@ -57,7 +54,7 @@ pub fn start(requests: Sender<Request>) -> io::Result<Server> {
     std::thread::Builder::new()
         .name("decade-mcp".into())
         .spawn(move || serve(listener, requests))?;
-    Ok(Server { url })
+    Ok(url)
 }
 
 fn serve(listener: TcpListener, requests: Sender<Request>) {
@@ -295,9 +292,8 @@ mod tests {
     #[test]
     fn tools_are_relayed_as_calls_and_answers_become_results() {
         let (sender, source) = channel::channel::<Request>();
-        let server = start(sender).unwrap();
-        let url = format!("{}?workspace=7", server.url);
-        let unaddressed = server.url.clone();
+        let unaddressed = start(sender).unwrap();
+        let url = format!("{unaddressed}?workspace=7");
 
         let mut event_loop: EventLoop<Vec<(u32, Value)>> = EventLoop::try_new().unwrap();
         event_loop

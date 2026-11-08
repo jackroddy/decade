@@ -411,7 +411,7 @@ fn start_mcp(handle: &LoopHandle<'static, State>) -> Option<String> {
         })
         .unwrap();
     match mcp::start(mcp_requests) {
-        Ok(server) => Some(server.url),
+        Ok(url) => Some(url),
         Err(error) => {
             eprintln!("decade: the MCP server did not start: {error}");
             None
@@ -604,8 +604,9 @@ impl State {
         let id = self.next_workspace;
         self.next_workspace += 1;
         let mut created = Workspace::new(id, cwd, self.pane_area());
-        let taken = self.workspaces.iter().map(|known| known.name.as_str());
-        created.name = workspace::unique_name(&created.name, taken);
+        created.name = workspace::unique_name(&created.name, " ", |name| {
+            self.workspaces.iter().all(|known| known.name != name)
+        });
         self.workspaces.push(created);
         self.start_workspace(self.workspaces.len() - 1, Vec::new());
         id

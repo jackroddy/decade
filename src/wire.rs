@@ -51,8 +51,8 @@ pub const KEY_LEFTSHIFT: u32 = 42;
 pub const KEY_LEFTALT: u32 = 56;
 pub const KEY_LEFTMETA: u32 = 125;
 
-pub const MAX_MESSAGE_LEN: usize = 1 << 20;
-pub const MAX_FDS_PER_SEND: usize = 28;
+const MAX_MESSAGE_LEN: usize = 1 << 20;
+const MAX_FDS_PER_SEND: usize = 28;
 
 const FD_SPACE: usize = rustix::cmsg_space!(ScmRights(MAX_FDS_PER_SEND));
 const RECEIVE_CHUNK: usize = 64 * 1024;

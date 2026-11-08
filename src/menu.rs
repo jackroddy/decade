@@ -74,7 +74,7 @@ pub enum Outcome {
     Apply(Action),
 }
 
-pub struct Row {
+struct Row {
     icon: char,
     label: String,
     target: Target,

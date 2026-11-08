@@ -13,7 +13,7 @@ use crate::wire::{Decoder, Listed, Outbox, ServerMessage, ViewerMessage};
 use rustix::process::{Pid, Signal};
 
 /// The exit status of a server that found another server running.
-pub const ANOTHER_SERVER: i32 = 3;
+const ANOTHER_SERVER: i32 = 3;
 
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
