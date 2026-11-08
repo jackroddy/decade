@@ -1,0 +1,30 @@
+{
+  "id": "decade-c56d0e",
+  "title": "Sidebar cards match the mockup",
+  "body": "The cards from 6bcc95b sit on whole cells. The current card is a square `SELECTION` fill across the sidebar, the stripe is at the sidebar's left edge, and a blank row separates cards. The mockup's card A has rounded, inset cards with a stripe inside them, a smaller gap, a bold name, lighter tints for the state text, and a `WORKSPACES` heading with a count.\n\n## Proposal\n\nDraw each card's background with `Scene::rounded`, inset from the sidebar's edges, and its stripe with `Scene::rect` inside it. Place cards at pixel offsets with a gap of about a third of a row. Hit testing in the sidebar moves from rows to pixels. The name uses the bold weight. The state text uses the mockup's tints, and the heading reads `WORKSPACES` with the count at the right. Every offset is a fraction of the cell size, so the cards scale with the font and the output.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-30d5e3",
+  "blocked_by": [
+    "decade-857e7f"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T22:23:19.326278357Z",
+  "updated_at": "2026-11-08T22:23:19.326278357Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "6bcc95b",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
