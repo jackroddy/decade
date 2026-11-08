@@ -1,0 +1,30 @@
+{
+  "id": "decade-e15837",
+  "title": "The viewer's Viewer struct holds 35 fields across five concerns",
+  "body": "`Viewer` in `viewer.rs` has 35 fields. `Keys` and `Clipboard` are already split out. Pointer state is eight loose fields (`pointer`, `cursor_shape`, `shape_device`, `enter_serial`, `pointer_time`, `cursor`, `scroll`, `scroll_source`), frame state three (`buffers`, `pending`, `shown`) and handshake state four (`configured`, `formats`, `sent`, `welcomed`). `pointer_event` is 78 lines, 40 of them scroll accumulation. In `dmabuf_feedback`, `match (&self.sent, self.formats.clone())` always sees `Some` formats and reduces to `if self.sent.is_some() { .. } else { self.hello() }`.\n\n`inhibit.rs` is a 36-line module with one caller. `Shortcuts::set<D: Dispatch<Inhibitor, ()>>` has one instantiation, and its `(true, Some(i)) => self.inhibitor = Some(i)` arm puts back what `take()` removed.\n\n## Proposal\n\nA `Pointer` struct like `Keys`, with a `scroll_event` method, and a `Frames` struct. The inhibitor becomes two fields and a six-line method on `Viewer`.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:40:26.078629927Z",
+  "updated_at": "2026-11-08T07:40:26.078629927Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
