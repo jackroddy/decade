@@ -178,6 +178,29 @@ impl Pane {
         self.clients.get(self.shown).map(|client| &client.toplevel)
     }
 
+    /// Add a window as a tab and show it. A terminal tab decade started
+    /// goes last. Any other window goes first, and an empty pane waits for
+    /// its app id.
+    pub fn add_client(&mut self, client: Client) {
+        if client.terminal_tab {
+            self.clients.push(client);
+            self.shown = self.clients.len() - 1;
+        } else {
+            self.app_id = client.app_id.clone();
+            self.clients.insert(0, client);
+            self.shown = 0;
+        }
+    }
+
+    /// Show the tab at `index`, and return whether the pane has one.
+    pub fn show(&mut self, index: usize) -> bool {
+        let shown = index < self.clients.len();
+        if shown {
+            self.shown = index;
+        }
+        shown
+    }
+
     /// Show the next tab, or the previous one, wrapping at the ends.
     pub fn step_tab(&mut self, forward: bool) {
         self.shown = stepped(self.shown, self.clients.len(), forward);

@@ -1028,15 +1028,9 @@ impl State {
     fn new_terminal_pane(&mut self) {
         let current = self.current();
         let shown = &mut self.workspaces[current];
-        let name = shown.unique_pane_name("terminal");
-        let cwd = shown.cwd.clone();
-        let layout = shown.layout_mut();
-        let id = layout.add_transient(name.clone());
-        if let Some(pane) = layout.pane_mut(id) {
-            pane.cwd = Some(cwd);
-        }
-        shown.router.add_pane(name);
         let tab = shown.active_tab;
+        let cwd = shown.cwd.clone();
+        let id = shown.add_pane(tab, "terminal", Some(cwd));
         self.spawn_terminal(current, tab, id);
         self.relayout();
         self.focus(id);
@@ -1061,8 +1055,7 @@ impl State {
         let Some(pane) = self.layout_mut().pane_mut(id) else {
             return;
         };
-        if index < pane.clients.len() {
-            pane.shown = index;
+        if pane.show(index) {
             self.focus(id);
         }
     }
@@ -1118,12 +1111,26 @@ impl State {
         self.refocus(workspace, tab);
     }
 
+    /// Remove the pane if it has no client, is not pinned and is not the
+    /// scratch pane, and return whether it went.
+    fn prune(&mut self, workspace: usize, tab: usize, id: usize) -> bool {
+        let shown = &self.workspaces[workspace];
+        let Some(pane) = shown.tabs[tab].layout.pane(id) else {
+            return false;
+        };
+        if !pane.clients.is_empty() || shown.keeps_empty(pane) {
+            return false;
+        }
+        self.remove_pane(workspace, tab, id);
+        true
+    }
+
     fn close_pane(&mut self, id: usize) {
         let Some(pane) = self.layout().pane(id) else {
             return;
         };
         let current = self.current();
-        let scratched = self.workspaces[current].scratch_pane() == Some(pane.name.as_str());
+        let scratched = self.workspaces[current].is_scratch(pane);
         match pane.toplevel() {
             Some(toplevel) => toplevel.send_close(),
             None if !pane.pinned || scratched => {
@@ -1154,19 +1161,15 @@ impl State {
         let Some(pane) = self.layout().pane(id) else {
             return;
         };
-        let client = pane
-            .clients
-            .first()
-            .map(|client| client.toplevel.wl_surface().clone());
-        let current = self.current();
-        let scratched = self.workspaces[current].scratch_pane() == Some(pane.name.as_str());
-        if pane.pinned {
+        let pinned = pane.pinned;
+        let app_id =
+            (pane.clients.first()).and_then(|client| panes::app_id(client.toplevel.wl_surface()));
+        if pinned {
             self.layout_mut().unpin(id);
-            if client.is_none() && !scratched {
-                let tab = self.workspaces[current].active_tab;
-                self.remove_pane(current, tab, id);
-            }
-        } else if let Some(app_id) = client.as_ref().and_then(panes::app_id) {
+            let current = self.current();
+            let tab = self.workspaces[current].active_tab;
+            self.prune(current, tab, id);
+        } else if let Some(app_id) = app_id {
             self.layout_mut().pin(id, app_id);
         }
         self.request_redraw();
@@ -1186,12 +1189,8 @@ impl State {
             .scratch_pane()
             .and_then(|before| shown.by_name(before));
         shown.toggle_scratch(&name);
-        if let Some((tab, before)) = before
-            && let Some(pane) = shown.tabs[tab].layout.pane(before)
-            && pane.clients.is_empty()
-            && !pane.pinned
-        {
-            self.remove_pane(current, tab, before);
+        if let Some((tab, before)) = before {
+            self.prune(current, tab, before);
         }
         self.request_redraw();
         self.schedule_save();
@@ -1285,31 +1284,19 @@ impl CompositorHandler for State {
                 None => {
                     let workspace = self.current();
                     let shown = &mut self.workspaces[workspace];
-                    let name = shown.unique_pane_name(app_id.as_deref().unwrap_or("window"));
-                    let id = shown.layout_mut().add_transient(name.clone());
-                    shown.router.add_pane(name);
                     let tab = shown.active_tab;
+                    let id = shown.add_pane(tab, app_id.as_deref().unwrap_or("window"), None);
                     self.relayout_workspace(workspace);
                     (workspace, tab, id, false)
                 }
             };
             if let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane_mut(id) {
-                if !terminal_tab {
-                    pane.app_id = app_id.clone();
-                }
-                let client = panes::Client {
+                pane.add_client(panes::Client {
                     toplevel,
                     app_id,
                     pid,
                     terminal_tab,
-                };
-                if terminal_tab {
-                    pane.clients.push(client);
-                    pane.shown = pane.clients.len() - 1;
-                } else {
-                    pane.clients.insert(0, client);
-                    pane.shown = 0;
-                }
+                });
             }
             self.configure(workspace, tab, id);
 
@@ -1365,11 +1352,7 @@ impl XdgShellHandler for State {
             self.request_redraw();
             return;
         }
-        let transient = !pane.pinned;
-        let scratched = shown
-            .scratch
-            .as_ref()
-            .is_some_and(|scratch| scratch.pane == pane.name);
+        let scratched = (shown.scratch.as_ref()).is_some_and(|scratch| scratch.pane == pane.name);
 
         // the next program for the scratch pane starts only once its
         // occupant has gone, and not in a workspace or tab that is closing
@@ -1383,10 +1366,10 @@ impl XdgShellHandler for State {
         {
             eprintln!("decade: {error}");
         }
-        let shown = &self.workspaces[workspace];
-        if transient && !scratched {
-            self.remove_pane(workspace, tab, id);
-        } else if shown.tabs[tab].closing {
+        if self.prune(workspace, tab, id) {
+            return;
+        }
+        if self.workspaces[workspace].tabs[tab].closing {
             self.finish_closing(workspace);
         } else {
             self.refocus(workspace, tab);

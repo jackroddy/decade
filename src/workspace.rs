@@ -141,6 +141,19 @@ impl Workspace {
             .unwrap()
     }
 
+    /// Add an empty pane named after `base` beside the focused pane of tab
+    /// `tab`, and return its id.
+    pub fn add_pane(&mut self, tab: usize, base: &str, cwd: Option<PathBuf>) -> usize {
+        let name = self.unique_pane_name(base);
+        let layout = &mut self.tabs[tab].layout;
+        let id = layout.add_transient(name.clone());
+        if let Some(pane) = layout.pane_mut(id) {
+            pane.cwd = cwd;
+        }
+        self.router.add_pane(name);
+        id
+    }
+
     /// Add a tab holding one terminal in the workspace's cwd, and return
     /// its index and the terminal's name.
     pub fn add_tab(&mut self, area: CellRect) -> (usize, String) {
@@ -190,6 +203,16 @@ impl Workspace {
         if self.scratch_pane() == Some(name) {
             self.scratch = None;
         }
+    }
+
+    /// Whether the pane stays when it has no client: it is pinned or it is
+    /// the scratch pane.
+    pub fn keeps_empty(&self, pane: &Pane) -> bool {
+        pane.pinned || self.is_scratch(pane)
+    }
+
+    pub fn is_scratch(&self, pane: &Pane) -> bool {
+        self.scratch_pane() == Some(pane.name.as_str())
     }
 
     /// The most urgent state of the workspace's agents, or `None` when no
@@ -266,6 +289,31 @@ mod tests {
         assert_eq!(workspace.by_name("terminal2"), Some((1, 0)));
         let cwd = workspace.tabs[1].layout.panes[0].cwd.as_deref();
         assert_eq!(cwd, Some(std::path::Path::new("/home/jack")));
+    }
+
+    #[test]
+    fn an_added_pane_takes_a_free_name_and_the_router_knows_it() {
+        let mut workspace =
+            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        workspace.add_tab(crate::panes::tests::AREA);
+        let id = workspace.add_pane(0, "terminal", Some(PathBuf::from("/tmp")));
+        let pane = workspace.tabs[0].layout.pane(id).unwrap();
+        assert_eq!(pane.name, "terminal3");
+        assert_eq!(pane.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
+        assert_eq!(workspace.tabs[0].layout.focused, id);
+        assert!(workspace.router.panes.contains(&pane.name));
+    }
+
+    #[test]
+    fn an_empty_pane_is_kept_while_it_is_pinned_or_the_scratch_pane() {
+        let mut workspace =
+            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        assert!(!workspace.keeps_empty(&workspace.layout().panes[0]));
+        workspace.toggle_scratch("terminal");
+        assert!(workspace.keeps_empty(&workspace.layout().panes[0]));
+        workspace.toggle_scratch("terminal");
+        workspace.layout_mut().pin(0, "decade.terminal".to_string());
+        assert!(workspace.keeps_empty(&workspace.layout().panes[0]));
     }
 
     #[test]
