@@ -1,7 +1,7 @@
 {
   "id": "decade-755f70",
-  "title": "Anchors can be listed, created and changed over MCP",
-  "body": "Later, and the reason anchors exist in this form: Jack wants agents to be\nable to set up and change the layout, on 2026-11-06. Tools on decade's MCP\nserver to list panes with their kind and rule, create an anchor with a name\nand a rule by splitting a pane, change a rule, and remove an anchor. The\nsocket gets the same verbs for pane programs. Not exposed until the layout\nmodel has settled.",
+  "title": "Agents can read and change a workspace's layout over MCP",
+  "body": "Jack wants agents to be able to set up and change a workspace's layout (2026-11-06). Today an agent's MCP tools (`src/mcp.rs`) can `focus` a pane, list `panes` with their occupants, drive the code pane, and open programs in the scratch pane (`scratch.open`, `scratch.send`). None of them change the layout.\n\nThe pane model has changed since this was filed. decade-cc25be settled that a pane holds a name, a command or a plain shell, and a cwd, and that a pin keeps the slot when its program exits. Workspaces now have tabs, and panes have tabs of windows.\n\n## Proposal\n\nMCP tools, scoped to the agent's own workspace like the existing ones:\n\n- list the tabs and panes, with each pane's name, cwd, whether it is pinned or the scratch pane, and its window tabs\n- split a pane to make a new one, running a shell or a decade-aware program in a given cwd\n- pin and unpin a pane, and open a workspace tab\n\nThe socket gets the same verbs for pane programs.\n\n## Open\n\n- Whether an agent may close panes or tabs. No keybind closes a pane, and an agent closing one is the same kind of act.\n- Whether any of this asks Jack to confirm, as the later idea of an agent requesting a scratch pane would.",
   "type": "feature",
   "status": "open",
   "priority": 2,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:07:44.996516309Z",
-  "updated_at": "2026-11-07T05:07:44.996516309Z",
+  "updated_at": "2026-11-08T07:23:08.920822034Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
