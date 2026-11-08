@@ -5,6 +5,7 @@ use std::fmt;
 use std::io::{self, IoSlice, IoSliceMut};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
+use std::time::Duration;
 
 use rustix::io::Errno;
 use rustix::net::{
@@ -23,6 +24,31 @@ const LENGTH: usize = 0;
 const OPCODE: usize = 4;
 const FDS: usize = 6;
 const FLAGS: usize = 7;
+
+/// The newest protocol version this build speaks.
+pub const VERSION: u32 = 1;
+
+/// The `transport` of a viewer on the server's machine.
+pub const LOCAL: u32 = 0;
+
+/// The denominator of a scale: 120 is 1, 150 is 1.25.
+pub const SCALE: u32 = 120;
+
+/// The Caps Lock bit of `locked` in `keys`.
+pub const CAPS_LOCK: u32 = 1;
+
+/// The Num Lock bit of `locked` in `keys`.
+pub const NUM_LOCK: u32 = 2;
+
+/// How long a side with unsent messages waits before trying the socket again.
+pub const OUTBOX_RETRY: Duration = Duration::from_millis(5);
+
+// linux evdev codes, from <linux/input-event-codes.h>
+pub const BTN_LEFT: u32 = 0x110;
+pub const KEY_LEFTCTRL: u32 = 29;
+pub const KEY_LEFTSHIFT: u32 = 42;
+pub const KEY_LEFTALT: u32 = 56;
+pub const KEY_LEFTMETA: u32 = 125;
 
 pub const MAX_MESSAGE_LEN: usize = 1 << 20;
 pub const MAX_FDS_PER_SEND: usize = 28;

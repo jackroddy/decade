@@ -105,28 +105,26 @@ use crate::save;
 use crate::scratch::{self, Launch};
 use crate::settings::{self, Settings};
 use crate::text::Font;
-use crate::wire::{self, Decoder, Outbox, Plane, Selection, ServerMessage, ViewerMessage};
+use crate::wire::{
+    self, BTN_LEFT, CAPS_LOCK, Decoder, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT, LOCAL, NUM_LOCK,
+    OUTBOX_RETRY, Outbox, Plane, SCALE, Selection, ServerMessage, ViewerMessage,
+};
 use crate::workspace::{self, Workspace};
 use decade_channel::AgentState;
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
-const BTN_LEFT: u32 = 0x110;
 const POOL_SIZE: usize = 3;
-const KEY_LEFTCTRL: u32 = 29;
-const KEY_LEFTSHIFT: u32 = 42;
 const KEY_C: u32 = 46;
 const KEY_V: u32 = 47;
 const KEY_X: u32 = 45;
-const KEY_LEFTMETA: u32 = 125;
 const KEY_RIGHTMETA: u32 = 126;
 const RESIZE_STEP: u32 = 2;
 const KEY_CAPSLOCK: u32 = 58;
 const KEY_NUMLOCK: u32 = 69;
 const MAX_KEYCODE: u32 = 0xffff;
 const MAX_LOGICAL: u32 = 16384;
-const MAX_SCALE: u32 = 120 * 8;
+const MAX_SCALE: u32 = SCALE * 8;
 const FORMATS_WAIT: Duration = Duration::from_secs(1);
-const OUTBOX_RETRY: Duration = Duration::from_millis(5);
 const CLOSE_TIMEOUT_MS: i32 = 1000;
 const PICKER_TICK: Duration = Duration::from_millis(500);
 const SAVE_DELAY: Duration = Duration::from_secs(1);
@@ -755,7 +753,7 @@ impl State {
                 outbox: Outbox::new(),
                 welcomed: false,
                 logical: (0, 0),
-                scale: 120,
+                scale: SCALE,
                 formats: Vec::new(),
                 formats_due: None,
                 linear: false,
@@ -1154,8 +1152,9 @@ impl State {
         if width == 0 || height == 0 {
             return;
         }
-        let physical = |logical: u32| (logical as f64 * scale as f64 / 120.0).round() as u32;
-        self.resized(physical(width), physical(height), scale as f64 / 120.0);
+        let factor = scale as f64 / SCALE as f64;
+        let physical = |logical: u32| (logical as f64 * factor).round() as u32;
+        self.resized(physical(width), physical(height), factor);
         let ids: Vec<usize> = self.welcomed().collect();
         for id in ids {
             self.send(
@@ -1183,7 +1182,7 @@ impl State {
                 height,
                 scale,
             } => {
-                if version < 1 {
+                if version == 0 {
                     self.viewer_failed(id, "decade speaks protocol version 1");
                     return;
                 }
@@ -1192,7 +1191,7 @@ impl State {
                     viewer.logical = (width, height);
                     viewer.scale = scale;
                     viewer.ready = true;
-                    if transport == 0 && viewer.formats.is_empty() {
+                    if transport == LOCAL && viewer.formats.is_empty() {
                         viewer.formats_due = Some(Instant::now() + FORMATS_WAIT);
                         let _ = self
                             .loop_handle
@@ -1201,7 +1200,8 @@ impl State {
                             });
                     }
                 }
-                self.send(id, ServerMessage::Welcome { version: 1 });
+                let version = version.min(wire::VERSION);
+                self.send(id, ServerMessage::Welcome { version });
                 self.send(id, self.workspace_list());
                 let shown = self.workspaces[0].id;
                 self.send(id, ServerMessage::Showing { id: shown });
@@ -1289,8 +1289,8 @@ impl State {
                 let keyboard = self.seat.get_keyboard().unwrap();
                 let modifiers = keyboard.modifier_state();
                 let locks = [
-                    (modifiers.caps_lock, locked & 1 != 0, KEY_CAPSLOCK),
-                    (modifiers.num_lock, locked & 2 != 0, KEY_NUMLOCK),
+                    (modifiers.caps_lock, locked & CAPS_LOCK != 0, KEY_CAPSLOCK),
+                    (modifiers.num_lock, locked & NUM_LOCK != 0, KEY_NUMLOCK),
                 ];
                 for (on, wanted, keycode) in locks {
                     if on == wanted {

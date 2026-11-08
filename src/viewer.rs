@@ -5,7 +5,6 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::time::Duration;
 
 use rustix::fs::MemfdFlags;
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
@@ -60,18 +59,16 @@ use crate::control::connect_or_start;
 use crate::hypr::{self, Hyprland};
 use crate::inhibit::Shortcuts;
 use crate::palette::BACKGROUND;
-use crate::wire::{Decoder, Format, Outbox, Plane, ServerMessage, ViewerMessage};
+use crate::wire::{self, Decoder, Format, Outbox, Plane, SCALE, ServerMessage, ViewerMessage};
 use clipboard::Clipboard;
 
-const PROTOCOL_VERSION: u32 = 1;
-const LOCAL: u32 = 0;
 const DEFAULT_SIZE: (u32, u32) = (1280, 800);
 
 // xkb's eight real modifiers have fixed indices, Shift
 // first; Caps Lock is Lock, and the standard keymaps
 // bind Num Lock to Mod2
-const CAPS_LOCK: u32 = 1 << 1;
-const NUM_LOCK: u32 = 1 << 4;
+const XKB_CAPS_LOCK: u32 = 1 << 1;
+const XKB_NUM_LOCK: u32 = 1 << 4;
 
 // the names of cursor-shape-v1's version 1 shapes, in the
 // order of its enum, which starts at 1
@@ -155,7 +152,7 @@ pub fn run(class: String) {
     viewer.watch_hyprland(&event_loop);
 
     let exit = loop {
-        let timeout = (!viewer.outbox.is_empty()).then_some(Duration::from_millis(5));
+        let timeout = (!viewer.outbox.is_empty()).then_some(wire::OUTBOX_RETRY);
         if let Err(error) = event_loop.dispatch(timeout, &mut viewer) {
             eprintln!("decade: the Wayland connection failed: {error}");
             break 1;
@@ -461,7 +458,7 @@ impl Viewer {
             decoder: Decoder::new(),
             outbox: Outbox::new(),
             size: DEFAULT_SIZE,
-            scale: 120,
+            scale: SCALE,
             fractional: fractional_scale.is_some(),
             configured: false,
             formats: None,
@@ -510,8 +507,8 @@ impl Viewer {
         };
         let (width, height) = self.size;
         self.send(ViewerMessage::Hello {
-            version: PROTOCOL_VERSION,
-            transport: LOCAL,
+            version: wire::VERSION,
+            transport: wire::LOCAL,
             width,
             height,
             scale: self.scale,
@@ -734,7 +731,9 @@ impl Viewer {
     }
 
     fn fit(&self) -> Fit {
-        let physical = |logical: u32| ((logical as u64 * self.scale as u64 + 60) / 120) as u32;
+        let physical = |logical: u32| {
+            ((logical as u64 * self.scale as u64 + SCALE as u64 / 2) / SCALE as u64) as u32
+        };
         let physical = (physical(self.size.0), physical(self.size.1));
         Fit::new(self.shown.unwrap_or(physical), self.size, physical)
     }
@@ -952,8 +951,13 @@ impl Viewer {
                 };
             }
             wl_keyboard::Event::Modifiers { mods_locked, .. } => {
-                self.keys.locked = (mods_locked & CAPS_LOCK != 0) as u32
-                    | ((mods_locked & NUM_LOCK != 0) as u32) << 1;
+                self.keys.locked = 0;
+                if mods_locked & XKB_CAPS_LOCK != 0 {
+                    self.keys.locked |= wire::CAPS_LOCK;
+                }
+                if mods_locked & XKB_NUM_LOCK != 0 {
+                    self.keys.locked |= wire::NUM_LOCK;
+                }
                 self.send_keys();
             }
             wl_keyboard::Event::Key {
@@ -990,7 +994,7 @@ impl CompositorHandler for Viewer {
         factor: i32,
     ) {
         if !self.fractional {
-            self.scale = factor.max(1) as u32 * 120;
+            self.scale = factor.max(1) as u32 * SCALE;
             self.sync_size();
         }
     }

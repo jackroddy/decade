@@ -10,16 +10,13 @@ use smithay::utils::Rectangle;
 
 use crate::control::viewer_socket_path;
 use crate::gpu::Gpu;
-use crate::wire::{Decoder, Format, Outbox, ServerMessage, ViewerMessage};
+use crate::wire::{
+    self, BTN_LEFT, Decoder, Format, KEY_LEFTALT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
+    Outbox, SCALE, ServerMessage, ViewerMessage,
+};
 const SIZE: (u32, u32) = (1600, 900);
-const SCALE: u32 = 120;
 const STEP: u64 = 60;
 const SETTLE: u64 = 300;
-const BTN_LEFT: u32 = 0x110;
-const KEY_LEFTCTRL: u32 = 29;
-const KEY_LEFTSHIFT: u32 = 42;
-const KEY_LEFTALT: u32 = 56;
-const KEY_LEFTMETA: u32 = 125;
 
 /// Run a script of input against the running server, saving frames as it says.
 pub fn run(path: &str) -> Result<(), String> {
@@ -54,8 +51,8 @@ pub fn run(path: &str) -> Result<(), String> {
         gpu,
     };
     session.send(ViewerMessage::Hello {
-        version: 1,
-        transport: 0,
+        version: wire::VERSION,
+        transport: wire::LOCAL,
         width: SIZE.0,
         height: SIZE.1,
         scale: SCALE,
