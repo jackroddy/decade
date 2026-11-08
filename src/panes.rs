@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::compositor::with_states;
-use smithay::wayland::shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData};
+use smithay::wayland::shell::xdg::{
+    ToplevelSurface, XdgToplevelSurfaceData, XdgToplevelSurfaceRoleAttributes,
+};
 
 use crate::draw::{Face, Scene};
 use crate::frame::fit;
@@ -112,17 +115,27 @@ pub struct Client {
 impl Client {
     /// The client's title, or the last part of its app id.
     fn label(&self) -> Option<String> {
-        let title = with_states(self.toplevel.wl_surface(), |states| {
-            states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .and_then(|data| data.lock().unwrap().title.clone())
-        });
+        let title = toplevel_data(self.toplevel.wl_surface(), |data| data.title.clone());
         title.filter(|title| !title.is_empty()).or_else(|| {
             let app_id = self.app_id.as_deref()?;
             Some(app_id.rsplit('.').next().unwrap_or(app_id).to_string())
         })
     }
+}
+
+/// The app id a toplevel's client set.
+pub fn app_id(surface: &WlSurface) -> Option<String> {
+    toplevel_data(surface, |data| data.app_id.clone())
+}
+
+fn toplevel_data(
+    surface: &WlSurface,
+    read: impl FnOnce(&XdgToplevelSurfaceRoleAttributes) -> Option<String>,
+) -> Option<String> {
+    with_states(surface, |states| {
+        let data = states.data_map.get::<XdgToplevelSurfaceData>()?;
+        read(&data.lock().unwrap())
+    })
 }
 
 pub struct Pane {

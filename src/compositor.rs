@@ -40,7 +40,7 @@ use smithay::reexports::calloop::{
     EventLoop, Interest, LoopHandle, Mode as CalloopMode, PostAction, RegistrationToken,
 };
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
+use smithay::reexports::wayland_server::backend::ClientData;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_seat};
 use smithay::reexports::wayland_server::{Client, Display, DisplayHandle, Resource};
@@ -72,7 +72,6 @@ use smithay::wayland::selection::primary_selection::{
 use smithay::wayland::selection::{SelectionHandler, SelectionSource, SelectionTarget};
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
-    XdgToplevelSurfaceData,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::socket::ListeningSocketSource;
@@ -209,7 +208,6 @@ pub struct State {
     viewers: HashMap<usize, Viewer>,
     next_viewer: usize,
     active: Option<usize>,
-    wants_redraw: bool,
     render_failing: bool,
     stopping: bool,
     cursor: CursorImageStatus,
@@ -481,7 +479,6 @@ pub fn run() {
         viewers: HashMap::new(),
         next_viewer: 0,
         active: None,
-        wants_redraw: true,
         render_failing: false,
         stopping: false,
         cursor: CursorImageStatus::default_named(),
@@ -714,7 +711,13 @@ impl State {
     }
 
     fn request_redraw(&mut self) {
-        self.wants_redraw = true;
+        for viewer in self.viewers.values_mut() {
+            viewer.wants_frame = true;
+        }
+    }
+
+    fn now(&self) -> u32 {
+        self.start.elapsed().as_millis() as u32
     }
 
     fn viewer_connected(&mut self, stream: UnixStream) {
@@ -802,7 +805,7 @@ impl State {
         if let Some(token) = viewer.source {
             self.loop_handle.remove(token);
         }
-        let now = self.start.elapsed().as_millis() as u32;
+        let now = self.now();
         for button in viewer.buttons {
             self.pointer_button(button, false, now);
         }
@@ -887,12 +890,30 @@ impl State {
     fn current(&self) -> usize {
         self.active
             .and_then(|id| self.viewers.get(&id))
-            .and_then(|viewer| {
-                self.workspaces
-                    .iter()
-                    .position(|workspace| workspace.id == viewer.workspace)
-            })
+            .and_then(|viewer| self.workspace_index(viewer.workspace))
             .unwrap_or(0)
+    }
+
+    fn show_on_active(&mut self, workspace: u32) {
+        if let Some(active) = self.active {
+            self.show(active, workspace);
+        }
+    }
+
+    /// Make the viewer show the workspace, and tell it so.
+    fn set_shown(&mut self, viewer: usize, workspace: u32) {
+        if let Some(entry) = self.viewers.get_mut(&viewer) {
+            entry.workspace = workspace;
+        }
+        self.send(viewer, ServerMessage::Showing { id: workspace });
+    }
+
+    /// Focus the focused pane again, if the tab is the one on screen.
+    fn refocus(&mut self, workspace: usize, tab: usize) {
+        if workspace == self.current() && tab == self.workspaces[workspace].active_tab {
+            let focused = self.layout().focused;
+            self.focus(focused);
+        }
     }
 
     fn layout(&self) -> &Layout {
@@ -936,15 +957,14 @@ impl State {
 
     fn show(&mut self, viewer: usize, workspace: u32) {
         let before = self.current();
-        let known = self.workspaces.iter().any(|known| known.id == workspace);
-        let Some(entry) = self.viewers.get_mut(&viewer) else {
+        let Some(entry) = self.viewers.get(&viewer) else {
             return;
         };
-        if known {
-            entry.workspace = workspace;
-        }
-        let shown = entry.workspace;
-        self.send(viewer, ServerMessage::Showing { id: shown });
+        let shown = match self.workspace_index(workspace) {
+            Some(_) => workspace,
+            None => entry.workspace,
+        };
+        self.set_shown(viewer, shown);
         if self.current() != before {
             self.workspace_shown();
         }
@@ -976,9 +996,7 @@ impl State {
     fn new_workspace(&mut self, cwd: PathBuf) {
         let id = self.add_workspace(cwd);
         self.send_workspace_list();
-        if let Some(active) = self.active {
-            self.show(active, id);
-        }
+        self.show_on_active(id);
     }
 
     fn close_workspace(&mut self, id: u32) {
@@ -1017,11 +1035,8 @@ impl State {
             .map(|(&id, _)| id)
             .collect();
         self.send_workspace_list();
-        for viewer in &moved {
-            if let Some(entry) = self.viewers.get_mut(viewer) {
-                entry.workspace = first;
-            }
-            self.send(*viewer, ServerMessage::Showing { id: first });
+        for &viewer in &moved {
+            self.set_shown(viewer, first);
         }
         if self.active.is_some_and(|active| moved.contains(&active)) {
             self.workspace_shown();
@@ -1061,7 +1076,7 @@ impl State {
     }
 
     fn tick_hidden(&mut self) {
-        let time = self.start.elapsed().as_millis() as u32;
+        let time = self.now();
         for workspace in &self.workspaces {
             let shown = self
                 .viewers
@@ -1085,9 +1100,7 @@ impl State {
             picker::Outcome::Close => self.close_picker(),
             picker::Outcome::Show(id) => {
                 self.close_picker();
-                if let Some(active) = self.active {
-                    self.show(active, id);
-                }
+                self.show_on_active(id);
             }
             picker::Outcome::New => {
                 self.close_picker();
@@ -1150,7 +1163,7 @@ impl State {
             self.viewer_failed(id, problem);
             return;
         }
-        let now = self.start.elapsed().as_millis() as u32;
+        let now = self.now();
         match message {
             ViewerMessage::Hello {
                 version,
@@ -1172,8 +1185,7 @@ impl State {
                 let version = version.min(wire::VERSION);
                 self.send(id, ServerMessage::Welcome { version });
                 self.send(id, self.workspace_list());
-                let shown = self.workspaces[0].id;
-                self.send(id, ServerMessage::Showing { id: shown });
+                self.set_shown(id, self.workspaces[0].id);
                 self.make_active(id);
                 self.send_cursor(id);
                 for selection in [Selection::Clipboard, Selection::Primary] {
@@ -1197,8 +1209,7 @@ impl State {
                     viewer.logical = (width, height);
                     viewer.scale = scale;
                 }
-                self.active = None;
-                self.make_active(id);
+                self.set_active(Some(id));
             }
             ViewerMessage::BufferFailed { id: buffer } => {
                 if let Some(viewer) = self.viewers.get_mut(&id) {
@@ -1394,7 +1405,9 @@ impl State {
         mimes: Vec<String>,
     ) {
         let offered = &mut self.offered[selection as usize];
-        if crossed(seen, offered.serial) {
+
+        // the viewer sent the offer before it had seen the server's newest one
+        if seen < offered.serial {
             return;
         }
         offered.mimes = None;
@@ -1448,12 +1461,6 @@ impl State {
     }
 
     fn render_viewers(&mut self) {
-        if self.wants_redraw {
-            self.wants_redraw = false;
-            for viewer in self.viewers.values_mut() {
-                viewer.wants_frame = true;
-            }
-        }
         let ids: Vec<usize> = self
             .viewers
             .iter()
@@ -1478,14 +1485,10 @@ impl State {
         else {
             return;
         };
-        let workspace = viewer.workspace;
-        let workspace = self
-            .workspaces
-            .iter()
-            .position(|known| known.id == workspace)
-            .unwrap_or(0);
-        let fence = match self.render(&mut dmabuf, workspace) {
-            Ok(fence) => fence,
+        let shown = viewer.workspace;
+        let workspace = self.workspace_index(shown).unwrap_or(0);
+        let (fence, animating) = match self.render(&mut dmabuf, workspace) {
+            Ok(rendered) => rendered,
             Err(error) => {
                 if !self.render_failing {
                     eprintln!("decade: rendering a frame failed: {error}");
@@ -1500,7 +1503,7 @@ impl State {
         };
         viewer.pool.lend(buffer);
         viewer.ready = false;
-        viewer.wants_frame = false;
+        viewer.wants_frame = animating;
         let _ = viewer
             .outbox
             .push_server_message(ServerMessage::Frame { id: buffer, fence });
@@ -1914,11 +1917,7 @@ impl State {
 
     fn frame_hit(&mut self, hit: Hit) {
         match hit {
-            Hit::Show(id) => {
-                if let Some(active) = self.active {
-                    self.show(active, id);
-                }
-            }
+            Hit::Show(id) => self.show_on_active(id),
             Hit::Clear(id) => {
                 if let Some(index) = self.workspace_index(id) {
                     self.clear_agents(index);
@@ -2050,12 +2049,8 @@ impl State {
         let tab = self.workspaces[current].active_tab;
         self.configure(current, tab, previous);
         self.configure(current, tab, id);
-        self.chrome_changed();
-        self.schedule_save();
-    }
-
-    fn chrome_changed(&mut self) {
         self.request_redraw();
+        self.schedule_save();
     }
 
     fn focus_named(&mut self, workspace: usize, name: &str) {
@@ -2232,10 +2227,7 @@ impl State {
             return;
         }
         self.relayout_workspace(workspace);
-        if workspace == self.current() && tab == self.workspaces[workspace].active_tab {
-            let focused = self.layout().focused;
-            self.focus(focused);
-        }
+        self.refocus(workspace, tab);
     }
 
     fn close_pane(&mut self, id: usize) {
@@ -2325,7 +2317,7 @@ impl State {
                 .filter(|&(_, button)| button != BarButton::Name);
             if hover != self.layout().hover {
                 self.layout_mut().hover = hover;
-                self.chrome_changed();
+                self.request_redraw();
             }
         }
         let pointer = self.seat.get_pointer().unwrap();
@@ -2497,7 +2489,7 @@ impl State {
             .layout()
             .pane(self.layout().focused)
             .and_then(|pane| pane.toplevel())
-            .and_then(|toplevel| app_id(toplevel.wl_surface()))
+            .and_then(|toplevel| panes::app_id(toplevel.wl_surface()))
             .is_some_and(|app_id| app_id.starts_with("decade."));
         let keys: &[u32] = match (terminal, chord) {
             (true, Chord::Copy | Chord::Cut) => &[KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_C],
@@ -2518,7 +2510,7 @@ impl State {
                     .collect()
             })
             .unwrap_or_default();
-        let time = self.start.elapsed().as_millis() as u32;
+        let time = self.now();
         let keyboard = self.seat.get_keyboard().unwrap();
         let send = |state: &mut State, key: u32, pressed: KeyState| {
             keyboard.input::<(), _>(
@@ -2610,8 +2602,8 @@ impl State {
             Key::Palette => self.open_palette(),
             Key::Sidebar => self.toggle_sidebar(),
             Key::NextNeeding => {
-                if let (Some(id), Some(active)) = (self.frame().next_needing(), self.active) {
-                    self.show(active, id);
+                if let Some(id) = self.frame().next_needing() {
+                    self.show_on_active(id);
                 }
             }
             Key::Picker => self.open_picker(),
@@ -2758,12 +2750,12 @@ impl State {
                 }
             }
             PaneKind::Transient => {
-                if let Some(app_id) = client.as_ref().and_then(app_id) {
+                if let Some(app_id) = client.as_ref().and_then(panes::app_id) {
                     self.layout_mut().pin(id, app_id);
                 }
             }
         }
-        self.chrome_changed();
+        self.request_redraw();
         self.schedule_save();
     }
 
@@ -2787,7 +2779,7 @@ impl State {
         {
             self.remove_pane(current, tab, before);
         }
-        self.chrome_changed();
+        self.request_redraw();
         self.schedule_save();
     }
 
@@ -2874,12 +2866,17 @@ impl State {
         });
     }
 
-    fn render(&mut self, target: &mut Dmabuf, workspace: usize) -> Result<Option<OwnedFd>, String> {
+    /// Draw the workspace into `target`, and return the fence to wait on and
+    /// whether the frame is part of an animation that wants the next one.
+    fn render(
+        &mut self,
+        target: &mut Dmabuf,
+        workspace: usize,
+    ) -> Result<(Option<OwnedFd>, bool), String> {
         let current = self.current();
         let State {
             gpu,
             size,
-            wants_redraw,
             workspaces,
             font,
             menu_font,
@@ -3095,9 +3092,6 @@ impl State {
         let sync = frame.finish().map_err(|error| error.to_string())?;
         drop(framebuffer);
         texts.end_frame();
-        if animating {
-            *wants_redraw = true;
-        }
 
         let time = start.elapsed().as_millis() as u32;
         for pane in layout.visible() {
@@ -3105,7 +3099,7 @@ impl State {
                 send_frames_surface_tree(toplevel.wl_surface(), time);
             }
         }
-        Ok(sync.export())
+        Ok((sync.export(), animating))
     }
 }
 
@@ -3379,9 +3373,8 @@ impl Paint<'_> {
                         continue;
                     }
                     let font = match face {
-                        Face::Chrome => self.font,
                         Face::Menu => self.menu_font,
-                        Face::Icon => self.font,
+                        Face::Chrome | Face::Icon => self.font,
                     };
                     let Some(entry) =
                         self.texts
@@ -3435,12 +3428,6 @@ fn out_of_range(message: &ViewerMessage) -> Option<&'static str> {
         _ => true,
     };
     (!fits).then_some("a size, scale or keycode is out of range")
-}
-
-/// Whether a viewer offer crossed a server offer: the viewer
-/// sent it before it had seen the server's newest offer.
-fn crossed(seen: u32, newest: u32) -> bool {
-    seen < newest
 }
 
 fn selection_of(target: SelectionTarget) -> Selection {
@@ -3546,15 +3533,6 @@ fn error_line(reason: &str) -> String {
     serde_json::json!({ "error": { "reason": reason } }).to_string()
 }
 
-fn app_id(surface: &WlSurface) -> Option<String> {
-    with_states(surface, |states| {
-        states
-            .data_map
-            .get::<XdgToplevelSurfaceData>()
-            .and_then(|data| data.lock().unwrap().app_id.clone())
-    })
-}
-
 fn send_frames_surface_tree(surface: &WlSurface, time: u32) {
     with_surface_tree_downward(
         surface,
@@ -3580,10 +3558,7 @@ struct ClientState {
     compositor_state: CompositorClientState,
 }
 
-impl ClientData for ClientState {
-    fn initialized(&self, _: ClientId) {}
-    fn disconnected(&self, _: ClientId, _: DisconnectReason) {}
-}
+impl ClientData for ClientState {}
 
 impl CompositorHandler for State {
     fn compositor_state(&mut self) -> &mut CompositorState {
@@ -3602,7 +3577,7 @@ impl CompositorHandler for State {
             .iter()
             .position(|toplevel| toplevel.wl_surface() == surface)
         {
-            let app_id = app_id(surface);
+            let app_id = panes::app_id(surface);
             let toplevel = self.unplaced.remove(i);
             let pid = surface
                 .client()
@@ -3691,7 +3666,6 @@ impl XdgShellHandler for State {
         let Some((workspace, tab, id)) = self.pane_of_surface(surface.wl_surface()) else {
             return;
         };
-        let current = self.current();
         let shown = &mut self.workspaces[workspace];
         let closing = shown.closing || shown.tabs[tab].closing;
         let Some(pane) = shown.tabs[tab].layout.pane_mut(id) else {
@@ -3706,10 +3680,7 @@ impl XdgShellHandler for State {
         }
         if !pane.clients.is_empty() {
             self.configure(workspace, tab, id);
-            if workspace == current && tab == self.workspaces[workspace].active_tab {
-                let focused = self.layout().focused;
-                self.focus(focused);
-            }
+            self.refocus(workspace, tab);
             self.request_redraw();
             return;
         }
@@ -3738,9 +3709,8 @@ impl XdgShellHandler for State {
             self.finish_closing(workspace);
         } else if shown.tabs[tab].closing {
             self.finish_closing_tab(workspace, tab);
-        } else if workspace == current && tab == shown.active_tab {
-            let focused = self.layout().focused;
-            self.focus(focused);
+        } else {
+            self.refocus(workspace, tab);
         }
     }
 
@@ -3843,9 +3813,7 @@ impl DataDeviceHandler for State {
 
 impl ClientDndGrabHandler for State {}
 
-impl ServerDndGrabHandler for State {
-    fn send(&mut self, _: String, _: OwnedFd, _: Seat<State>) {}
-}
+impl ServerDndGrabHandler for State {}
 
 impl OutputHandler for State {}
 
@@ -3895,13 +3863,5 @@ mod tests {
             keycodes: vec![30, u32::MAX],
         };
         assert!(out_of_range(&keys).is_some());
-    }
-
-    #[test]
-    fn a_viewer_offer_crosses_only_a_server_offer_it_had_not_seen() {
-        assert!(!crossed(0, 0));
-        assert!(!crossed(3, 3));
-        assert!(crossed(2, 3));
-        assert!(!crossed(4, 3));
     }
 }
