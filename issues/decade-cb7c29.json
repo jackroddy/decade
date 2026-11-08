@@ -3,7 +3,7 @@
   "title": "Repeated one-liners in compositor.rs",
   "body": "Each row is a sequence written at several sites in `compositor.rs` that one method would replace.\n\n| sequence | sites | one home |\n|---|---|---|\n| workspace id to index with `.unwrap_or(0)` | `current`, `show`, `render_to`, beside the existing `workspace_index` | `workspace_index` or `viewer_workspace(viewer)` |\n| `if let Some(active) = self.active { self.show(active, id) }` | `new_workspace`, `picker_outcome`, `frame_hit`, the `NextNeeding` key | `show_on_active(id)` |\n| refocus the focused pane if this workspace and tab are shown | `remove_pane`, `toplevel_destroyed` twice | `refocus(workspace, tab)` |\n| change a viewer's shown workspace and send `Showing` | `show`, the `Hello` arm, `finish_closing` | `set_shown(viewer, id)` |\n| `self.start.elapsed().as_millis() as u32` | four sites | `now()` |\n| `chrome_changed` forwards to `request_redraw` | four callers | call `request_redraw` |\n| the `Resize` arm sets `active = None` so that `make_active` calls `set_active` | one site | call `set_active(Some(id))` |\n| `wants_redraw` is copied into every viewer's `wants_frame` on the next loop | `request_redraw`, `render_viewers`, `render` | `request_redraw` sets `wants_frame` directly and `render` returns `animating` |\n| `app_id(surface)` and `panes::Client::label` both open `XdgToplevelSurfaceData` through `with_states` | `compositor.rs`, `panes.rs` | one accessor |\n| `crossed(seen, newest)` renames `<` and has a four-assert test | one caller | inline |\n| `ClientData for ClientState` and `ServerDndGrabHandler::send` restate empty defaults | two impls | `impl .. {}` |\n| `Face` match maps `Chrome` and `Icon` to the same font | `Paint::scene` | `Face::Menu => menu_font, _ => font` |\n\nThe `Hello` arm sends `Showing { id: workspaces[0].id }` while `viewer.workspace` was set at connect time; the two differ if the picker reorders workspaces first. The viewer ignores `Showing` today, so nothing shows it.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T20:02:26.411656375Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:39:48.151014995Z",
-  "updated_at": "2026-11-08T19:47:26.411656375Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T19:50:14.123141683Z",
+  "closed_at": "2026-11-08T19:50:14.123141683Z",
+  "close_reason": "Landed in 9b316df. Every row of the table has one home. A Resize now calls set_active directly, and an animation keeps only the viewer drawn marked for a frame; the commit message lists both.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "9b316df",
+      "branch": "simplify"
+    }
   }
 }
