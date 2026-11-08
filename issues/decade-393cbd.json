@@ -3,7 +3,7 @@
   "title": "The formats timer guards against a client that does not exist",
   "body": "When a local viewer's `Hello` arrives without formats, the server sets `Viewer.formats_due = now + FORMATS_WAIT` and registers a 1 s `Timer` whose callback only wakes the loop; `render_viewers` then compares the `Instant`. Both clients send `Hello` and `Formats` back to back in one outbox: `hello()` in `viewer.rs` returns until it has formats, and `script.rs` does the same. The two messages arrive in one read and the decode loop handles both before `render_viewers` runs.\n\n## Proposal\n\nMark a local viewer `ready` on `Formats` instead of `Hello`, or drop the wait and let an empty `formats` fall back to linear as it already does. The field, the constant, the timer and the render filter clause go.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T19:47:26.557825568Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.068191222Z",
-  "updated_at": "2026-11-08T19:32:26.557825568Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T19:33:20.890363757Z",
+  "closed_at": "2026-11-08T19:33:20.890363757Z",
+  "close_reason": "Landed in 8dfb545. Viewer.formats is an Option, and render_viewers skips a viewer until formats arrives. The server no longer reads transport. Marking ready on formats was rejected because a formats resent on a feedback change would grant an extra frame.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "8dfb545",
+      "branch": "simplify"
+    }
   }
 }
