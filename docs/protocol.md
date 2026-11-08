@@ -37,6 +37,10 @@ with no pane can still send. decade answers:
 another client holds it; in the last two cases an error line comes first.
 Every other message before hello is answered with an error.
 
+A client may send hello again. The new hello replaces its name and
+`accepts` list. The client gives up the pane it held and claims the one the
+new hello names, if any.
+
 ## Messages to a pane
 
 A message names a pane in `to` and carries exactly one verb. decade delivers
@@ -63,7 +67,14 @@ The verbs so far, and what a code pane does with them:
 Verbs are not checked by decade beyond the occupant's `accepts` list; the
 payload is the business of the two clients.
 
+A pane verb may not be one of these names, which decade keeps for its own
+messages: `hello`, `focus`, `status`, `panes`, `welcome`, `error` and
+`from`. decade answers a message to a pane that uses one with an error and
+does not forward it.
+
 ## Messages to decade
+
+A message without `to` is for decade, and carries exactly one of its verbs.
 
 ```json
 {"focus": {"pane": "terminal"}}

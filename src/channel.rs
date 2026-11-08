@@ -1,22 +1,16 @@
 use std::collections::HashMap;
 
 use decade_channel::{AgentState, Error, Focus, Hello, Pane, Reply, Status, VERSION, Welcome};
-use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 /// The client id under which MCP tool calls reach a router.
 pub const AGENT: usize = usize::MAX;
 
-#[derive(Deserialize)]
-struct Envelope {
-    hello: Option<Hello>,
-    to: Option<String>,
-    focus: Option<Focus>,
-    status: Option<Status>,
-    panes: Option<Value>,
-    #[serde(flatten)]
-    rest: Map<String, Value>,
-}
+/// The keys a pane verb may not take: decade's own verbs and the
+/// names decade's replies and forwarded messages use.
+const RESERVED: [&str; 7] = [
+    "hello", "focus", "status", "panes", "welcome", "error", "from",
+];
 
 pub struct Client {
     pub name: Option<String>,
@@ -94,12 +88,21 @@ impl Router {
             Ok(value) => value,
             Err(error) => return vec![error_line(id, &format!("not JSON: {error}"), json!(line))],
         };
-        let envelope: Envelope = match serde_json::from_value(value.clone()) {
-            Ok(envelope) => envelope,
-            Err(error) => return vec![error_line(id, &format!("malformed: {error}"), value)],
+        let Value::Object(mut object) = value.clone() else {
+            return vec![error_line(id, "a message is a JSON object", value)];
         };
-        if let Some(hello) = envelope.hello {
-            return self.hello(id, hello, value);
+        let to = object.remove("to");
+        let mut keys = object.keys();
+        let (Some(verb), None) = (keys.next(), keys.next()) else {
+            return vec![error_line(id, "a message carries exactly one verb", value)];
+        };
+        let verb = verb.clone();
+        let payload = object.remove(&verb).unwrap();
+        if to.is_none() && verb == "hello" {
+            return match serde_json::from_value(payload) {
+                Ok(hello) => self.hello(id, hello, value),
+                Err(error) => vec![error_line(id, &format!("malformed hello: {error}"), value)],
+            };
         }
         if self
             .clients
@@ -109,65 +112,89 @@ impl Router {
         {
             return vec![error_line(id, "say hello first", value)];
         }
-        if let Some(focus) = envelope.focus {
-            return if self.panes.contains(&focus.pane) {
-                vec![Out::Host(Host::Focus(focus.pane))]
-            } else {
-                vec![error_line(
-                    id,
-                    &format!("no pane named {}", focus.pane),
-                    value,
-                )]
-            };
+        match to {
+            Some(Value::String(to)) => self.forward(id, &to, verb, payload, value),
+            Some(_) => vec![error_line(id, "\"to\" names a pane", value)],
+            None => self.command(id, &verb, payload, value),
         }
-        if let Some(status) = envelope.status {
-            let Some(pane) = self.clients[&id].pane.clone() else {
-                return vec![error_line(
-                    id,
-                    "status is for the agent in a pane, and this client claimed none",
-                    value,
-                )];
-            };
-            return vec![Out::Host(Host::Status {
-                client: id,
-                pane,
-                state: status.state,
-                message: status.message,
-            })];
-        }
-        if envelope.panes.is_some() {
-            let panes = self
-                .panes
-                .iter()
-                .map(|name| Pane {
-                    name: name.clone(),
-                    client: self.occupant(name).and_then(|(_, c)| c.name.clone()),
-                })
-                .collect();
-            return vec![reply(id, Reply::Panes(panes))];
-        }
-        let Some(to) = envelope.to else {
-            return vec![error_line(
+    }
+
+    /// Answer a message to decade itself.
+    fn command(&mut self, id: usize, verb: &str, payload: Value, value: Value) -> Vec<Out> {
+        let malformed = |error: serde_json::Error| {
+            vec![error_line(
                 id,
-                "a message needs \"to\", \"focus\", \"status\", \"panes\" or \"hello\"",
-                value,
-            )];
+                &format!("malformed {verb}: {error}"),
+                value.clone(),
+            )]
         };
-        if !self.panes.contains(&to) {
+        match verb {
+            "focus" => {
+                let focus: Focus = match serde_json::from_value(payload) {
+                    Ok(focus) => focus,
+                    Err(error) => return malformed(error),
+                };
+                if self.panes.contains(&focus.pane) {
+                    vec![Out::Host(Host::Focus(focus.pane))]
+                } else {
+                    let reason = format!("no pane named {}", focus.pane);
+                    vec![error_line(id, &reason, value)]
+                }
+            }
+            "status" => {
+                let status: Status = match serde_json::from_value(payload) {
+                    Ok(status) => status,
+                    Err(error) => return malformed(error),
+                };
+                let Some(pane) = self.clients[&id].pane.clone() else {
+                    return vec![error_line(
+                        id,
+                        "status is for the agent in a pane, and this client claimed none",
+                        value,
+                    )];
+                };
+                vec![Out::Host(Host::Status {
+                    client: id,
+                    pane,
+                    state: status.state,
+                    message: status.message,
+                })]
+            }
+            "panes" => {
+                let panes = self
+                    .panes
+                    .iter()
+                    .map(|name| Pane {
+                        name: name.clone(),
+                        client: self.occupant(name).and_then(|(_, c)| c.name.clone()),
+                    })
+                    .collect();
+                vec![reply(id, Reply::Panes(panes))]
+            }
+            _ => vec![error_line(
+                id,
+                "a message needs \"to\", or one of \"hello\", \"focus\", \"status\" and \"panes\"",
+                value,
+            )],
+        }
+    }
+
+    /// Send a pane verb on to the client occupying pane `to`.
+    fn forward(&self, id: usize, to: &str, verb: String, payload: Value, value: Value) -> Vec<Out> {
+        if RESERVED.contains(&verb.as_str()) {
+            return vec![error_line(id, &format!("{verb} is reserved"), value)];
+        }
+        if !self.panes.iter().any(|pane| pane == to) {
             return vec![error_line(id, &format!("no pane named {to}"), value)];
         }
-        let Some((target, client)) = self.occupant(&to) else {
+        let Some((target, client)) = self.occupant(to) else {
             return vec![error_line(
                 id,
                 &format!("no client occupies pane {to}"),
                 value,
             )];
         };
-        let mut keys = envelope.rest.keys();
-        let (Some(verb), None) = (keys.next(), keys.next()) else {
-            return vec![error_line(id, "a message carries exactly one verb", value)];
-        };
-        if !client.accepts.is_empty() && !client.accepts.iter().any(|a| a == verb) {
+        if !client.accepts.is_empty() && !client.accepts.contains(&verb) {
             return vec![error_line(
                 id,
                 &format!("pane {to} does not accept {verb}"),
@@ -175,7 +202,8 @@ impl Router {
             )];
         }
         let from = self.clients[&id].name.clone().unwrap_or_default();
-        let mut forwarded = envelope.rest;
+        let mut forwarded = Map::new();
+        forwarded.insert(verb, payload);
         forwarded.insert("from".to_string(), Value::String(from));
         vec![Out::Line(target, Value::Object(forwarded).to_string())]
     }
@@ -361,6 +389,57 @@ mod tests {
                 {"name": "code", "client": null}
             ]})
         );
+    }
+
+    #[test]
+    fn a_reserved_name_sent_to_a_pane_is_refused_and_not_forwarded() {
+        let mut r = router();
+        r.connected(1);
+        r.connected(2);
+        r.handle(1, r#"{"hello": {"name": "code-pane", "pane": "code"}}"#);
+        r.handle(2, r#"{"hello": {"name": "coax", "pane": "chat"}}"#);
+        for verb in ["focus", "status", "error", "from"] {
+            let line = format!(r#"{{"to": "code", "{verb}": {{"pane": "chat"}}}}"#);
+            let out = lines(r.handle(2, &line));
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].0, 2);
+            assert_eq!(out[0].1["error"]["reason"], format!("{verb} is reserved"));
+        }
+    }
+
+    #[test]
+    fn a_message_without_to_must_be_one_of_decades_verbs() {
+        let mut r = router();
+        r.connected(1);
+        r.handle(1, r#"{"hello": {"name": "coax"}}"#);
+        let out = lines(r.handle(1, r#"{"show": {}}"#));
+        assert!(
+            out[0].1["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("a message needs \"to\"")
+        );
+        let out = lines(r.handle(1, r#"{"focus": {"pane": "chat"}, "panes": {}}"#));
+        assert_eq!(
+            out[0].1["error"]["reason"],
+            "a message carries exactly one verb"
+        );
+    }
+
+    #[test]
+    fn a_second_hello_renames_the_client_and_moves_its_claim() {
+        let mut r = router();
+        r.connected(1);
+        r.handle(1, r#"{"hello": {"name": "first", "pane": "code"}}"#);
+        let out = lines(r.handle(1, r#"{"hello": {"name": "second", "pane": "chat"}}"#));
+        assert_eq!(out[0].1["welcome"]["pane"], "chat");
+        assert!(r.occupant("code").is_none());
+        assert_eq!(
+            r.occupant("chat").unwrap().1.name.as_deref(),
+            Some("second")
+        );
+        r.handle(1, r#"{"hello": {"name": "third"}}"#);
+        assert!(r.occupant("chat").is_none());
     }
 
     #[test]
