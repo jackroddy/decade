@@ -1,7 +1,6 @@
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
-use rustix::event::{PollFd, PollFlags};
 use smithay::backend::input::KeyState;
 use smithay::input::pointer::CursorImageStatus;
 use smithay::reexports::calloop::generic::Generic;
@@ -19,7 +18,7 @@ use super::input::Repeat;
 const MAX_KEYCODE: u32 = 0xffff;
 const MAX_LOGICAL: u32 = 16384;
 const MAX_SCALE: u32 = SCALE * 8;
-const CLOSE_TIMEOUT_MS: i32 = 1000;
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const KEY_CAPSLOCK: u32 = 58;
 const KEY_NUMLOCK: u32 = 69;
 
@@ -139,17 +138,8 @@ impl State {
             let _ = viewer.outbox.push_server_message(ServerMessage::Close {
                 message: "the server is shutting down".to_string(),
             });
-            let deadline = Instant::now() + Duration::from_millis(CLOSE_TIMEOUT_MS as u64);
-            while let Ok(false) = viewer.outbox.send(&viewer.stream) {
-                let left = deadline
-                    .saturating_duration_since(Instant::now())
-                    .as_millis() as i32;
-                if left == 0 {
-                    break;
-                }
-                let mut fds = [PollFd::new(&viewer.stream, PollFlags::OUT)];
-                let _ = rustix::event::poll(&mut fds, left);
-            }
+            let deadline = Instant::now() + CLOSE_TIMEOUT;
+            let _ = viewer.outbox.flush(&viewer.stream, Some(deadline));
         }
     }
 

@@ -8,7 +8,7 @@ use smithay::backend::allocator::{Fourcc, Modifier};
 use smithay::backend::renderer::{Bind, ExportMem};
 use smithay::utils::Rectangle;
 
-use crate::control::viewer_socket_path;
+use crate::control;
 use crate::gpu::Gpu;
 use crate::wire::{
     self, BTN_LEFT, Decoder, Format, KEY_LEFTALT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
@@ -36,8 +36,7 @@ pub fn run(path: &str) -> Result<(), String> {
             modifier: format.modifier.into(),
         })
         .collect();
-    let stream = UnixStream::connect(viewer_socket_path())
-        .map_err(|_| "no server is running".to_string())?;
+    let stream = control::connect()?;
     stream
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
@@ -226,15 +225,9 @@ impl Session {
     fn pump(&mut self, ms: u64) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_millis(ms);
         loop {
-            while !self.outbox.is_empty() {
-                if !self
-                    .outbox
-                    .send(&self.stream)
-                    .map_err(|error| error.to_string())?
-                {
-                    break;
-                }
-            }
+            self.outbox
+                .send(&self.stream)
+                .map_err(|error| error.to_string())?;
             while let Some(message) = self
                 .decoder
                 .next_server_message()
@@ -246,17 +239,13 @@ impl Session {
             if left.is_zero() {
                 return Ok(());
             }
-            let wait = left.as_millis().min(20) as i32;
-            let mut fds = [PollFd::new(&self.stream, PollFlags::IN)];
-            let _ = rustix::event::poll(&mut fds, wait);
-            if fds[0].revents().contains(PollFlags::IN) {
-                let open = self
-                    .decoder
-                    .receive(&self.stream)
-                    .map_err(|error| format!("{error:?}"))?;
-                if !open {
-                    return Err("the server closed the connection".into());
-                }
+            let wait = Instant::now() + left.min(Duration::from_millis(20));
+            let open = self
+                .decoder
+                .wait(&self.stream, Some(wait))
+                .map_err(|error| format!("{error:?}"))?;
+            if !open {
+                return Err("the server closed the connection".into());
             }
         }
     }

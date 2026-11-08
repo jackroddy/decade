@@ -5,8 +5,9 @@ use std::fmt;
 use std::io::{self, IoSlice, IoSliceMut};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use rustix::event::{PollFd, PollFlags};
 use rustix::io::Errno;
 use rustix::net::{
     RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, SendAncillaryBuffer,
@@ -734,6 +735,31 @@ impl Outbox {
         self.next_header = 0;
         Ok(true)
     }
+
+    /// Send everything, waiting for the socket until `deadline` or forever with none, and return whether everything is sent.
+    pub fn flush(&mut self, stream: &UnixStream, deadline: Option<Instant>) -> io::Result<bool> {
+        while !self.send(stream)? {
+            if !ready(stream, PollFlags::OUT, deadline) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// Whether `stream` became ready for `flags` before `deadline`, waiting forever with none.
+fn ready(stream: &UnixStream, flags: PollFlags, deadline: Option<Instant>) -> bool {
+    loop {
+        let timeout = deadline.map_or(-1, |deadline| {
+            let left = deadline.saturating_duration_since(Instant::now());
+            left.as_millis().min(i32::MAX as u128) as i32
+        });
+        let mut fds = [PollFd::new(stream, flags)];
+        match rustix::event::poll(&mut fds, timeout) {
+            Err(Errno::INTR) => {}
+            _ => return !fds[0].revents().is_empty(),
+        }
+    }
 }
 
 /// Received bytes and fds, from which complete messages are taken.
@@ -781,6 +807,15 @@ impl Decoder {
             }
             Err(Errno::AGAIN) => Ok(true),
             Err(errno) => Err(Error::Io(errno.into())),
+        }
+    }
+
+    /// Wait until `deadline`, or forever with none, for the socket to be readable and read once if it is.
+    pub fn wait(&mut self, stream: &UnixStream, deadline: Option<Instant>) -> Result<bool, Error> {
+        if ready(stream, PollFlags::IN, deadline) {
+            self.receive(stream)
+        } else {
+            Ok(true)
         }
     }
 
