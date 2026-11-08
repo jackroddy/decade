@@ -4,24 +4,26 @@ use smithay::utils::{Physical, Size};
 
 use crate::apps::App;
 use crate::draw::{Face, Scene};
-use crate::frame::fit;
-use crate::palette;
+use crate::palette::{self, Rgba};
 use crate::settings::Settings;
-use crate::text::Font;
+use crate::text::{fit, tail};
 
 /// The width in cells of the palette, the New workspace browser and the settings panel.
-pub const WIDTH: i32 = 40;
+const WIDTH: i32 = 40;
 const APP_ICON: char = '\u{f08c6}';
 const FOLDER_ICON: char = '\u{f024b}';
 const OPEN_ICON: char = '\u{f0770}';
 const CLOSE_ICON: char = '\u{f0156}';
 const MAX_ROWS: usize = 10;
-pub const BOX: [f32; 4] = palette::DARK_BACKGROUND;
-pub const BORDER: [f32; 4] = palette::ACCENT;
-pub const TEXT: [f32; 4] = palette::FOREGROUND;
-pub const DIM: [f32; 4] = palette::LIGHT_FOREGROUND;
-pub const SELECTED: [f32; 4] = palette::ACCENT;
-pub const SELECTED_TEXT: [f32; 4] = palette::DARK_BACKGROUND;
+
+/// The cells a row's label may take, after its icon and before its chevron.
+const LABEL_ROOM: usize = WIDTH as usize - 5;
+const BOX: Rgba = palette::DARK_BACKGROUND;
+const BORDER: Rgba = palette::ACCENT;
+const TEXT: Rgba = palette::FOREGROUND;
+const DIM: Rgba = palette::LIGHT_FOREGROUND;
+const SELECTED: Rgba = palette::ACCENT;
+const SELECTED_TEXT: Rgba = palette::DARK_BACKGROUND;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuKey {
@@ -149,17 +151,21 @@ impl Menu {
         }
     }
 
-    fn opened(&self) -> Option<&Row> {
+    /// The rows opened from the root, one for each step of `path`.
+    fn trail(&self) -> impl Iterator<Item = &Row> {
         let mut rows = self.root.as_slice();
-        let mut row = None;
-        for &index in &self.path {
-            row = Some(&rows[index]);
-            rows = match &rows[index].target {
+        self.path.iter().map(move |&index| {
+            let row = &rows[index];
+            rows = match &row.target {
                 Target::Submenu(rows) => rows,
                 _ => &[],
             };
-        }
-        row
+            row
+        })
+    }
+
+    fn opened(&self) -> Option<&Row> {
+        self.trail().last()
     }
 
     fn browsing(&self) -> bool {
@@ -269,83 +275,106 @@ impl Menu {
         Outcome::Open
     }
 
-    pub fn draw(&self, scene: &mut Scene, font: &Font) -> Size<i32, Physical> {
-        let (cell_width, cell_height) = (font.cell_width as i32, font.cell_height as i32);
-        let pad = cell_height * 2 / 3;
-        let row_height = cell_height * 8 / 5;
-        let width = WIDTH * cell_width + pad * 2;
-        let list = pad + row_height * 2 + pad / 2;
-        let matching = self.matching();
-        let shown = matching.len().clamp(1, MAX_ROWS) as i32;
-        let height = list + row_height * (shown + 1) + pad;
-        scene.rounded(0, 0, (width, height), pad, BOX, BORDER);
-
-        let text_y = |top: i32| top + (row_height - cell_height) / 2;
-        let mut title = String::from("decade");
-        let mut rows = self.root.as_slice();
-        for &index in &self.path {
-            title.push_str(" › ");
-            title.push_str(&rows[index].label);
-            rows = match &rows[index].target {
-                Target::Submenu(rows) => rows,
-                _ => &[],
-            };
-        }
-        scene.text_px(pad, text_y(pad), &title, Face::Menu, BORDER);
+    pub fn draw(&self, scene: &mut Scene) -> Size<i32, Physical> {
+        let title: Vec<&str> = std::iter::once("decade")
+            .chain(self.trail().map(|row| row.label.as_str()))
+            .collect();
         let query = format!("› {}▏", tail(&self.query, WIDTH as usize - 3));
-        scene.text_px(pad, text_y(pad + row_height), &query, Face::Menu, TEXT);
-        let line = scene.line_width();
-        let rule = pad + row_height * 2 + pad / 4 - line / 2;
-        scene.rect(pad, rule, width - pad * 2, line, DIM);
-
+        let matching = self.matching();
+        let shown = matching.len().clamp(1, MAX_ROWS);
         let browsing = self.browsing();
-        if matching.is_empty() {
-            let empty = if browsing { "no folders" } else { "no matches" };
-            scene.text_px(pad, text_y(list), empty, Face::Menu, DIM);
-        }
-        let room = WIDTH as usize - 5;
-        let skip = self.selected.saturating_sub(MAX_ROWS - 1);
-        for (i, (_, row)) in matching.iter().enumerate().skip(skip).take(MAX_ROWS) {
-            let top = list + (i - skip) as i32 * row_height;
-            let fg = if i == self.selected {
-                let size = (width - pad, row_height);
-                scene.rounded(pad / 2, top, size, pad / 2, SELECTED, SELECTED);
-                SELECTED_TEXT
-            } else {
-                TEXT
-            };
-            if row.icon != ' ' {
-                scene.text_px(pad, text_y(top), &row.icon.to_string(), Face::Menu, fg);
-            }
-            let label = if matches!(row.target, Target::Run(Action::NewWorkspace(_))) {
-                tail(&row.label, room)
-            } else {
-                fit(&row.label, room)
-            };
-            scene.text_px(pad + cell_width * 3, text_y(top), &label, Face::Menu, fg);
-            if matches!(row.target, Target::Submenu(_) | Target::Directory) {
-                let x = width - pad - cell_width;
-                scene.text_px(x, text_y(top), "›", Face::Menu, fg);
-            }
-        }
         let hint = if browsing {
             "tab complete · enter open · esc back"
         } else {
             "enter open · esc back"
         };
-        let top = list + shown * row_height;
-        scene.text_px(pad, text_y(top), hint, Face::Menu, DIM);
-        (width, height).into()
+        let (rows, size) = draw_box(scene, &[&title.join(" › "), &query], shown, hint);
+        if matching.is_empty() {
+            let empty = if browsing { "no folders" } else { "no matches" };
+            scene.text_px(rows.left, rows.text_y(0), empty, Face::Menu, DIM);
+        }
+        let (cell_width, _) = scene.cell();
+        let skip = self.selected.saturating_sub(MAX_ROWS - 1);
+        for (i, (_, row)) in matching.iter().enumerate().skip(skip).take(MAX_ROWS) {
+            let slot = i - skip;
+            let fg = rows.select(scene, slot, i == self.selected);
+            let y = rows.text_y(slot);
+            if row.icon != ' ' {
+                scene.text_px(rows.left, y, &row.icon.to_string(), Face::Menu, fg);
+            }
+            let label = fit(&row.label, LABEL_ROOM);
+            scene.text_px(rows.left + cell_width * 3, y, &label, Face::Menu, fg);
+            if matches!(row.target, Target::Submenu(_) | Target::Directory) {
+                scene.text_px(rows.right - cell_width, y, "›", Face::Menu, fg);
+            }
+        }
+        size
     }
 }
 
-fn tail(text: &str, max: usize) -> String {
-    let count = text.chars().count();
-    if count <= max {
-        return text.to_string();
+/// The list rows of a box drawn by `draw_box`.
+pub struct Rows {
+    /// The x where row text starts.
+    pub left: i32,
+
+    /// The x where row text must end.
+    pub right: i32,
+    top: i32,
+    height: i32,
+    text: i32,
+}
+
+impl Rows {
+    pub fn text_y(&self, slot: usize) -> i32 {
+        self.top + slot as i32 * self.height + self.text
     }
-    let kept: String = text.chars().skip(count + 1 - max).collect();
-    format!("…{kept}")
+
+    /// Draw the selection behind row `slot` when it is selected, and return
+    /// the colour of the row's text.
+    pub fn select(&self, scene: &mut Scene, slot: usize, selected: bool) -> Rgba {
+        if !selected {
+            return TEXT;
+        }
+        let pad = self.left;
+        let top = self.top + slot as i32 * self.height;
+        let size = (self.right, self.height);
+        scene.rounded(pad / 2, top, size, pad / 2, SELECTED, SELECTED);
+        SELECTED_TEXT
+    }
+}
+
+/// Draw the box of the palette or the settings panel, with `header` above
+/// its rule, title first, room for `rows` rows under it and `hint` last.
+pub fn draw_box(
+    scene: &mut Scene,
+    header: &[&str],
+    rows: usize,
+    hint: &str,
+) -> (Rows, Size<i32, Physical>) {
+    let (cell_width, cell_height) = scene.cell();
+    let pad = cell_height * 2 / 3;
+    let row_height = cell_height * 8 / 5;
+    let width = WIDTH * cell_width + pad * 2;
+    let below_header = pad + row_height * header.len() as i32;
+    let list = Rows {
+        left: pad,
+        right: width - pad,
+        top: below_header + pad / 2,
+        height: row_height,
+        text: (row_height - cell_height) / 2,
+    };
+    let height = list.top + row_height * (rows as i32 + 1) + pad;
+    scene.rounded(0, 0, (width, height), pad, BOX, BORDER);
+    for (i, line) in header.iter().enumerate() {
+        let color = if i == 0 { BORDER } else { TEXT };
+        let y = pad + i as i32 * row_height + list.text;
+        scene.text_px(pad, y, line, Face::Menu, color);
+    }
+    let line = scene.line_width();
+    let rule = below_header + pad / 4 - line / 2;
+    scene.rect(pad, rule, width - pad * 2, line, DIM);
+    scene.text_px(pad, list.text_y(rows), hint, Face::Menu, DIM);
+    (list, (width, height).into())
 }
 
 fn expand(path: &str, home: &Path) -> PathBuf {
@@ -367,7 +396,7 @@ fn browse(query: &str, home: &Path) -> Vec<Row> {
     let mut rows = Vec::new();
     let target = expand(query, home);
     if target.is_dir() && partial != "." && partial != ".." {
-        let label = format!("Open {query}");
+        let label = tail(&format!("Open {query}"), LABEL_ROOM);
         rows.push(Row::new(
             OPEN_ICON,
             &label,

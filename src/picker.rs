@@ -1,10 +1,10 @@
 use smithay::utils::{Physical, Point, Rectangle, Size};
 
 use crate::draw::{Face, Scene};
-use crate::frame::fit;
 use crate::menu::{Action, MenuKey, Outcome};
 use crate::palette::{self, ACCENT};
 use crate::text::Text;
+use crate::text::fit;
 use crate::workspace::Workspace;
 
 const DRAG_THRESHOLD: i32 = 8;

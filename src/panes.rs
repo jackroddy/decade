@@ -7,9 +7,9 @@ use smithay::wayland::shell::xdg::{
 };
 
 use crate::draw::{Face, Scene};
-use crate::frame::fit;
 use crate::palette;
 use crate::palette::Rgba;
+use crate::text::fit;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;

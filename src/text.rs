@@ -15,6 +15,25 @@ use crate::settings::Settings;
 
 pub const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 
+/// `text` cut to `max` characters, with an ellipsis where it was cut.
+pub fn fit(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{kept}…")
+}
+
+/// `text` cut to its last `max` characters, with an ellipsis where it was cut.
+pub fn tail(text: &str, max: usize) -> String {
+    let count = text.chars().count();
+    if count <= max {
+        return text.to_string();
+    }
+    let kept: String = text.chars().skip(count + 1 - max).collect();
+    format!("…{kept}")
+}
+
 pub struct Font {
     data: Rc<[u8]>,
     offset: u32,
@@ -297,6 +316,18 @@ fn tint(coverage: &[u8], color: Rgba) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_names_are_cut_with_an_ellipsis() {
+        assert_eq!(fit("website-redesign", 8), "website…");
+        assert_eq!(fit("nail", 8), "nail");
+    }
+
+    #[test]
+    fn long_paths_keep_their_end_after_an_ellipsis() {
+        assert_eq!(tail("~/projects/decade/", 10), "…s/decade/");
+        assert_eq!(tail("~/", 10), "~/");
+    }
 
     #[test]
     fn a_padded_size_survives_the_trip_through_logical_pixels() {

@@ -99,12 +99,12 @@ impl State {
         match overlay {
             Some(Overlay::Menu(menu)) => {
                 let mut scene = Scene::new(&paint.text.menu);
-                let box_size = menu.draw(&mut scene, &paint.text.menu);
+                let box_size = menu.draw(&mut scene);
                 paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
             }
             Some(Overlay::Panel(panel)) => {
                 let mut scene = Scene::new(&paint.text.menu);
-                let box_size = panel.draw(&mut scene, &paint.text.menu, settings);
+                let box_size = panel.draw(&mut scene, settings);
                 paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
             }
             Some(Overlay::Picker { picker, .. }) => {
