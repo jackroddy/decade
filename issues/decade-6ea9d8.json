@@ -1,0 +1,28 @@
+{
+  "id": "decade-6ea9d8",
+  "title": "The closed sidebar is a rail of tiles, and the bars show hover",
+  "body": "The closed sidebar is a 3-column strip with one state glyph per workspace, and nothing in the frame tracks the pointer, so no part of the top bar or sidebar shows a hover state. Board C of the mockup draws the closed sidebar as a rail of workspace tiles with a popover card.\n\n## Proposal\n\n- `CLOSED_WIDTH` goes to 5 columns. Each workspace is a rounded tile about 1.5 rows tall with its initial in bold, half a row apart, most urgent first. A dot in the state colour sits on the tile's top-right corner, ringed in the sidebar's colour, when an agent has reported. The current tile is filled with `SELECTION` and ringed in `ACCENT`. A last tile reads `+` with a plain outline.\n- A click on a tile shows its workspace, and `+` starts a new one.\n- The frame learns the pointer's position over the chrome, and decade redraws when the hovered item changes.\n- Hovering a tile shows the workspace's card beside the rail, above the panes, on `LIGHTER_BACKGROUND` with a 1 px border, a darker rect offset a few pixels as its shadow, and a last line reading `click to show`. A hovered tile gets `LIGHTER_BACKGROUND` and a `LIGHT_FOREGROUND` ring.\n- In the top bar, a hovered inactive tab pill fills with `SELECTION`, a hovered state pill takes a lighter tint, and a hovered `≡` brightens.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-30d5e3",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T23:28:16.830216197Z",
+  "updated_at": "2026-11-08T23:28:16.830216197Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "8868dea",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
