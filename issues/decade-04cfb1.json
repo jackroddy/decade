@@ -3,7 +3,7 @@
   "title": "The top bar is two rows with named tab pills and state buttons",
   "body": "The top bar is one row: the diamond, the workspace name, numbered tab buttons, a `+`, the focused pane's name, `zoom`, the agent counts and `≡`. Board A of the mockup draws a taller bar with named tabs and state buttons.\n\n## Proposal\n\n- `TOP` goes to 2 rows, with the bar's text drawn half a row down so it is centred.\n- The workspace name is bold.\n- Tabs are rounded pills, the active one filled with `SELECTION`. A pill's label is what runs in the tab's focused pane: for a terminal, the name of the shell's foreground program (`cargo`), or the last directory of the shell's cwd at the prompt (`decade`); for another client, the last part of its app id. The label is read from `/proc` through `proc.rs`, cached per pane, and reread at most every 2 s while the bar is drawn. A pill shows a state dot when an agent in the tab has reported.\n- After a separator, the focused window's title, cut to the room left.\n- On the right, tinted pills `! N needs you`, `✓ N done` and `● N working`, each only when N > 0. A click shows the next workspace in that state.\n- Hits on the bar are in pixels.\n\nHover states on the bar wait for the pointer tracking the closed-sidebar rail needs.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-30d5e3",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T22:34:18.026245559Z",
-  "updated_at": "2026-11-08T22:34:18.026245559Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T23:05:59.115699943Z",
+  "closed_at": "2026-11-08T23:05:59.115699943Z",
+  "close_reason": "Landed in 8868dea. Tab labels come from `proc::foreground_group` and `proc::comm`, cached on `Pane`. The state pills cycle with `Frame::next_in`.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "dd82e89",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8868dea",
+      "branch": "dev"
+    }
   }
 }
