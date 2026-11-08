@@ -500,7 +500,7 @@ impl Pointer {
                 continue;
             }
             let factor = if axis == 0 { scale.1 } else { scale.0 };
-            messages.push(ViewerMessage::Scroll {
+            messages.push(ViewerMessage::Scroll(wire::Scroll {
                 time: scroll.time,
                 source,
                 axis: axis as u32,
@@ -508,7 +508,7 @@ impl Pointer {
                 steps: scroll.steps,
                 stop: scroll.stop,
                 inverted: scroll.inverted,
-            });
+            }));
         }
         messages
     }
@@ -1384,7 +1384,7 @@ mod tests {
         });
         let messages = pointer.take_scroll((2.0, 1.5));
         let [
-            ViewerMessage::Scroll {
+            ViewerMessage::Scroll(wire::Scroll {
                 time,
                 source,
                 axis,
@@ -1392,7 +1392,7 @@ mod tests {
                 steps,
                 stop,
                 inverted,
-            },
+            }),
         ] = messages.as_slice()
         else {
             panic!("{messages:?}");
@@ -1418,14 +1418,14 @@ mod tests {
         });
         let messages = pointer.take_scroll((2.0, 1.5));
         let [
-            ViewerMessage::Scroll {
+            ViewerMessage::Scroll(wire::Scroll {
                 time,
                 axis,
                 amount,
                 stop,
                 inverted,
                 ..
-            },
+            }),
         ] = messages.as_slice()
         else {
             panic!("{messages:?}");

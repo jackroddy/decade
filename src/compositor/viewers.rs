@@ -3,13 +3,10 @@ use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags};
 use smithay::backend::input::KeyState;
-use smithay::input::keyboard::{FilterResult, Keycode};
 use smithay::input::pointer::CursorImageStatus;
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{Interest, Mode as CalloopMode, PostAction, RegistrationToken};
-use smithay::utils::{Physical, Point, SERIAL_COUNTER};
-use smithay::wayland::selection::data_device::request_data_device_client_selection;
-use smithay::wayland::selection::primary_selection::request_primary_client_selection;
+use smithay::utils::{Physical, Point};
 
 use crate::pool::Pool;
 use crate::wire::{
@@ -17,7 +14,7 @@ use crate::wire::{
 };
 
 use super::State;
-use super::input::{Repeat, Scroll};
+use super::input::Repeat;
 
 const MAX_KEYCODE: u32 = 0xffff;
 const MAX_LOGICAL: u32 = 16384;
@@ -266,30 +263,7 @@ impl State {
                 height,
                 scale,
                 ..
-            } => {
-                if version == 0 {
-                    self.viewer_failed(id, "decade speaks protocol version 1");
-                    return;
-                }
-                if let Some(viewer) = self.viewers.get_mut(&id) {
-                    viewer.welcomed = true;
-                    viewer.logical = (width, height);
-                    viewer.scale = scale;
-                    viewer.ready = true;
-                }
-                let version = version.min(wire::VERSION);
-                self.send(id, ServerMessage::Welcome { version });
-                self.send(id, self.workspace_list());
-                self.set_shown(id, self.workspaces[0].id);
-                self.make_active(id);
-                self.send_cursor(id);
-                for selection in [Selection::Clipboard, Selection::Primary] {
-                    if self.offered[selection as usize].mimes.is_some() {
-                        self.tell_selection(id, selection);
-                    }
-                }
-                self.request_redraw();
-            }
+            } => self.welcome(id, version, (width, height), scale),
             ViewerMessage::Formats { formats } => {
                 if let Some(viewer) = self.viewers.get_mut(&id) {
                     viewer.pool.set_formats(&formats);
@@ -330,56 +304,11 @@ impl State {
             } => {
                 self.make_active(id);
                 if let Some(viewer) = self.viewers.get_mut(&id) {
-                    viewer.keys.retain(|&held| held != keycode);
-                    if pressed {
-                        viewer.keys.push(keycode);
-                    }
+                    hold(&mut viewer.keys, keycode, pressed);
                 }
                 self.keyboard(keycode, pressed, time);
             }
-            ViewerMessage::Keys { locked, keycodes } => {
-                if let Some(viewer) = self.viewers.get_mut(&id) {
-                    viewer.focused = true;
-                }
-                let keyboard = self.seat.get_keyboard().unwrap();
-                let modifiers = keyboard.modifier_state();
-                let locks = [
-                    (modifiers.caps_lock, locked & CAPS_LOCK != 0, KEY_CAPSLOCK),
-                    (modifiers.num_lock, locked & NUM_LOCK != 0, KEY_NUMLOCK),
-                ];
-                for (on, wanted, keycode) in locks {
-                    if on == wanted {
-                        continue;
-                    }
-                    for state in [KeyState::Pressed, KeyState::Released] {
-                        keyboard.input::<(), _>(
-                            self,
-                            Keycode::new(keycode + 8),
-                            state,
-                            SERIAL_COUNTER.next_serial(),
-                            now,
-                            |_, _, _| FilterResult::Forward,
-                        );
-                    }
-                }
-                for keycode in keycodes {
-                    let Some(viewer) = self.viewers.get_mut(&id) else {
-                        return;
-                    };
-                    if viewer.keys.contains(&keycode) {
-                        continue;
-                    }
-                    viewer.keys.push(keycode);
-                    keyboard.input::<(), _>(
-                        self,
-                        Keycode::new(keycode + 8),
-                        KeyState::Pressed,
-                        SERIAL_COUNTER.next_serial(),
-                        now,
-                        |_, _, _| FilterResult::Forward,
-                    );
-                }
-            }
+            ViewerMessage::Keys { locked, keycodes } => self.sync_keys(id, locked, keycodes, now),
             ViewerMessage::KeysReleased => {
                 if let Some(viewer) = self.viewers.get_mut(&id) {
                     viewer.focused = false;
@@ -405,30 +334,11 @@ impl State {
             } => {
                 self.make_active(id);
                 if let Some(viewer) = self.viewers.get_mut(&id) {
-                    viewer.buttons.retain(|&held| held != button);
-                    if pressed {
-                        viewer.buttons.push(button);
-                    }
+                    hold(&mut viewer.buttons, button, pressed);
                 }
                 self.pointer_button(button, pressed, time);
             }
-            ViewerMessage::Scroll {
-                time,
-                source,
-                axis,
-                amount,
-                steps,
-                stop,
-                inverted,
-            } => self.pointer_scroll(Scroll {
-                time,
-                source,
-                axis,
-                amount,
-                steps,
-                stop,
-                inverted,
-            }),
+            ViewerMessage::Scroll(scroll) => self.pointer_scroll(scroll),
             ViewerMessage::Offer {
                 selection,
                 serial,
@@ -445,33 +355,9 @@ impl State {
                 serial,
                 mime,
                 fd,
-            } => {
-                let offered = &self.offered[selection as usize];
-                if offered.serial != serial || offered.mimes.is_none() {
-                    return;
-                }
-                // an Err drops the fd, which closes the pipe
-                // and tells the viewer there is no data
-                match selection {
-                    Selection::Clipboard => {
-                        let _ = request_data_device_client_selection(&self.seat, mime, fd);
-                    }
-                    Selection::Primary => {
-                        let _ = request_primary_client_selection(&self.seat, mime, fd);
-                    }
-                }
-            }
+            } => self.viewer_request(selection, serial, mime, fd),
             ViewerMessage::List => {
-                let workspaces = self
-                    .workspaces
-                    .iter()
-                    .map(|workspace| wire::Listed {
-                        id: workspace.id,
-                        name: workspace.name.clone(),
-                        cwd: workspace.cwd.display().to_string(),
-                        panes: workspace.panes().count() as u32,
-                    })
-                    .collect();
+                let workspaces = self.listing();
                 self.send(id, ServerMessage::Listing { workspaces });
                 self.flush_viewers();
                 self.viewer_gone(id);
@@ -488,6 +374,73 @@ impl State {
                 eprintln!("decade: a viewer reported an error: {message}");
                 self.viewer_gone(id);
             }
+        }
+    }
+
+    /// Every workspace, as `listing` describes it.
+    fn listing(&self) -> Vec<wire::Listed> {
+        (self.workspaces.iter())
+            .map(|workspace| wire::Listed {
+                id: workspace.id,
+                name: workspace.name.clone(),
+                cwd: workspace.cwd.display().to_string(),
+                panes: workspace.panes().count() as u32,
+            })
+            .collect()
+    }
+
+    /// Answer a viewer's hello and send it what a new viewer needs.
+    fn welcome(&mut self, id: usize, version: u32, logical: (u32, u32), scale: u32) {
+        if version == 0 {
+            self.viewer_failed(id, "decade speaks protocol version 1");
+            return;
+        }
+        if let Some(viewer) = self.viewers.get_mut(&id) {
+            viewer.welcomed = true;
+            viewer.logical = logical;
+            viewer.scale = scale;
+            viewer.ready = true;
+        }
+        let version = version.min(wire::VERSION);
+        self.send(id, ServerMessage::Welcome { version });
+        self.send(id, self.workspace_list());
+        self.set_shown(id, self.workspaces[0].id);
+        self.make_active(id);
+        self.send_cursor(id);
+        for selection in [Selection::Clipboard, Selection::Primary] {
+            if self.offered[selection as usize].mimes.is_some() {
+                self.tell_selection(id, selection);
+            }
+        }
+        self.request_redraw();
+    }
+
+    /// Match the seat's lock state and held keys to the viewer's host,
+    /// whose window has just gained keyboard focus.
+    fn sync_keys(&mut self, id: usize, locked: u32, keycodes: Vec<u32>, time: u32) {
+        if let Some(viewer) = self.viewers.get_mut(&id) {
+            viewer.focused = true;
+        }
+        let modifiers = self.seat.get_keyboard().unwrap().modifier_state();
+        let locks = [
+            (modifiers.caps_lock, locked & CAPS_LOCK != 0, KEY_CAPSLOCK),
+            (modifiers.num_lock, locked & NUM_LOCK != 0, KEY_NUMLOCK),
+        ];
+        for (on, wanted, keycode) in locks {
+            if on != wanted {
+                self.forward_key(keycode, KeyState::Pressed, time);
+                self.forward_key(keycode, KeyState::Released, time);
+            }
+        }
+        for keycode in keycodes {
+            let Some(viewer) = self.viewers.get_mut(&id) else {
+                return;
+            };
+            if viewer.keys.contains(&keycode) {
+                continue;
+            }
+            viewer.keys.push(keycode);
+            self.forward_key(keycode, KeyState::Pressed, time);
         }
     }
 
@@ -571,6 +524,14 @@ pub(super) struct Viewer {
 
     /// Whether the viewer's window has keyboard focus on its host.
     pub(super) focused: bool,
+}
+
+/// Record a key or button as held or let go.
+fn hold(held: &mut Vec<u32>, code: u32, pressed: bool) {
+    held.retain(|&other| other != code);
+    if pressed {
+        held.push(code);
+    }
 }
 
 fn out_of_range(message: &ViewerMessage) -> Option<&'static str> {

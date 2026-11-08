@@ -11,7 +11,7 @@ use smithay::utils::{Logical, Physical, Point, SERIAL_COUNTER};
 use crate::menu::{MenuKey, Outcome};
 use crate::panes;
 use crate::panes::{BarButton, Boundary, Direction, Drop};
-use crate::wire::{BTN_LEFT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
+use crate::wire::{self, BTN_LEFT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
 
 use super::{Overlay, State};
 
@@ -162,7 +162,7 @@ impl State {
         pointer.frame(self);
     }
 
-    pub(super) fn pointer_scroll(&mut self, scroll: Scroll) {
+    pub(super) fn pointer_scroll(&mut self, scroll: wire::Scroll) {
         let source = match scroll.source {
             1 => AxisSource::Finger,
             2 => AxisSource::Continuous,
@@ -205,7 +205,7 @@ impl State {
             .pane(self.layout().focused)
             .is_some_and(|pane| pane.restartable());
         let mut control_key = false;
-        let key = keyboard.input::<Key, _>(
+        let key = keyboard.input::<Option<Key>, _>(
             self,
             code,
             state,
@@ -223,17 +223,18 @@ impl State {
                 }
                 let plain = !modifiers.logo && !modifiers.ctrl && !modifiers.alt;
                 if restartable && pressed && plain && sym == keysyms::KEY_Return {
-                    return FilterResult::Intercept(Key::Restart);
+                    return FilterResult::Intercept(Some(Key::Restart));
                 }
                 if !pressed || !modifiers.logo {
                     return FilterResult::Forward;
                 }
                 match super_key(sym, modifiers.shift) {
-                    Some(key) => FilterResult::Intercept(key),
+                    Some(key) => FilterResult::Intercept(Some(key)),
                     None => FilterResult::Forward,
                 }
             },
         );
+        let key = key.flatten();
         match (control_key, pressed) {
             (true, true) if palette => {}
             (true, true) => self.ctrl_pressed(),
@@ -283,29 +284,31 @@ impl State {
             })
             .unwrap_or_default();
         let time = self.now();
-        let keyboard = self.seat.get_keyboard().unwrap();
-        let send = |state: &mut State, key: u32, pressed: KeyState| {
-            keyboard.input::<(), _>(
-                state,
-                Keycode::new(key + 8),
-                pressed,
-                SERIAL_COUNTER.next_serial(),
-                time,
-                |_, _, _| FilterResult::Forward,
-            );
-        };
         for &key in &held_super {
-            send(self, key, KeyState::Released);
+            self.forward_key(key, KeyState::Released, time);
         }
         for &key in keys {
-            send(self, key, KeyState::Pressed);
+            self.forward_key(key, KeyState::Pressed, time);
         }
         for &key in keys.iter().rev() {
-            send(self, key, KeyState::Released);
+            self.forward_key(key, KeyState::Released, time);
         }
         for &key in &held_super {
-            send(self, key, KeyState::Pressed);
+            self.forward_key(key, KeyState::Pressed, time);
         }
+    }
+
+    /// Pass an evdev key to the focused client, past decade's bindings.
+    pub(super) fn forward_key(&mut self, evdev: u32, state: KeyState, time: u32) {
+        let keyboard = self.seat.get_keyboard().unwrap();
+        keyboard.input::<(), _>(
+            self,
+            Keycode::new(evdev + 8),
+            state,
+            SERIAL_COUNTER.next_serial(),
+            time,
+            |_, _, _| FilterResult::Forward,
+        );
     }
 
     fn start_repeat(&mut self, code: u32, key: Key) {
@@ -393,7 +396,6 @@ impl State {
                 };
                 self.act(outcome);
             }
-            Key::Swallow => {}
         }
     }
 
@@ -536,7 +538,6 @@ enum Key {
     NextNeeding,
     Clipboard(Chord),
     Menu(MenuKey),
-    Swallow,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -544,16 +545,6 @@ enum Chord {
     Copy,
     Paste,
     Cut,
-}
-
-pub(super) struct Scroll {
-    pub(super) time: u32,
-    pub(super) source: u32,
-    pub(super) axis: u32,
-    pub(super) amount: f64,
-    pub(super) steps: i32,
-    pub(super) stop: bool,
-    pub(super) inverted: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -579,8 +570,7 @@ fn repeats(key: Key) -> bool {
         | Key::Restart
         | Key::Sidebar
         | Key::NextNeeding
-        | Key::Clipboard(_)
-        | Key::Swallow => false,
+        | Key::Clipboard(_) => false,
     }
 }
 
@@ -623,9 +613,10 @@ fn super_key(sym: u32, shift: bool) -> Option<Key> {
     }
 }
 
-fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Key {
+/// The key an overlay takes, or `None` for one it swallows.
+fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Option<Key> {
     if !pressed {
-        return Key::Swallow;
+        return None;
     }
     let ctrl = modifiers.ctrl;
     let key = match sym.raw() {
@@ -642,11 +633,8 @@ fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Key {
         keysyms::KEY_l if ctrl => MenuKey::Right,
         keysyms::KEY_k if ctrl => MenuKey::Up,
         keysyms::KEY_j if ctrl => MenuKey::Down,
-        _ if ctrl || modifiers.logo => return Key::Swallow,
-        _ => match sym.key_char().filter(|ch| !ch.is_control()) {
-            Some(ch) => MenuKey::Char(ch),
-            None => return Key::Swallow,
-        },
+        _ if ctrl || modifiers.logo => return None,
+        _ => MenuKey::Char(sym.key_char().filter(|ch| !ch.is_control())?),
     };
-    Key::Menu(key)
+    Some(Key::Menu(key))
 }

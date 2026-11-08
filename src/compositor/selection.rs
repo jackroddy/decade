@@ -3,11 +3,12 @@ use std::os::unix::io::OwnedFd;
 use smithay::input::Seat;
 use smithay::wayland::selection::data_device::{
     ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
-    clear_data_device_selection, current_data_device_selection_userdata, set_data_device_selection,
+    clear_data_device_selection, current_data_device_selection_userdata,
+    request_data_device_client_selection, set_data_device_selection,
 };
 use smithay::wayland::selection::primary_selection::{
     PrimarySelectionHandler, PrimarySelectionState, clear_primary_selection,
-    current_primary_selection_userdata, set_primary_selection,
+    current_primary_selection_userdata, request_primary_client_selection, set_primary_selection,
 };
 use smithay::wayland::selection::{SelectionHandler, SelectionSource, SelectionTarget};
 
@@ -36,6 +37,31 @@ impl State {
         match selection {
             Selection::Clipboard => set_data_device_selection(dh, &self.seat, mimes, owner),
             Selection::Primary => set_primary_selection(dh, &self.seat, mimes, owner),
+        }
+    }
+
+    /// Pass a viewer's request for the selection's data to the client
+    /// that owns it, if the request is for the server's newest offer.
+    pub(super) fn viewer_request(
+        &mut self,
+        selection: Selection,
+        serial: u32,
+        mime: String,
+        fd: OwnedFd,
+    ) {
+        let offered = &self.offered[selection as usize];
+        if offered.serial != serial || offered.mimes.is_none() {
+            return;
+        }
+        // an Err drops the fd, which closes the pipe
+        // and tells the viewer there is no data
+        match selection {
+            Selection::Clipboard => {
+                let _ = request_data_device_client_selection(&self.seat, mime, fd);
+            }
+            Selection::Primary => {
+                let _ = request_primary_client_selection(&self.seat, mime, fd);
+            }
         }
     }
 

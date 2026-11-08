@@ -126,15 +126,7 @@ pub enum ViewerMessage {
         button: u32,
         pressed: bool,
     },
-    Scroll {
-        time: u32,
-        source: u32,
-        axis: u32,
-        amount: f64,
-        steps: i32,
-        stop: bool,
-        inverted: bool,
-    },
+    Scroll(Scroll),
     Offer {
         selection: Selection,
         serial: u32,
@@ -246,6 +238,18 @@ pub struct Plane {
 pub struct Workspace {
     pub id: u32,
     pub name: String,
+}
+
+/// One axis of a pointer scroll, as `scroll` carries it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scroll {
+    pub time: u32,
+    pub source: u32,
+    pub axis: u32,
+    pub amount: f64,
+    pub steps: i32,
+    pub stop: bool,
+    pub inverted: bool,
 }
 
 /// A workspace as `listing` describes it.
@@ -379,7 +383,7 @@ impl ViewerMessage {
                 w.bool(pressed);
                 11
             }
-            ViewerMessage::Scroll {
+            ViewerMessage::Scroll(Scroll {
                 time,
                 source,
                 axis,
@@ -387,7 +391,7 @@ impl ViewerMessage {
                 steps,
                 stop,
                 inverted,
-            } => {
+            }) => {
                 w.u32(time);
                 w.u32(source);
                 w.u32(axis);
@@ -888,7 +892,7 @@ impl Decoder {
                 button: a.u32()?,
                 pressed: a.bool()?,
             },
-            12 => ViewerMessage::Scroll {
+            12 => ViewerMessage::Scroll(Scroll {
                 time: a.u32()?,
                 source: a.u32()?,
                 axis: a.u32()?,
@@ -896,7 +900,7 @@ impl Decoder {
                 steps: a.i32()?,
                 stop: a.bool()?,
                 inverted: a.bool()?,
-            },
+            }),
             13 => ViewerMessage::Offer {
                 selection: a.selection()?,
                 serial: a.u32()?,
@@ -1203,7 +1207,7 @@ mod tests {
                 button: 0x110,
                 pressed: false,
             },
-            ViewerMessage::Scroll {
+            ViewerMessage::Scroll(Scroll {
                 time: 1003,
                 source: 1,
                 axis: 0,
@@ -1211,7 +1215,7 @@ mod tests {
                 steps: -120,
                 stop: false,
                 inverted: true,
-            },
+            }),
             ViewerMessage::Offer {
                 selection: Selection::Clipboard,
                 serial: 4,
