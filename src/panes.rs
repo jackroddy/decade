@@ -241,16 +241,28 @@ pub struct Boundary {
     axis: Axis,
 }
 
+/// What is drawn over the layout on screen besides its panes.
+#[derive(Clone, Copy, Default)]
+pub struct Chrome<'a> {
+    /// The name of the workspace's scratch pane.
+    pub scratch: Option<&'a str>,
+
+    /// The pane being dragged, drawn as a ghost rather than in its slot.
+    pub dragging: Option<usize>,
+
+    /// Whether the Ctrl bar is shown.
+    pub bar: bool,
+
+    /// The bar button under the pointer.
+    pub hover: Option<(usize, BarButton)>,
+}
+
 pub struct Layout {
     /// The cells the panes share, inside decade's top bar and sidebar.
     pub area: CellRect,
     pub panes: Vec<Pane>,
     pub focused: usize,
     pub zoom: Option<usize>,
-    pub bar: bool,
-    pub drag_cell: Option<(u32, u32)>,
-    pub dragging: Option<usize>,
-    pub hover: Option<(usize, BarButton)>,
     root: Node,
     next_id: usize,
 }
@@ -262,10 +274,6 @@ impl Layout {
             panes: vec![Pane::new(0, "terminal".to_string(), Kind::Transient)],
             focused: 0,
             zoom: None,
-            bar: false,
-            drag_cell: None,
-            dragging: None,
-            hover: None,
             root: Node::Leaf(0),
             next_id: 1,
         };
@@ -286,10 +294,6 @@ impl Layout {
             panes,
             focused,
             zoom,
-            bar: false,
-            drag_cell: None,
-            dragging: None,
-            hover: None,
             root,
             next_id,
         };
@@ -548,10 +552,8 @@ impl Layout {
         self.arrange();
     }
 
-    pub fn draw_drop(&self, scene: &mut Scene) {
-        let (Some(dragged), Some((column, row))) = (self.dragging, self.drag_cell) else {
-            return;
-        };
+    /// Draw the places a pane dragged to the cell could drop.
+    pub fn draw_drop(&self, scene: &mut Scene, dragged: usize, (column, row): (u32, u32)) {
         let active = self.drop_at(dragged, column, row);
         if let Some(target) = self.pane_at(column, row).filter(|&id| id != dragged)
             && let Some(pane) = self.pane(target)
@@ -625,9 +627,6 @@ impl Layout {
     }
 
     fn bar_row(&self, pane: &Pane) -> Option<(u32, u32, u32)> {
-        if !self.bar {
-            return None;
-        }
         let inner = pane.rect.inner();
         if inner.is_empty() {
             return None;
@@ -635,6 +634,7 @@ impl Layout {
         Some((inner.column, inner.row, inner.columns))
     }
 
+    /// The pane and Ctrl bar button under the cell, were the bar shown.
     pub fn bar_hit(&self, column: u32, row: u32) -> Option<(usize, BarButton)> {
         for pane in self.visible() {
             let Some((start, bar_row, width)) = self.bar_row(pane) else {
@@ -667,10 +667,10 @@ impl Layout {
     }
 
     /// Draw every visible pane's outline and, for an empty pane, what it
-    /// waits for; `scratch` names the workspace's scratch pane.
-    pub fn draw(&self, scene: &mut Scene, scratch: Option<&str>) {
+    /// waits for.
+    pub fn draw(&self, scene: &mut Scene, chrome: Chrome) {
         for pane in self.visible() {
-            if self.dragging == Some(pane.id) {
+            if chrome.dragging == Some(pane.id) {
                 continue;
             }
             let outline = if pane.id == self.focused {
@@ -678,7 +678,7 @@ impl Layout {
             } else {
                 OUTLINE
             };
-            let scratched = scratch == Some(pane.name.as_str());
+            let scratched = chrome.scratch == Some(pane.name.as_str());
             self.draw_outline(scene, pane, outline, scratched);
             draw_waiting(scene, pane, pane.rect.inner(), scratched);
             draw_strip(scene, pane, pane.rect.inner(), pane.id == self.focused);
@@ -733,19 +733,18 @@ impl Layout {
         }
     }
 
-    pub fn draw_bars(&self, scene: &mut Scene, scratch: Option<&str>) {
-        if !self.bar {
+    pub fn draw_bars(&self, scene: &mut Scene, chrome: Chrome) {
+        if !chrome.bar {
             return;
         }
         for pane in self.visible() {
-            if self.dragging != Some(pane.id) {
-                let scratched = scratch == Some(pane.name.as_str());
-                self.draw_bar(scene, pane, pane.rect.inner(), scratched);
+            if chrome.dragging != Some(pane.id) {
+                self.draw_bar(scene, pane, pane.rect.inner(), chrome);
             }
         }
     }
 
-    pub fn draw_ghost(&self, id: usize, scene: &mut Scene, scratch: Option<&str>) {
+    pub fn draw_ghost(&self, id: usize, scene: &mut Scene, chrome: Chrome) {
         let Some(pane) = self.pane(id) else {
             return;
         };
@@ -754,18 +753,19 @@ impl Layout {
             row: 0,
             ..pane.rect.inner()
         };
-        let scratched = scratch == Some(pane.name.as_str());
+        let scratched = chrome.scratch == Some(pane.name.as_str());
         draw_waiting(scene, pane, inner, scratched);
         draw_strip(scene, pane, inner, pane.id == self.focused);
-        if self.bar {
-            self.draw_bar(scene, pane, inner, scratched);
+        if chrome.bar {
+            self.draw_bar(scene, pane, inner, chrome);
         }
     }
 
-    fn draw_bar(&self, scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool) {
+    fn draw_bar(&self, scene: &mut Scene, pane: &Pane, inner: CellRect, chrome: Chrome) {
         if inner.is_empty() {
             return;
         }
+        let scratched = chrome.scratch == Some(pane.name.as_str());
         let (start, row, width) = (inner.column, inner.row, inner.columns);
         let focused = pane.id == self.focused;
         let (bg, fg) = if focused {
@@ -799,7 +799,7 @@ impl Layout {
                 BarButton::Close => (CLOSE_ICON, fg),
                 BarButton::Name => continue,
             };
-            let color = match self.hover {
+            let color = match chrome.hover {
                 Some((id, hovered)) if id == pane.id && hovered == button => {
                     let hover = if button == BarButton::Close {
                         CLOSE_HOVER
@@ -1454,13 +1454,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_bar_covers_the_top_row_of_the_client_and_leaves_its_size_alone() {
-        let mut layout = three_anchors();
+    fn the_ctrl_bar_buttons_are_hit_on_the_top_row_of_the_client() {
+        let layout = three_anchors();
         let pane = layout.pane(0).unwrap();
         let before = layout.client_rect(pane);
-        layout.bar = true;
-        let pane = layout.pane(0).unwrap();
-        assert_eq!(layout.client_rect(pane), before);
         assert_eq!(layout.bar_hit(48, before.row), Some((0, BarButton::Close)));
         assert_eq!(layout.bar_hit(38, before.row), Some((0, BarButton::Pin)));
         assert_eq!(layout.bar_hit(48, 1), Some((0, BarButton::Close)));
@@ -1513,18 +1510,21 @@ pub(crate) mod tests {
 
     #[test]
     fn a_dragged_pane_leaves_its_slot_empty_and_its_ghost_is_the_inside_of_the_pane() {
-        let mut layout = three_anchors();
-        layout.bar = true;
-        layout.dragging = Some(0);
+        let layout = three_anchors();
+        let chrome = Chrome {
+            dragging: Some(0),
+            bar: true,
+            ..Chrome::default()
+        };
         let font = crate::text::Font::load(14.0);
-        let mut chrome = Scene::new(&font);
-        layout.draw(&mut chrome, None);
-        let waiting = chrome.shapes.iter().any(|shape| {
+        let mut drawn = Scene::new(&font);
+        layout.draw(&mut drawn, chrome);
+        let waiting = drawn.shapes.iter().any(|shape| {
             matches!(shape, crate::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
         });
         assert!(!waiting);
         let mut ghost = Scene::new(&font);
-        layout.draw_ghost(0, &mut ghost, None);
+        layout.draw_ghost(0, &mut ghost, chrome);
         let name = ghost.shapes.iter().find_map(|shape| match shape {
             crate::draw::Shape::Text { at, text, .. } if text == "chat" => Some(*at),
             _ => None,
@@ -1624,7 +1624,7 @@ pub(crate) mod tests {
         layout.pin(0, "decade.w0.terminal".to_string());
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, None);
+        layout.draw(&mut scene, Chrome::default());
         let texts = texts(&scene);
         assert!(texts.iter().any(|text| text == "shell exited"));
         assert!(texts.iter().any(|text| text == "restart"));
@@ -1634,10 +1634,13 @@ pub(crate) mod tests {
     fn a_long_name_on_the_ctrl_bar_is_cut_before_the_icons() {
         let mut layout = Layout::new(AREA);
         layout.panes[0].name = "x".repeat(200);
-        layout.bar = true;
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw_bars(&mut scene, None);
+        let chrome = Chrome {
+            bar: true,
+            ..Chrome::default()
+        };
+        layout.draw_bars(&mut scene, chrome);
         let inner = layout.panes[0].rect.inner();
         let first = bar_buttons(inner.column, inner.columns)[0].1;
         let name = texts(&scene)
@@ -1655,7 +1658,7 @@ pub(crate) mod tests {
         assert!(!layout.panes[0].restartable());
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, None);
+        layout.draw(&mut scene, Chrome::default());
         let texts = texts(&scene);
         assert!(
             texts
@@ -1670,7 +1673,11 @@ pub(crate) mod tests {
         let layout = Layout::new(AREA);
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, Some("terminal"));
+        let chrome = Chrome {
+            scratch: Some("terminal"),
+            ..Chrome::default()
+        };
+        layout.draw(&mut scene, chrome);
         let texts = texts(&scene);
         assert!(texts.iter().any(|text| text == "agents show things here"));
         assert!(!texts.iter().any(|text| text == "no client"));

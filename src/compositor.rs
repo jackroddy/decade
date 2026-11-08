@@ -97,8 +97,8 @@ use crate::palette::Rgba;
 use crate::palette::{self, ACCENT};
 use crate::panel::{Panel, PanelOutcome};
 use crate::panes::{
-    self as panes, BACKGROUND, BarButton, Boundary, CellRect, Direction, Drop, Kind as PaneKind,
-    Layout, Pane,
+    self as panes, BACKGROUND, BarButton, Boundary, CellRect, Chrome, Direction, Drop,
+    Kind as PaneKind, Layout, Pane,
 };
 use crate::picker::{self, Grid, Picker};
 use crate::pool::Pool;
@@ -137,6 +137,9 @@ enum Drag {
         id: usize,
         grab: Point<i32, Physical>,
         start: Instant,
+
+        /// The cell under the pointer since the drag began.
+        cell: Option<(u32, u32)>,
     },
 }
 
@@ -233,6 +236,10 @@ pub struct State {
     save_due: Option<RegistrationToken>,
     pointer: Point<f64, Logical>,
     drag: Option<Drag>,
+
+    /// Whether the Ctrl bar is shown on the workspace on screen.
+    bar: bool,
+    hover: Option<(usize, BarButton)>,
     ctrl_timer: Option<RegistrationToken>,
     scale: f64,
     start: Instant,
@@ -372,6 +379,8 @@ pub fn run() {
         save_due: None,
         pointer: (0.0, 0.0).into(),
         drag: None,
+        bar: false,
+        hover: None,
         ctrl_timer: None,
         scale,
         start: Instant::now(),
@@ -1130,10 +1139,8 @@ impl State {
 
     fn workspace_shown(&mut self) {
         self.drag = None;
-        let layout = self.layout_mut();
-        layout.dragging = None;
-        layout.bar = false;
-        layout.hover = None;
+        self.bar = false;
+        self.hover = None;
         self.relayout_all();
         let focused = self.layout().focused;
         self.focus(focused);
@@ -2122,10 +2129,6 @@ impl State {
         if tab >= shown.tabs.len() || tab == shown.active_tab {
             return;
         }
-        let hidden = shown.layout_mut();
-        hidden.dragging = None;
-        hidden.bar = false;
-        hidden.hover = None;
         shown.active_tab = tab;
         self.workspace_shown();
     }
@@ -2182,9 +2185,9 @@ impl State {
     }
 
     fn show_bar(&mut self, show: bool) {
-        if self.layout().bar != show {
-            self.layout_mut().bar = show;
-            self.layout_mut().hover = None;
+        if self.bar != show {
+            self.bar = show;
+            self.hover = None;
             self.request_redraw();
         }
     }
@@ -2223,31 +2226,29 @@ impl State {
             }
             return;
         }
-        match self.drag.take() {
+        let (column, row) = self.pointer_cell();
+        let current = self.current();
+        match &mut self.drag {
             Some(Drag::Boundary(boundary)) => {
-                let (column, row) = self.pointer_cell();
-                self.layout_mut().drag_boundary(&boundary, column, row);
-                self.drag = Some(Drag::Boundary(boundary));
+                let layout = self.workspaces[current].layout_mut();
+                layout.drag_boundary(boundary, column, row);
                 self.relayout();
                 return;
             }
-            Some(Drag::Pane { id, grab, start }) => {
-                let (column, row) = self.pointer_cell();
-                self.layout_mut().drag_cell = Some((column, row));
-                self.drag = Some(Drag::Pane { id, grab, start });
+            Some(Drag::Pane { cell, .. }) => {
+                *cell = Some((column, row));
                 self.request_redraw();
                 return;
             }
             None => {}
         }
-        if self.layout().bar {
-            let (column, row) = self.pointer_cell();
+        if self.bar {
             let hover = self
                 .layout()
                 .bar_hit(column, row)
                 .filter(|&(_, button)| button != BarButton::Name);
-            if hover != self.layout().hover {
-                self.layout_mut().hover = hover;
+            if hover != self.hover {
+                self.hover = hover;
                 self.request_redraw();
             }
         }
@@ -2607,7 +2608,10 @@ impl State {
 
     fn press_on_chrome(&mut self) -> bool {
         let (column, row) = self.pointer_cell();
-        let bar = self.layout().bar_hit(column, row);
+        let bar = self
+            .bar
+            .then(|| self.layout().bar_hit(column, row))
+            .flatten();
         match bar {
             Some((id, BarButton::Close)) => {
                 self.close_pane(id);
@@ -2715,7 +2719,7 @@ impl State {
     }
 
     fn start_pane_drag(&mut self, id: usize) {
-        self.layout_mut().hover = None;
+        self.hover = None;
         self.focus(id);
         let pointer = self.pointer.to_physical(self.scale).to_i32_round();
         let grab = pointer - self.pane_origin(id);
@@ -2723,21 +2727,16 @@ impl State {
             id,
             grab,
             start: Instant::now(),
+            cell: None,
         });
-        self.layout_mut().dragging = Some(id);
         self.request_redraw();
     }
 
     fn drop(&mut self, drag: Drag) {
-        let Drag::Pane { id, .. } = drag else {
+        let Drag::Pane { id, cell, .. } = drag else {
             return;
         };
-        self.layout_mut().dragging = None;
-        let drop = self
-            .layout_mut()
-            .drag_cell
-            .take()
-            .and_then(|(column, row)| self.layout().drop_at(id, column, row));
+        let drop = cell.and_then(|(column, row)| self.layout().drop_at(id, column, row));
         if let Some(drop) = drop {
             self.layout_mut().apply_drop(id, drop);
             self.relayout();
@@ -2815,6 +2814,8 @@ impl State {
             start,
             scale,
             drag,
+            bar,
+            hover,
             pointer,
             menu,
             panel,
@@ -2835,6 +2836,22 @@ impl State {
             )
         } else {
             (None, None, None, None)
+        };
+        let chrome = if workspace == current {
+            Chrome {
+                scratch,
+                dragging: match drag {
+                    Some(Drag::Pane { id, .. }) => Some(*id),
+                    _ => None,
+                },
+                bar: *bar,
+                hover: *hover,
+            }
+        } else {
+            Chrome {
+                scratch,
+                ..Chrome::default()
+            }
         };
         let scale = *scale;
         let size = *size;
@@ -2887,9 +2904,9 @@ impl State {
 
         let mut animating = false;
         let dragged = match drag {
-            Some(Drag::Pane { id, grab, start }) => {
-                layout.pane(*id).map(|pane| (pane, *grab, *start))
-            }
+            Some(Drag::Pane {
+                id, grab, start, ..
+            }) => layout.pane(*id).map(|pane| (pane, *grab, *start)),
             _ => None,
         };
         if let Some((pane, grab, start)) = dragged {
@@ -2927,7 +2944,7 @@ impl State {
             );
             paint.scene(&mut elements, &outline, Point::default(), None);
             let mut ghost = Scene::new(font);
-            layout.draw_ghost(pane.id, &mut ghost, scratch);
+            layout.draw_ghost(pane.id, &mut ghost, chrome);
             paint.scene(&mut elements, &ghost, origin + cell, Some(shrink));
             if let Some(toplevel) = pane.toplevel() {
                 let client = layout.client_rect(pane);
@@ -2956,15 +2973,22 @@ impl State {
         }
 
         let mut above = Scene::new(font);
-        layout.draw_bars(&mut above, scratch);
-        layout.draw_drop(&mut above);
+        layout.draw_bars(&mut above, chrome);
+        if let Some(Drag::Pane {
+            id,
+            cell: Some(cell),
+            ..
+        }) = drag
+        {
+            layout.draw_drop(&mut above, *id, *cell);
+        }
         paint.scene(&mut elements, &above, Point::default(), None);
 
         for pane in layout.visible().filter(|_| picker.is_none()) {
             let Some(toplevel) = pane.toplevel() else {
                 continue;
             };
-            if layout.dragging == Some(pane.id) {
+            if chrome.dragging == Some(pane.id) {
                 continue;
             }
             let rect = layout.client_rect(pane);
@@ -2999,7 +3023,7 @@ impl State {
 
         if picker.is_none() {
             let mut below = Scene::new(font);
-            layout.draw(&mut below, scratch);
+            layout.draw(&mut below, chrome);
             let grid = (
                 size.w as u32 / font.cell_width,
                 size.h as u32 / font.cell_height,
