@@ -3,7 +3,7 @@
   "title": "Pane drop edge strips are hit at the origin but drawn at the pane area",
   "body": "`Layout::drop_at` in `panes.rs` tests the pointer cell against edge bands that start at zero: `column < EDGE_BAND`, `column >= body.columns - EDGE_BAND`, `row < EDGE_BAND` and `row >= body.rows - EDGE_BAND`. `draw_drop` draws the four strips as `CellRect { columns: EDGE_BAND, ..body }` and the like, which start at `body.column` and `body.row`. Since the top bar and sidebar landed, `frame::pane_area` returns an area at column 3 or 24 and row 1, and `pointer_cell` hands `drop_at` absolute cells. On a 120-column window with the sidebar open:\n\n| strip | drawn at | hit at |\n|---|---|---|\n| left | columns 24 to 25 | columns 0 to 1 |\n| right | columns 94 to 95 | columns 94 to 119 |\n| above | row 1 | row 0 |\n| below | one row above the bottom | one row above the bottom |\n\nThe zone-to-`Drop` mapping (`None => Swap`, `Some(side) => Split`) is written in both functions, and `body()` returns `self.area` unchanged.\n\n## Proposal\n\nOne `edge_strips(area) -> [(Side, CellRect); 4]` built from `area.column` and `area.row`. `drop_at` tests `strip.contains(column, row)` and `draw_drop` draws the same strips. `drop_zones` returns `(Drop, CellRect)` so the mapping is written once. `body()` goes. A test with an area that does not start at the origin pins it.",
   "type": "bug",
-  "status": "open",
+  "status": "in_progress",
   "priority": 2,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T20:30:23.061821485Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:38:28.015446028Z",
-  "updated_at": "2026-11-08T07:38:28.015446028Z",
+  "updated_at": "2026-11-08T20:15:23.061821485Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
