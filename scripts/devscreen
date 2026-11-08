@@ -12,6 +12,7 @@
 set -eu
 
 name=headless-dev
+scripts=$(dirname "$(readlink -f "$0")")
 
 exists() {
     hyprctl -j monitors | grep -q "\"name\": \"$name\""
@@ -30,7 +31,7 @@ shot)
 run)
     shift
     exists || hyprctl output create headless "$name"
-    cargo build -q -j4 && exec target/debug/decade --class decade-dev "$@"
+    exec "$scripts/decade-dev" --class decade-dev "$@"
     ;;
 *)
     echo "usage: scripts/devscreen [on|off|shot FILE|run ARGS...]" >&2
