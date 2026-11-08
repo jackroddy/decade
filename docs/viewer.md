@@ -73,7 +73,8 @@ the protocol. Any server can read it.
   0 for a local viewer. `width` and `height` are the window's size in
   logical pixels. `scale` is the host's scale for it.
 
-Right after `hello`, a local viewer sends `formats`.
+Right after `hello`, a local viewer sends `formats`. The server sends no
+`buffer` or `frame` until `formats` has arrived.
 
 The server answers with `welcome`, then the workspace list (see
 Workspaces), then everything else.
@@ -168,9 +169,9 @@ planes: u32, then for each plane: fd, offset: u32, stride: u32)`
 `ready()`
 : Viewer to server. Now is a good time for the next frame, in the sense of a
   Wayland frame callback: the viewer received one from its host. The server
-  sends at most one `frame` per `ready`, plus one after `welcome`. `ready`
-  does not accumulate. A second `ready` before the next `frame` counts as
-  one. With no viewer attached, the server renders nothing.
+  sends at most one `frame` per `ready`, plus one after the first
+  `formats`. `ready` does not accumulate. A second `ready` before the next
+  `frame` counts as one. With no viewer attached, the server renders nothing.
 
 ### Changing size
 

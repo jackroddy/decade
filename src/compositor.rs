@@ -106,7 +106,7 @@ use crate::scratch::{self, Launch};
 use crate::settings::{self, Settings};
 use crate::text::Font;
 use crate::wire::{
-    self, BTN_LEFT, CAPS_LOCK, Decoder, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT, LOCAL, NUM_LOCK,
+    self, BTN_LEFT, CAPS_LOCK, Decoder, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT, NUM_LOCK,
     OUTBOX_RETRY, Outbox, Plane, SCALE, Selection, ServerMessage, ViewerMessage,
 };
 use crate::workspace::{self, Workspace};
@@ -124,7 +124,6 @@ const KEY_NUMLOCK: u32 = 69;
 const MAX_KEYCODE: u32 = 0xffff;
 const MAX_LOGICAL: u32 = 16384;
 const MAX_SCALE: u32 = SCALE * 8;
-const FORMATS_WAIT: Duration = Duration::from_secs(1);
 const CLOSE_TIMEOUT_MS: i32 = 1000;
 const PICKER_TICK: Duration = Duration::from_millis(500);
 const SAVE_DELAY: Duration = Duration::from_secs(1);
@@ -254,10 +253,9 @@ struct Viewer {
     welcomed: bool,
     logical: (u32, u32),
     scale: u32,
-    formats: Vec<(Fourcc, Modifier)>,
 
-    /// When a local viewer whose `formats` has not arrived gets its first frame anyway.
-    formats_due: Option<Instant>,
+    /// The formats the viewer's host imports, once `formats` has arrived.
+    formats: Option<Vec<(Fourcc, Modifier)>>,
     linear: bool,
     pool: Vec<Slot>,
     next_buffer: u32,
@@ -754,8 +752,7 @@ impl State {
                 welcomed: false,
                 logical: (0, 0),
                 scale: SCALE,
-                formats: Vec::new(),
-                formats_due: None,
+                formats: None,
                 linear: false,
                 pool: Vec::new(),
                 next_buffer: 0,
@@ -1177,10 +1174,10 @@ impl State {
         match message {
             ViewerMessage::Hello {
                 version,
-                transport,
                 width,
                 height,
                 scale,
+                ..
             } => {
                 if version == 0 {
                     self.viewer_failed(id, "decade speaks protocol version 1");
@@ -1191,14 +1188,6 @@ impl State {
                     viewer.logical = (width, height);
                     viewer.scale = scale;
                     viewer.ready = true;
-                    if transport == LOCAL && viewer.formats.is_empty() {
-                        viewer.formats_due = Some(Instant::now() + FORMATS_WAIT);
-                        let _ = self
-                            .loop_handle
-                            .insert_source(Timer::from_duration(FORMATS_WAIT), |_, _, _| {
-                                TimeoutAction::Drop
-                            });
-                    }
                 }
                 let version = version.min(wire::VERSION);
                 self.send(id, ServerMessage::Welcome { version });
@@ -1214,16 +1203,16 @@ impl State {
                 }
                 self.request_redraw();
             }
-            ViewerMessage::Formats { formats, .. } => {
+            ViewerMessage::Formats { formats } => {
                 if let Some(viewer) = self.viewers.get_mut(&id) {
-                    viewer.formats_due = None;
-                    viewer.formats = formats
+                    let formats = formats
                         .iter()
                         .filter_map(|format| {
                             let code = Fourcc::try_from(format.format).ok()?;
                             Some((code, Modifier::from(format.modifier)))
                         })
                         .collect();
+                    viewer.formats = Some(formats);
                 }
             }
             ViewerMessage::Resize {
@@ -1497,15 +1486,11 @@ impl State {
                 viewer.wants_frame = true;
             }
         }
-        let now = Instant::now();
         let ids: Vec<usize> = self
             .viewers
             .iter()
             .filter(|(_, viewer)| {
-                viewer.welcomed
-                    && viewer.ready
-                    && viewer.wants_frame
-                    && viewer.formats_due.is_none_or(|due| now >= due)
+                viewer.welcomed && viewer.ready && viewer.wants_frame && viewer.formats.is_some()
             })
             .map(|(&id, _)| id)
             .collect();
@@ -1531,10 +1516,11 @@ impl State {
                     return;
                 }
                 let (width, height) = (size.w as u32, size.h as u32);
-                let allocated = if viewer.linear || viewer.formats.is_empty() {
+                let formats = viewer.formats.as_deref().unwrap_or_default();
+                let allocated = if viewer.linear || formats.is_empty() {
                     self.gpu.allocate_linear(width, height)
                 } else {
-                    match self.gpu.allocate(width, height, &viewer.formats) {
+                    match self.gpu.allocate(width, height, formats) {
                         Ok(dmabuf) => Ok(dmabuf),
                         Err(error) => {
                             eprintln!(
