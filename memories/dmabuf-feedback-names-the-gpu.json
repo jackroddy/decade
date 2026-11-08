@@ -1,10 +1,10 @@
 {
   "slug": "dmabuf-feedback-names-the-gpu",
-  "text": "smithay 0.7 DmabufState::create_global offers linux-dmabuf without feedback, and decade offers no wl_drm either, so a client's Mesa gets no DRM device (logs 'failed to get driver name for fd -1') and can fall back to software GL. ghostty then dropped its text above about 3000x1900 logical px. run() in src/compositor.rs passes the render node as default feedback: DmabufFeedbackBuilder::new(gpu.node.dev_id(), ...) and create_global_with_default_feedback. Found 2026-11-07.",
+  "text": "smithay 0.7 DmabufState::create_global offers linux-dmabuf without feedback, and decade offers no wl_drm either, so a client's Mesa gets no DRM device (logs 'failed to get driver name for fd -1') and can fall back to software GL. ghostty then dropped its text above about 3000x1900 logical px. dmabuf_global() in src/compositor.rs passes the render node as default feedback: DmabufFeedbackBuilder::new(gpu.node.dev_id(), ...) and create_global_with_default_feedback. Found 2026-11-07.",
   "created_at": "2026-11-07T08:10:19.27921245Z",
-  "updated_at": "2026-11-08T07:22:33.548054667Z",
+  "updated_at": "2026-11-08T20:12:37.420883848Z",
   "stamp": {
-    "commit": "e2173eb",
-    "branch": "sessions"
+    "commit": "141646e",
+    "branch": "simplify"
   }
 }
