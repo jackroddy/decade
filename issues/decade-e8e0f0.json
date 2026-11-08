@@ -1,0 +1,30 @@
+{
+  "id": "decade-e8e0f0",
+  "title": "size and scale on State mirror the Output's mode and scale",
+  "body": "`State.size` and `State.scale` in `compositor.rs` hold the output's current size and scale beside `State.output`, which holds the same values in its current `Mode` and `Scale`. `resized` writes both copies. Reading from `Output` means `current_mode()` returns an `Option`, so the copies save an unwrap at every read.\n\n## Proposal\n\nEither keep the copies and say so in a comment on the fields, or read from `Output` through two small accessors that unwrap once. Low payoff; filed so the decision is recorded.",
+  "type": "chore",
+  "status": "open",
+  "priority": 4,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T18:44:01.297918642Z",
+  "updated_at": "2026-11-08T18:44:01.297918642Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
