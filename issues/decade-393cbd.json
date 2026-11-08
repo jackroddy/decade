@@ -1,0 +1,30 @@
+{
+  "id": "decade-393cbd",
+  "title": "The formats timer guards against a client that does not exist",
+  "body": "When a local viewer's `Hello` arrives without formats, the server sets `Viewer.formats_due = now + FORMATS_WAIT` and registers a 1 s `Timer` whose callback only wakes the loop; `render_viewers` then compares the `Instant`. Both clients send `Hello` and `Formats` back to back in one outbox: `hello()` in `viewer.rs` returns until it has formats, and `script.rs` does the same. The two messages arrive in one read and the decode loop handles both before `render_viewers` runs.\n\n## Proposal\n\nMark a local viewer `ready` on `Formats` instead of `Hello`, or drop the wait and let an empty `formats` fall back to linear as it already does. The field, the constant, the timer and the render filter clause go.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:40:26.068191222Z",
+  "updated_at": "2026-11-08T07:40:26.068191222Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
