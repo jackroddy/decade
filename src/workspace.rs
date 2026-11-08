@@ -5,6 +5,7 @@ use smithay::reexports::calloop::RegistrationToken;
 
 use crate::channel::{AGENT, AgentState, Router};
 use crate::panes::{CellRect, Layout, Pane};
+use crate::scratch::Scratch;
 
 pub struct Workspace {
     pub id: u32,
@@ -22,6 +23,7 @@ pub struct Workspace {
 
     /// The agent state each pane last reported, by pane name.
     pub agents: HashMap<String, Agent>,
+    pub scratch: Option<Scratch>,
 }
 
 /// One split tree of panes in a workspace.
@@ -99,6 +101,7 @@ impl Workspace {
             listener: None,
             closing: false,
             agents: HashMap::new(),
+            scratch: None,
         }
     }
 
@@ -155,6 +158,20 @@ impl Workspace {
     /// agent has reported.
     pub fn agent_state(&self) -> Option<AgentState> {
         self.agents.values().map(|agent| agent.state).max()
+    }
+
+    /// The name of the scratch pane, if the workspace has one.
+    pub fn scratch_pane(&self) -> Option<&str> {
+        self.scratch.as_ref().map(|scratch| scratch.pane.as_str())
+    }
+
+    /// Mark the pane as the scratch pane, or unmark it if it is already.
+    pub fn toggle_scratch(&mut self, name: &str) {
+        self.scratch = if self.scratch_pane() == Some(name) {
+            None
+        } else {
+            Some(Scratch::new(name.to_string()))
+        };
     }
 
     /// The app id prefix of a terminal started for one of this workspace's panes.
@@ -216,5 +233,18 @@ mod tests {
         assert_eq!(workspace.by_name("terminal2"), Some((1, 0)));
         let cwd = workspace.tabs[1].layout.panes[0].cwd.as_deref();
         assert_eq!(cwd, Some(std::path::Path::new("/home/jack")));
+    }
+
+    #[test]
+    fn marking_a_pane_scratch_unmarks_the_one_before_it() {
+        let mut workspace =
+            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.toggle_scratch("terminal");
+        assert_eq!(workspace.scratch_pane(), Some("terminal"));
+        workspace.toggle_scratch("terminal2");
+        assert_eq!(workspace.scratch_pane(), Some("terminal2"));
+        workspace.toggle_scratch("terminal2");
+        assert_eq!(workspace.scratch_pane(), None);
     }
 }

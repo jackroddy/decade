@@ -186,10 +186,17 @@ mod tests {
     fn every_icon_is_drawn_no_taller_than_the_shared_icon_height() {
         let font = Font::load(28.0);
         let mut context = ScaleContext::new();
-        let heights: Vec<i32> = ['\u{f0403}', '\u{f0931}', '\u{f0293}', '\u{f0156}']
-            .into_iter()
-            .map(|icon| raster_icon(&mut context, &font, icon, [1.0; 4]).height)
-            .collect();
+        let heights: Vec<i32> = [
+            '\u{f0403}',
+            '\u{f0931}',
+            '\u{f0293}',
+            '\u{f0156}',
+            '\u{f0093}',
+            '\u{f0096}',
+        ]
+        .into_iter()
+        .map(|icon| raster_icon(&mut context, &font, icon, [1.0; 4]).height)
+        .collect();
         let most = (28.0 * ICON_HEIGHT).round() as i32 + 1;
         assert!(heights.iter().all(|&height| height > 0 && height <= most));
     }

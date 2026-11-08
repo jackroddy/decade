@@ -83,6 +83,18 @@ command line and what the tool writes.
   shows a restart button instead, and a click on the slot or Enter starts
   a new shell in the pane's directory. Unpinning an anchor makes it a pane
   that closes with its program.
+- A button on the Ctrl bar marks a pane as its workspace's scratch pane.
+  Agents show things there. A workspace has one scratch pane at most.
+  Marking a pane unmarks the one before it. The scratch pane carries a
+  scratch tag on its outline. It stays as an empty slot when its client
+  exits. The x on an empty scratch pane removes it. `workspaces.toml`
+  records which pane is the scratch pane.
+- When an agent calls the MCP tool `scratch.open`, decade starts a program
+  in the scratch pane. The program runs in a terminal or as its own window.
+  decade starts only a program on its `PATH` whose name starts with
+  `decade-`. decade asks a program already in the scratch pane to close
+  first. The MCP tool `scratch.send` sends a message to the program in the
+  scratch pane.
 - Ctrl+dragging a pane, or dragging it by the name on its bar, carries a
   small copy of it under the pointer. Dropping it on a target drawn over
   another pane swaps the two or splits that pane on one side. Dropping it

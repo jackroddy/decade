@@ -127,6 +127,21 @@ decade's answer, an error line or the pane list, is the tool result; a message
 that was only forwarded answers "sent". coax passes `DECADE_MCP` to the agent
 in the ACP session's server list, so any agent coax runs sees these tools.
 
+The person may mark one pane in a workspace as its scratch pane, from the
+Ctrl bar. Two tools reach it. `scratch.open` takes `program`, optional
+`args` and optional `terminal`. `terminal` defaults to true. decade refuses
+the call unless the workspace has a scratch pane and `program` is a bare
+name starting with `decade-` that is on decade's `PATH`. With `terminal`
+true the program runs inside ghostty in the scratch pane. With `terminal`
+false decade starts it directly. decade puts the first window of that
+program, or of a process under it, in the scratch pane. Either way the
+program gets the pane's name in `DECADE_PANE`. When a program already
+occupies the scratch pane, decade asks it to close. decade starts the new
+program once the old one has gone. `scratch.send` takes `verb` and
+`payload`. decade sends `{"to": "<scratch pane>", "<verb>": payload}` from
+`agent`, and the program in the scratch pane receives it like any other
+message.
+
 ## Version
 
 `welcome` carries `version`, 1 today. The number moves when a message changes

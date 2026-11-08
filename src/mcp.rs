@@ -14,11 +14,25 @@ use serde_json::{Map, Value, json};
 use smithay::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
 
+use crate::scratch::Launch;
+
 pub struct Request {
     /// The workspace named in the address the call came in on.
     pub workspace: Option<u32>,
-    pub line: String,
+    pub call: Call,
     pub reply: oneshot::Sender<Vec<String>>,
+}
+
+pub enum Call {
+    /// A socket line from the built-in agent client.
+    Line(String),
+    ScratchOpen(Launch),
+
+    /// A message to the program in the scratch pane.
+    ScratchSend {
+        verb: String,
+        payload: Value,
+    },
 }
 
 pub struct Server {
@@ -124,6 +138,31 @@ fn tools() -> Vec<Tool> {
             "List the panes in this workspace and the program occupying each",
             schema(json!({"type": "object", "properties": {}})),
         ),
+        Tool::new(
+            "scratch.open",
+            "Start a decade- program in the scratch pane, closing the program there first",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "program": {"type": "string", "description": "a program on decade's PATH whose name starts with decade-"},
+                    "args": {"type": "array", "items": {"type": "string"}, "description": "the program's arguments"},
+                    "terminal": {"type": "boolean", "description": "run it in a terminal, the default, or as its own window"}
+                },
+                "required": ["program"]
+            })),
+        ),
+        Tool::new(
+            "scratch.send",
+            "Send a message to the program in the scratch pane",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "verb": {"type": "string", "description": "the message's verb"},
+                    "payload": {"type": "object", "description": "the message's payload"}
+                },
+                "required": ["verb", "payload"]
+            })),
+        ),
     ]
 }
 
@@ -134,16 +173,51 @@ fn workspace_in(query: &str) -> Option<u32> {
         .and_then(|id| id.parse().ok())
 }
 
-fn line_for(name: &str, arguments: Map<String, Value>) -> Option<String> {
+fn call_for(name: &str, mut arguments: Map<String, Value>) -> Result<Call, String> {
     let line = match name {
         "code.show" => json!({"to": "code", "show": arguments}),
         "code.mark" => json!({"to": "code", "mark": arguments}),
         "code.clear" => json!({"to": "code", "clear": {}}),
         "focus" => json!({"focus": arguments}),
         "panes" => json!({"panes": {}}),
-        _ => return None,
+        "scratch.open" => return scratch_open(arguments).map(Call::ScratchOpen),
+        "scratch.send" => {
+            let Some(Value::String(verb)) = arguments.remove("verb") else {
+                return Err("scratch.send needs a verb, a string".to_string());
+            };
+            let Some(payload @ Value::Object(_)) = arguments.remove("payload") else {
+                return Err("scratch.send needs a payload, an object".to_string());
+            };
+            return Ok(Call::ScratchSend { verb, payload });
+        }
+        _ => return Err(format!("no tool named {name}")),
     };
-    Some(line.to_string())
+    Ok(Call::Line(line.to_string()))
+}
+
+fn scratch_open(arguments: Map<String, Value>) -> Result<Launch, String> {
+    let Some(Value::String(program)) = arguments.get("program") else {
+        return Err("scratch.open needs a program, a string".to_string());
+    };
+    let args = match arguments.get("args") {
+        None => Vec::new(),
+        Some(Value::Array(args)) => args
+            .iter()
+            .map(|arg| arg.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+            .ok_or("scratch.open's args must be strings")?,
+        Some(_) => return Err("scratch.open's args must be an array".to_string()),
+    };
+    let terminal = match arguments.get("terminal") {
+        None => true,
+        Some(Value::Bool(terminal)) => *terminal,
+        Some(_) => return Err("scratch.open's terminal must be true or false".to_string()),
+    };
+    Ok(Launch {
+        program: program.clone(),
+        args,
+        terminal,
+    })
 }
 
 impl ServerHandler for Decade {
@@ -154,7 +228,10 @@ impl ServerHandler for Decade {
                 "decade is the window the user is working in. These tools reach the panes of the \
                  workspace this agent was started in, and panes lists them. A pane named code \
                  shows one file; use code.show to bring a file into view and code.mark to point \
-                 at lines in it.",
+                 at lines in it. The user may mark one pane as the scratch pane, where agents \
+                 show things. scratch.open starts a program whose name begins with decade- in \
+                 it, replacing the program there, and scratch.send sends that program a message. \
+                 Both fail when the workspace has no scratch pane.",
             )
     }
 
@@ -176,19 +253,15 @@ impl ServerHandler for Decade {
             .get::<axum::http::request::Parts>()
             .and_then(|parts| parts.uri.query())
             .and_then(workspace_in);
-        let Some(line) = line_for(&request.name, request.arguments.unwrap_or_default()) else {
-            return Err(ErrorData::invalid_params(
-                format!("no tool named {}", request.name),
-                None,
-            ));
-        };
+        let call = call_for(&request.name, request.arguments.unwrap_or_default())
+            .map_err(|reason| ErrorData::invalid_params(reason, None))?;
         let (reply, answer) = oneshot::channel();
         self.requests
             .lock()
             .unwrap()
             .send(Request {
                 workspace,
-                line,
+                call,
                 reply,
             })
             .map_err(|_| ErrorData::internal_error("decade's event loop is gone", None))?;
@@ -245,10 +318,13 @@ mod tests {
             .handle()
             .insert_source(source, |event, _, seen| {
                 if let Event::Msg(request) = event {
-                    seen.push((request.workspace, request.line.clone()));
-                    let reply = if request.line.contains("\"panes\"") {
+                    let Call::Line(line) = request.call else {
+                        return;
+                    };
+                    seen.push((request.workspace, line.clone()));
+                    let reply = if line.contains("\"panes\"") {
                         vec![r#"{"panes":[{"name":"code","client":"decade-code"}]}"#.to_string()]
-                    } else if request.line.contains("\"terminal\"") {
+                    } else if line.contains("\"terminal\"") {
                         vec![r#"{"error":{"reason":"no client occupies pane terminal","message":{}}}"#.to_string()]
                     } else {
                         Vec::new()
@@ -305,7 +381,15 @@ mod tests {
 
         assert_eq!(
             names,
-            ["code.show", "code.mark", "code.clear", "focus", "panes"]
+            [
+                "code.show",
+                "code.mark",
+                "code.clear",
+                "focus",
+                "panes",
+                "scratch.open",
+                "scratch.send"
+            ]
         );
         assert_eq!(seen.len(), 3);
         assert!(seen.iter().all(|(workspace, _)| *workspace == Some(7)));
@@ -334,5 +418,21 @@ mod tests {
                 .text
                 .contains("no client occupies")
         );
+    }
+
+    #[test]
+    fn scratch_open_defaults_to_a_terminal_and_refuses_arguments_that_are_not_strings() {
+        let Ok(Call::ScratchOpen(launch)) =
+            call_for("scratch.open", schema(json!({"program": "decade-code"})))
+        else {
+            panic!("scratch.open with a program is a launch");
+        };
+        assert_eq!(launch.program, "decade-code");
+        assert!(launch.args.is_empty());
+        assert!(launch.terminal);
+        let args = schema(json!({"program": "decade-code", "args": [1]}));
+        assert!(call_for("scratch.open", args).is_err());
+        let payload = schema(json!({"verb": "show", "payload": "x"}));
+        assert!(call_for("scratch.send", payload).is_err());
     }
 }

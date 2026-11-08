@@ -29,6 +29,8 @@ const UNPINNED_ICON: char = '\u{f0931}';
 const ZOOM_ICON: char = '\u{f0293}';
 const UNZOOM_ICON: char = '\u{f0294}';
 const CLOSE_ICON: char = '\u{f0156}';
+const SCRATCH_ICON: char = '\u{f0093}';
+const UNSCRATCHED_ICON: char = '\u{f0096}';
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CellRect {
@@ -145,6 +147,7 @@ pub enum Node {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BarButton {
+    Scratch,
     Pin,
     Zoom,
     Close,
@@ -356,13 +359,11 @@ impl Layout {
             .iter()
             .find(|pane| {
                 pane.toplevel.is_none()
-                    && match &pane.kind {
-                        Kind::Anchor { app_id: wanted } => wanted == app_id,
-                        Kind::Transient => {
-                            app_id.strip_prefix(prefix) == Some(&pane.name)
-                                || pane.app_id.as_deref() == Some(app_id)
-                        }
-                    }
+                    && (app_id.strip_prefix(prefix) == Some(&pane.name)
+                        || match &pane.kind {
+                            Kind::Anchor { app_id: wanted } => wanted == app_id,
+                            Kind::Transient => pane.app_id.as_deref() == Some(app_id),
+                        })
             })
             .map(|pane| pane.id)
     }
@@ -571,7 +572,9 @@ impl Layout {
         None
     }
 
-    pub fn draw(&self, scene: &mut Scene) {
+    /// Draw every visible pane's outline and, for an empty pane, what it
+    /// waits for; `scratch` names the workspace's scratch pane.
+    pub fn draw(&self, scene: &mut Scene, scratch: Option<&str>) {
         for pane in self.visible() {
             if self.dragging == Some(pane.id) {
                 continue;
@@ -581,14 +584,15 @@ impl Layout {
             } else {
                 OUTLINE
             };
-            self.draw_outline(scene, pane, outline);
-            draw_waiting(scene, pane, pane.rect.inner());
+            let scratched = scratch == Some(pane.name.as_str());
+            self.draw_outline(scene, pane, outline, scratched);
+            draw_waiting(scene, pane, pane.rect.inner(), scratched);
         }
     }
 
-    /// The pane's outline, with a tag on its top edge when it is pinned
-    /// or zoomed.
-    fn draw_outline(&self, scene: &mut Scene, pane: &Pane, color: Rgba) {
+    /// The pane's outline, with a tag on its top edge when it is pinned,
+    /// zoomed or the scratch pane.
+    fn draw_outline(&self, scene: &mut Scene, pane: &Pane, color: Rgba, scratched: bool) {
         let (cell_width, cell_height) = scene.cell();
         let line = scene.line_width();
         let rect = pane.rect;
@@ -617,9 +621,10 @@ impl Layout {
         for (text, face) in [
             (PIN_ICON.to_string(), Face::Icon),
             ("zoom".to_string(), Face::Chrome),
+            ("scratch".to_string(), Face::Chrome),
         ]
         .into_iter()
-        .zip([pinned, zoomed])
+        .zip([pinned, zoomed, scratched])
         .filter_map(|(tag, shown)| shown.then_some(tag))
         {
             let start = end - text.chars().count() as i32 * cell_width;
@@ -633,18 +638,19 @@ impl Layout {
         }
     }
 
-    pub fn draw_bars(&self, scene: &mut Scene) {
+    pub fn draw_bars(&self, scene: &mut Scene, scratch: Option<&str>) {
         if !self.bar {
             return;
         }
         for pane in self.visible() {
             if self.dragging != Some(pane.id) {
-                self.draw_bar(scene, pane, pane.rect.inner());
+                let scratched = scratch == Some(pane.name.as_str());
+                self.draw_bar(scene, pane, pane.rect.inner(), scratched);
             }
         }
     }
 
-    pub fn draw_ghost(&self, id: usize, scene: &mut Scene) {
+    pub fn draw_ghost(&self, id: usize, scene: &mut Scene, scratch: Option<&str>) {
         let Some(pane) = self.pane(id) else {
             return;
         };
@@ -653,13 +659,14 @@ impl Layout {
             row: 0,
             ..pane.rect.inner()
         };
-        draw_waiting(scene, pane, inner);
+        let scratched = scratch == Some(pane.name.as_str());
+        draw_waiting(scene, pane, inner, scratched);
         if self.bar {
-            self.draw_bar(scene, pane, inner);
+            self.draw_bar(scene, pane, inner, scratched);
         }
     }
 
-    fn draw_bar(&self, scene: &mut Scene, pane: &Pane, inner: CellRect) {
+    fn draw_bar(&self, scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool) {
         if inner.is_empty() {
             return;
         }
@@ -678,6 +685,16 @@ impl Layout {
         let zoomed = self.zoom == Some(pane.id);
         for (button, x) in buttons {
             let (icon, color) = match button {
+                BarButton::Scratch if focused => (
+                    if scratched {
+                        SCRATCH_ICON
+                    } else {
+                        UNSCRATCHED_ICON
+                    },
+                    fg,
+                ),
+                BarButton::Scratch if scratched => (SCRATCH_ICON, FOREGROUND),
+                BarButton::Scratch => (UNSCRATCHED_ICON, UNPINNED),
                 BarButton::Pin if focused => (if pinned { PIN_ICON } else { UNPINNED_ICON }, fg),
                 BarButton::Pin if pinned => (PIN_ICON, FOREGROUND),
                 BarButton::Pin => (UNPINNED_ICON, UNPINNED),
@@ -721,7 +738,7 @@ impl Layout {
     }
 }
 
-fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect) {
+fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool) {
     if inner.is_empty() || pane.toplevel.is_some() {
         return;
     }
@@ -747,6 +764,17 @@ fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect) {
     }
     scene.fill(inner, PANE);
     let middle = inner.row + inner.rows / 2;
+    if scratched {
+        let hint = "agents show things here";
+        scene.text(
+            centered("scratch"),
+            middle.saturating_sub(1),
+            "scratch",
+            DIM,
+        );
+        scene.text(centered(hint), middle, hint, UNPINNED);
+        return;
+    }
     let text = match &pane.kind {
         Kind::Anchor { app_id } => format!("waiting for {app_id}"),
         Kind::Transient => "no client".to_string(),
@@ -754,11 +782,13 @@ fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect) {
     scene.text(centered(&text), middle, &text, DIM);
 }
 
-fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 3] {
+fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 4] {
     let close = (start + width).saturating_sub(BUTTON_WIDTH);
     let zoom = close.saturating_sub(BUTTON_WIDTH);
     let pin = zoom.saturating_sub(BUTTON_WIDTH);
+    let scratch = pin.saturating_sub(BUTTON_WIDTH);
     [
+        (BarButton::Scratch, scratch),
         (BarButton::Pin, pin),
         (BarButton::Zoom, zoom),
         (BarButton::Close, close),
@@ -1241,6 +1271,11 @@ pub(crate) mod tests {
         assert_eq!(layout.bar_hit(38, before.row), Some((0, BarButton::Pin)));
         assert_eq!(layout.bar_hit(48, 1), Some((0, BarButton::Close)));
         assert_eq!(layout.bar_hit(42, 1), Some((0, BarButton::Zoom)));
+        let inner = layout.pane(0).unwrap().rect.inner();
+        let (_, scratch) = bar_buttons(inner.column, inner.columns)[0];
+        assert_eq!(scratch, 33);
+        assert_eq!(layout.bar_hit(scratch, 1), Some((0, BarButton::Scratch)));
+        assert_eq!(layout.bar_hit(scratch - 1, 1), Some((0, BarButton::Name)));
         assert_eq!(layout.bar_hit(2, 1), Some((0, BarButton::Name)));
         assert_eq!(layout.bar_hit(2, 5), None);
     }
@@ -1289,13 +1324,13 @@ pub(crate) mod tests {
         layout.dragging = Some(0);
         let font = crate::text::Font::load(14.0);
         let mut chrome = Scene::new(&font);
-        layout.draw(&mut chrome);
+        layout.draw(&mut chrome, None);
         let waiting = chrome.shapes.iter().any(|shape| {
             matches!(shape, crate::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
         });
         assert!(!waiting);
         let mut ghost = Scene::new(&font);
-        layout.draw_ghost(0, &mut ghost);
+        layout.draw_ghost(0, &mut ghost, None);
         let name = ghost.shapes.iter().find_map(|shape| match shape {
             crate::draw::Shape::Text { at, text, .. } if text == "chat" => Some(*at),
             _ => None,
@@ -1395,7 +1430,7 @@ pub(crate) mod tests {
         layout.pin(0, "decade.w0.terminal".to_string());
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene);
+        layout.draw(&mut scene, None);
         let texts = texts(&scene);
         assert!(texts.iter().any(|text| text == "shell exited"));
         assert!(texts.iter().any(|text| text == "restart"));
@@ -1408,15 +1443,15 @@ pub(crate) mod tests {
         layout.bar = true;
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw_bars(&mut scene);
+        layout.draw_bars(&mut scene, None);
         let inner = layout.panes[0].rect.inner();
-        let pin = bar_buttons(inner.column, inner.columns)[0].1;
+        let first = bar_buttons(inner.column, inner.columns)[0].1;
         let name = texts(&scene)
             .into_iter()
             .find(|text| text.starts_with('x'))
             .unwrap();
         assert!(name.ends_with('…'));
-        assert!(inner.column + 1 + name.chars().count() as u32 <= pin);
+        assert!(inner.column + 1 + name.chars().count() as u32 <= first);
     }
 
     #[test]
@@ -1426,7 +1461,7 @@ pub(crate) mod tests {
         assert!(!layout.panes[0].restartable());
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene);
+        layout.draw(&mut scene, None);
         let texts = texts(&scene);
         assert!(
             texts
@@ -1434,5 +1469,16 @@ pub(crate) mod tests {
                 .any(|text| text == "waiting for org.gnome.Nautilus")
         );
         assert!(!texts.iter().any(|text| text == "restart"));
+    }
+
+    #[test]
+    fn an_empty_scratch_pane_says_it_is_the_scratch_pane() {
+        let layout = Layout::new(AREA);
+        let font = crate::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, Some("terminal"));
+        let texts = texts(&scene);
+        assert!(texts.iter().any(|text| text == "agents show things here"));
+        assert!(!texts.iter().any(|text| text == "no client"));
     }
 }

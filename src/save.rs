@@ -28,6 +28,10 @@ pub struct Saved {
     pub name: String,
     pub cwd: PathBuf,
     pub active_tab: usize,
+
+    /// The name of the scratch pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratch: Option<String>,
     #[serde(rename = "tab")]
     tabs: Vec<SavedTab>,
 }
@@ -124,6 +128,7 @@ fn read(text: &str) -> Result<File, String> {
                     name: old.name,
                     cwd: old.cwd,
                     active_tab: 0,
+                    scratch: None,
                     tabs: vec![old.tab],
                 })
                 .collect();
@@ -158,6 +163,7 @@ fn saved(workspace: &Workspace) -> Saved {
         name: workspace.name.clone(),
         cwd: workspace.cwd.clone(),
         active_tab: workspace.active_tab,
+        scratch: workspace.scratch_pane().map(str::to_string),
         tabs: workspace
             .tabs
             .iter()
@@ -462,6 +468,21 @@ mod tests {
             ]
         );
         assert_eq!(layouts[1].pane(layouts[1].focused).unwrap().name, "logs");
+    }
+
+    #[test]
+    fn the_scratch_pane_reads_back_by_name() {
+        let mut workspace = workspace();
+        workspace.toggle_scratch("nautilus");
+        let text = toml::to_string(&File {
+            version: VERSION,
+            sidebar_open: true,
+            workspaces: vec![saved(&workspace), saved(&self::workspace())],
+        })
+        .unwrap();
+        let file = read(&text).unwrap();
+        assert_eq!(file.workspaces[0].scratch.as_deref(), Some("nautilus"));
+        assert_eq!(file.workspaces[1].scratch, None);
     }
 
     #[test]

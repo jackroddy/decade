@@ -100,6 +100,7 @@ use crate::panes::{
 };
 use crate::picker::{self, Grid, Picker};
 use crate::save;
+use crate::scratch::{self, Launch};
 use crate::settings::{self, Settings};
 use crate::text::{Font, Rgba};
 use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
@@ -599,13 +600,19 @@ fn restore(columns: u32, rows: u32) -> (Vec<Workspace>, bool, Option<PathBuf>) {
                 let id = id as u32;
                 let prefix = format!("decade.w{id}.");
                 let layouts = saved.layouts(area, &prefix)?;
-                Ok(Workspace::with_tabs(
+                let mut workspace = Workspace::with_tabs(
                     id,
                     saved.name.clone(),
                     saved.cwd.clone(),
                     layouts,
                     saved.active_tab,
-                ))
+                );
+                if let Some(name) = &saved.scratch
+                    && workspace.by_name(name).is_some()
+                {
+                    workspace.toggle_scratch(name);
+                }
+                Ok(workspace)
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok((workspaces, file.sidebar_open))
@@ -670,14 +677,20 @@ impl State {
         }
     }
 
-    fn spawn_terminal(&mut self, workspace: usize, pane: &str, cwd: &Path) {
+    /// A ghostty whose window goes in the pane.
+    fn ghostty(&self, workspace: usize, pane: &str) -> Command {
         let prefix = self.workspaces[workspace].app_id_prefix();
         let mut ghostty = self.command(workspace, "ghostty");
         ghostty
-            .current_dir(cwd)
             .env("DECADE_PANE", pane)
             .args(["--window-decoration=none", "--gtk-titlebar=false"])
             .arg(format!("--class={prefix}{pane}"));
+        ghostty
+    }
+
+    fn spawn_terminal(&mut self, workspace: usize, pane: &str, cwd: &Path) {
+        let mut ghostty = self.ghostty(workspace, pane);
+        ghostty.current_dir(cwd);
         match ghostty.spawn() {
             Ok(child) => {
                 let shown = &mut self.workspaces[workspace];
@@ -1715,15 +1728,31 @@ impl State {
                 Some(id) => format!("workspace {id} is closed"),
                 None => "the MCP address names no workspace".to_string(),
             };
-            let error = serde_json::json!({ "error": { "reason": reason } });
-            let _ = request.reply.send(vec![error.to_string()]);
+            let _ = request.reply.send(vec![error_line(&reason)]);
             return;
         };
+        let line = match request.call {
+            mcp::Call::Line(line) => line,
+            mcp::Call::ScratchOpen(launch) => {
+                let reply = self
+                    .scratch_open(workspace, launch)
+                    .unwrap_or_else(|reason| error_line(&reason));
+                let _ = request.reply.send(vec![reply]);
+                return;
+            }
+            mcp::Call::ScratchSend { verb, payload } => {
+                let Some(pane) = self.workspaces[workspace].scratch_pane() else {
+                    let _ = request.reply.send(vec![error_line(NO_SCRATCH)]);
+                    return;
+                };
+                let mut message = serde_json::Map::new();
+                message.insert("to".to_string(), pane.into());
+                message.insert(verb, payload);
+                serde_json::Value::Object(message).to_string()
+            }
+        };
         let mut reply = Vec::new();
-        for out in self.workspaces[workspace]
-            .router
-            .handle(AGENT, &request.line)
-        {
+        for out in self.workspaces[workspace].router.handle(AGENT, &line) {
             match out {
                 Out::Line(to, text) if to == AGENT => reply.push(text),
                 Out::Line(to, text) => self.channel_send(to, &text),
@@ -1732,6 +1761,92 @@ impl State {
             }
         }
         let _ = request.reply.send(reply);
+    }
+
+    /// Start the program in the workspace's scratch pane, or ask the
+    /// program there to close and start it once it has.
+    fn scratch_open(&mut self, workspace: usize, launch: Launch) -> Result<String, String> {
+        let shown = &self.workspaces[workspace];
+        let name = shown.scratch_pane().ok_or(NO_SCRATCH)?;
+        scratch::find_program(
+            &launch.program,
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )?;
+        let occupant = shown
+            .by_name(name)
+            .and_then(|(tab, id)| shown.tabs[tab].layout.pane(id))
+            .and_then(|pane| pane.toplevel.clone());
+        let Some(occupant) = occupant else {
+            return self.start_scratch(workspace, launch);
+        };
+        occupant.send_close();
+        let reply = format!(
+            "asked the program in pane {name} to close; {} starts there once it has",
+            launch.program
+        );
+        if let Some(scratch) = &mut self.workspaces[workspace].scratch {
+            scratch.next = Some(launch);
+        }
+        Ok(reply)
+    }
+
+    fn start_scratch(&mut self, workspace: usize, launch: Launch) -> Result<String, String> {
+        let name = self.workspaces[workspace]
+            .scratch_pane()
+            .ok_or(NO_SCRATCH)?
+            .to_string();
+        let mut command = if launch.terminal {
+            let mut ghostty = self.ghostty(workspace, &name);
+            ghostty.arg("-e").arg(&launch.program).args(&launch.args);
+            ghostty
+        } else {
+            let mut command = self.command(workspace, &launch.program);
+            command.env("DECADE_PANE", &name).args(&launch.args);
+            command
+        };
+        let child = command
+            .spawn()
+            .map_err(|error| format!("could not start {}: {error}", launch.program))?;
+        if !launch.terminal
+            && let Some(scratch) = &mut self.workspaces[workspace].scratch
+        {
+            scratch.expected = Some(child.id());
+        }
+        self.children.push(child);
+        let place = if launch.terminal {
+            "in a terminal in"
+        } else {
+            "in"
+        };
+        Ok(format!("started {} {place} pane {name}", launch.program))
+    }
+
+    /// The workspace, tab and id of the empty scratch pane waiting for a
+    /// window from a program under `pid`.
+    fn expecting(&mut self, pid: u32) -> Option<(usize, usize, usize)> {
+        for (index, workspace) in self.workspaces.iter_mut().enumerate() {
+            let Some(scratch) = &mut workspace.scratch else {
+                continue;
+            };
+            let Some(expected) = scratch.expected else {
+                continue;
+            };
+            if !scratch::descends_from(pid, expected) {
+                continue;
+            }
+            let Some((tab, id)) = workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
+                let id = entry.layout.by_name(&scratch.pane)?;
+                Some((tab, id))
+            }) else {
+                continue;
+            };
+            if workspace.tabs[tab].layout.pane(id)?.toplevel.is_some() {
+                continue;
+            }
+            scratch.expected = None;
+            return Some((index, tab, id));
+        }
+        None
     }
 
     fn channel_disconnected(&mut self, id: usize) {
@@ -2205,6 +2320,9 @@ impl State {
         layout.remove(id);
         shown.router.remove_pane(&name);
         shown.agents.remove(&name);
+        if shown.scratch_pane() == Some(name.as_str()) {
+            shown.scratch = None;
+        }
         if shown.closing {
             self.finish_closing(workspace);
             return;
@@ -2224,10 +2342,15 @@ impl State {
         let Some(pane) = self.layout().pane(id) else {
             return;
         };
+        let current = self.current();
+        let scratched = self.workspaces[current].scratch_pane() == Some(pane.name.as_str());
         match (&pane.toplevel, &pane.kind) {
             (Some(toplevel), _) => toplevel.send_close(),
             (None, PaneKind::Transient) => {
-                let current = self.current();
+                let tab = self.workspaces[current].active_tab;
+                self.remove_pane(current, tab, id);
+            }
+            (None, PaneKind::Anchor { .. }) if scratched => {
                 let tab = self.workspaces[current].active_tab;
                 self.remove_pane(current, tab, id);
             }
@@ -2664,6 +2787,10 @@ impl State {
                 self.toggle_pin(id);
                 return true;
             }
+            Some((id, BarButton::Scratch)) => {
+                self.toggle_scratch(id);
+                return true;
+            }
             _ => {}
         }
         if let Some(boundary) = self.layout().boundary_at(column, row) {
@@ -2701,10 +2828,12 @@ impl State {
             .toplevel
             .as_ref()
             .map(|toplevel| toplevel.wl_surface().clone());
+        let current = self.current();
+        let scratched = self.workspaces[current].scratch_pane() == Some(pane.name.as_str());
         match &pane.kind {
             PaneKind::Anchor { .. } => {
                 self.layout_mut().unpin(id);
-                if client.is_none() {
+                if client.is_none() && !scratched {
                     let current = self.current();
                     let tab = self.workspaces[current].active_tab;
                     self.remove_pane(current, tab, id);
@@ -2715,6 +2844,30 @@ impl State {
                     self.layout_mut().pin(id, app_id);
                 }
             }
+        }
+        self.chrome_changed();
+        self.schedule_save();
+    }
+
+    /// Mark the pane as the workspace's scratch pane, or unmark it. An empty
+    /// transient pane that loses the mark is removed.
+    fn toggle_scratch(&mut self, id: usize) {
+        let Some(pane) = self.layout().pane(id) else {
+            return;
+        };
+        let name = pane.name.clone();
+        let current = self.current();
+        let shown = &mut self.workspaces[current];
+        let before = shown
+            .scratch_pane()
+            .and_then(|before| shown.by_name(before));
+        shown.toggle_scratch(&name);
+        if let Some((tab, before)) = before
+            && let Some(pane) = shown.tabs[tab].layout.pane(before)
+            && pane.toplevel.is_none()
+            && matches!(pane.kind, PaneKind::Transient)
+        {
+            self.remove_pane(current, tab, before);
         }
         self.chrome_changed();
         self.schedule_save();
@@ -2826,6 +2979,7 @@ impl State {
             ..
         } = self;
         let layout = workspaces[workspace].layout();
+        let scratch = workspaces[workspace].scratch_pane();
         let (menu, panel, drag, picker) = if workspace == current {
             (
                 menu.as_ref(),
@@ -2927,7 +3081,7 @@ impl State {
             );
             paint.scene(&mut elements, &outline, Point::default(), None);
             let mut ghost = Scene::new(font);
-            layout.draw_ghost(pane.id, &mut ghost);
+            layout.draw_ghost(pane.id, &mut ghost, scratch);
             paint.scene(&mut elements, &ghost, origin + cell, Some(shrink));
             if let Some(toplevel) = &pane.toplevel {
                 let client = layout.client_rect(pane);
@@ -2956,7 +3110,7 @@ impl State {
         }
 
         let mut above = Scene::new(font);
-        layout.draw_bars(&mut above);
+        layout.draw_bars(&mut above, scratch);
         layout.draw_drop(&mut above);
         paint.scene(&mut elements, &above, Point::default(), None);
 
@@ -2999,7 +3153,7 @@ impl State {
 
         if picker.is_none() {
             let mut below = Scene::new(font);
-            layout.draw(&mut below);
+            layout.draw(&mut below, scratch);
             let grid = (
                 size.w as u32 / font.cell_width,
                 size.h as u32 / font.cell_height,
@@ -3464,6 +3618,13 @@ fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Key {
     Key::Menu(key)
 }
 
+const NO_SCRATCH: &str =
+    "this workspace has no scratch pane; the person marks one from the Ctrl bar";
+
+fn error_line(reason: &str) -> String {
+    serde_json::json!({ "error": { "reason": reason } }).to_string()
+}
+
 fn app_id(surface: &WlSurface) -> Option<String> {
     with_states(surface, |states| {
         states
@@ -3522,17 +3683,23 @@ impl CompositorHandler for State {
         {
             let app_id = app_id(surface);
             let toplevel = self.unplaced.remove(i);
-            let placed = self
-                .workspaces
-                .iter()
-                .enumerate()
-                .find_map(|(index, workspace)| {
-                    let prefix = workspace.app_id_prefix();
-                    workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
-                        let id = entry.layout.place(app_id.as_deref(), &prefix)?;
-                        Some((index, tab, id))
+            let pid = surface
+                .client()
+                .and_then(|client| client.get_credentials(&self.display_handle).ok())
+                .map(|credentials| credentials.pid as u32);
+            let expected = pid.and_then(|pid| self.expecting(pid));
+            let placed = expected.or_else(|| {
+                self.workspaces
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, workspace)| {
+                        let prefix = workspace.app_id_prefix();
+                        workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
+                            let id = entry.layout.place(app_id.as_deref(), &prefix)?;
+                            Some((index, tab, id))
+                        })
                     })
-                });
+            });
             let (workspace, tab, id) = match placed {
                 Some(placed) => placed,
                 None => {
@@ -3584,11 +3751,31 @@ impl XdgShellHandler for State {
         };
         let current = self.current();
         let shown = &mut self.workspaces[workspace];
+        let closing = shown.closing || shown.tabs[tab].closing;
         let Some(pane) = shown.tabs[tab].layout.pane_mut(id) else {
             return;
         };
         pane.toplevel = None;
-        if matches!(pane.kind, PaneKind::Transient) {
+        let transient = matches!(pane.kind, PaneKind::Transient);
+        let scratched = shown
+            .scratch
+            .as_ref()
+            .is_some_and(|scratch| scratch.pane == pane.name);
+
+        // the next program for the scratch pane starts only once its
+        // occupant has gone, and not in a workspace or tab that is closing
+        let next = shown
+            .scratch
+            .as_mut()
+            .filter(|_| scratched && !closing)
+            .and_then(|scratch| scratch.next.take());
+        if let Some(next) = next
+            && let Err(error) = self.start_scratch(workspace, next)
+        {
+            eprintln!("decade: {error}");
+        }
+        let shown = &self.workspaces[workspace];
+        if transient && !scratched {
             self.remove_pane(workspace, tab, id);
         } else if shown.closing {
             self.finish_closing(workspace);

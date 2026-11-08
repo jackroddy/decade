@@ -31,6 +31,8 @@ mod picker;
 #[cfg(target_os = "linux")]
 mod save;
 #[cfg(target_os = "linux")]
+mod scratch;
+#[cfg(target_os = "linux")]
 mod script;
 #[cfg(target_os = "linux")]
 mod settings;
