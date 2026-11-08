@@ -3,7 +3,7 @@
   "title": "Error, Offer, Cleared and Request are declared and coded twice in wire.rs",
   "body": "`ViewerMessage` and `ServerMessage` each have `Error`, `Offer`, `Cleared` and `Request` with the same fields. Each is encoded twice and decoded twice, about 140 lines, and only `Writer::offer` is shared. `Outbox::push_viewer_message` and `push_server_message` are one-line forwards.\n\nEncoding itself is written once. `Writer` and `Args` own the primitives and `finish` does the length arithmetic, so no message carries its own length math. A macro declaring each of the 36 variants once would cut about 500 lines to 150. I would not take it: the arms read straight through, and the macro would not.\n\n## Proposal\n\n`wire::Clip { Offer, Cleared, Request }` carried as `ViewerMessage::Clip(Clip)` and `ServerMessage::Clip(Clip)`, with one `Writer::clip` and one `Args::clip` and the opcode as the direction's base plus the clip index. `Error` the same way. About 70 lines fewer.",
   "type": "chore",
-  "status": "open",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "simplification"
@@ -15,16 +15,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.057765926Z",
-  "updated_at": "2026-11-08T07:40:26.057765926Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T19:33:27.192256718Z",
+  "closed_at": "2026-11-08T19:33:27.192256718Z",
+  "close_reason": "Not worth doing after 1b87e2f. The server's offer lost seen, so the two directions' offers differ and a shared Clip type would cover only cleared and request. Error lost its code in 363bbd2 and is one string per side. What remains to share is about 30 lines, against an extra level of nesting at every match on a clipboard message.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "8dfb545",
+      "branch": "simplify"
+    }
   }
 }
