@@ -1,0 +1,28 @@
+{
+  "id": "decade-2f9c2f",
+  "title": "decade script cannot hold a mouse button down across a shot",
+  "body": "`decade script` in `src/script.rs` has `click` and `drag`, and `drag` presses the button, moves in eight steps and releases before the next command runs. A `shot` can only follow the release. So no scripted frame shows a pane drag in progress: the ghost from `paint_ghost` in `src/compositor/render.rs` and the drop markers from `Layout::draw_drop` in `src/panes.rs` are never captured.\n\n## Proposal\n\nTwo commands, `down` and `up`, that press and release the left button at the pointer's position. A script then runs `move`, `down`, `move`, `wait`, `shot`, `up` to capture a drag mid-way.",
+  "type": "feature",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T20:25:03.47961077Z",
+  "updated_at": "2026-11-08T20:25:03.47961077Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "998dda4",
+      "branch": "simplify"
+    },
+    "closed": null
+  }
+}
