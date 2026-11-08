@@ -8,25 +8,28 @@ use std::time::{Duration, Instant};
 
 use rustix::fs::FlockOperation;
 
+use crate::files;
 use crate::wire::{Decoder, Listed, Outbox, ServerMessage, ViewerMessage};
 use rustix::process::{Pid, Signal};
 
 /// The exit status of a server that found another server running.
-pub const ANOTHER_SERVER: i32 = 3;
+const ANOTHER_SERVER: i32 = 3;
 
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(50);
 
+/// The directory of the server's viewer socket, lock and log.
+pub fn dir() -> PathBuf {
+    files::runtime_dir().join(files::DIR)
+}
+
 pub fn viewer_socket_path() -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    dir.join("decade").join("viewer.sock")
+    dir().join("viewer.sock")
 }
 
 fn lock_path() -> PathBuf {
-    viewer_socket_path().with_file_name("server.lock")
+    dir().join("server.lock")
 }
 
 /// Lock the server's lock file and record this process's pid in it, or exit.
@@ -118,13 +121,22 @@ pub fn stop() -> Result<Option<u32>, String> {
 
 /// The running server's workspaces, in picker order.
 pub fn list() -> Result<Vec<Listed>, String> {
-    let path = viewer_socket_path();
-    let stream = UnixStream::connect(&path).map_err(|_| "no server is running".to_string())?;
+    listing(&connect()?)
+}
+
+/// Connect to the running server's viewer socket.
+pub fn connect() -> Result<UnixStream, String> {
+    UnixStream::connect(viewer_socket_path()).map_err(|_| "no server is running".to_string())
+}
+
+fn listing(stream: &UnixStream) -> Result<Vec<Listed>, String> {
     let mut outbox = Outbox::new();
     outbox
         .push_viewer_message(ViewerMessage::List)
         .map_err(|error| format!("{error:?}"))?;
-    while !outbox.send(&stream).map_err(|error| error.to_string())? {}
+    outbox
+        .flush(stream, None)
+        .map_err(|error| error.to_string())?;
     let mut decoder = Decoder::new();
     loop {
         if let Some(message) = decoder
@@ -138,7 +150,7 @@ pub fn list() -> Result<Vec<Listed>, String> {
             };
         }
         let open = decoder
-            .receive(&stream)
+            .wait(stream, None)
             .map_err(|error| format!("{error:?}"))?;
         if !open {
             return Err("the server closed the connection without a listing".into());
@@ -148,15 +160,12 @@ pub fn list() -> Result<Vec<Listed>, String> {
 
 /// Connect to the running server, starting one in the background first if none answers.
 pub fn connect_or_start() -> Result<UnixStream, String> {
-    let path = viewer_socket_path();
-    if let Ok(stream) = UnixStream::connect(&path) {
+    if let Ok(stream) = connect() {
         return Ok(stream);
     }
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let log_path = path.with_file_name("server.log");
-    let log = log_path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
+    let log_path = dir().join("server.log");
+    let log = std::fs::create_dir_all(dir())
         .and_then(|()| OpenOptions::new().create(true).append(true).open(&log_path))
         .map_err(|error| format!("{}: {error}", log_path.display()))?;
     let log_out = log.try_clone().map_err(|error| error.to_string())?;
@@ -172,7 +181,7 @@ pub fn connect_or_start() -> Result<UnixStream, String> {
     let mut lost = false;
     loop {
         std::thread::sleep(POLL);
-        if let Ok(stream) = UnixStream::connect(&path) {
+        if let Ok(stream) = connect() {
             std::thread::spawn(move || child.wait());
             return Ok(stream);
         }
@@ -186,8 +195,44 @@ pub fn connect_or_start() -> Result<UnixStream, String> {
         if start.elapsed() > START_TIMEOUT {
             return Err(format!(
                 "decade server did not answer at {}",
-                path.display()
+                viewer_socket_path().display()
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn thread_cpu_time() -> Duration {
+        let schedstat = std::fs::read_to_string("/proc/thread-self/schedstat").unwrap();
+        let ns = schedstat
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        Duration::from_nanos(ns)
+    }
+
+    #[test]
+    fn waiting_for_a_listing_sleeps_until_the_server_answers() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let answer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            let mut outbox = Outbox::new();
+            outbox
+                .push_server_message(ServerMessage::Listing { workspaces: vec![] })
+                .unwrap();
+            outbox.flush(&server, None).unwrap();
+            server
+        });
+        let before = thread_cpu_time();
+        let workspaces = listing(&client).unwrap();
+        let spent = thread_cpu_time() - before;
+        drop(answer.join().unwrap());
+        assert!(workspaces.is_empty());
+        assert!(spent < Duration::from_millis(100), "{spent:?} on the CPU");
     }
 }

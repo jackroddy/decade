@@ -8,18 +8,15 @@ use smithay::backend::allocator::{Fourcc, Modifier};
 use smithay::backend::renderer::{Bind, ExportMem};
 use smithay::utils::Rectangle;
 
-use crate::control::viewer_socket_path;
+use crate::control;
 use crate::gpu::Gpu;
-use crate::wire::{Decoder, Format, Outbox, ServerMessage, ViewerMessage};
+use crate::wire::{
+    self, BTN_LEFT, Decoder, Format, KEY_LEFTALT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
+    Outbox, SCALE, ServerMessage, ViewerMessage,
+};
 const SIZE: (u32, u32) = (1600, 900);
-const SCALE: u32 = 120;
 const STEP: u64 = 60;
 const SETTLE: u64 = 300;
-const BTN_LEFT: u32 = 0x110;
-const KEY_LEFTCTRL: u32 = 29;
-const KEY_LEFTSHIFT: u32 = 42;
-const KEY_LEFTALT: u32 = 56;
-const KEY_LEFTMETA: u32 = 125;
 
 /// Run a script of input against the running server, saving frames as it says.
 pub fn run(path: &str) -> Result<(), String> {
@@ -39,9 +36,7 @@ pub fn run(path: &str) -> Result<(), String> {
             modifier: format.modifier.into(),
         })
         .collect();
-    let device = gpu.node.dev_id();
-    let stream = UnixStream::connect(viewer_socket_path())
-        .map_err(|_| "no server is running".to_string())?;
+    let stream = control::connect()?;
     stream
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
@@ -55,13 +50,13 @@ pub fn run(path: &str) -> Result<(), String> {
         gpu,
     };
     session.send(ViewerMessage::Hello {
-        version: 1,
-        transport: 0,
+        version: wire::VERSION,
+        transport: wire::LOCAL,
         width: SIZE.0,
         height: SIZE.1,
         scale: SCALE,
     })?;
-    session.send(ViewerMessage::Formats { device, formats })?;
+    session.send(ViewerMessage::Formats { formats })?;
     session.pump(SETTLE * 2)?;
     for (number, line) in text.lines().enumerate() {
         let line = line.trim();
@@ -123,9 +118,7 @@ impl Session {
                 self.press(&modifiers, key, ms)?;
             }
             "press" | "release" => {
-                let key = named_key(rest)
-                    .or_else(|| chord(rest).ok().map(|(_, key)| key))
-                    .ok_or(format!("no key named {rest}"))?;
+                let (_, key) = chord(rest)?;
                 self.key(key, command == "press")?;
                 self.pump(STEP)?;
             }
@@ -230,15 +223,9 @@ impl Session {
     fn pump(&mut self, ms: u64) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_millis(ms);
         loop {
-            while !self.outbox.is_empty() {
-                if !self
-                    .outbox
-                    .send(&self.stream)
-                    .map_err(|error| error.to_string())?
-                {
-                    break;
-                }
-            }
+            self.outbox
+                .send(&self.stream)
+                .map_err(|error| error.to_string())?;
             while let Some(message) = self
                 .decoder
                 .next_server_message()
@@ -250,17 +237,13 @@ impl Session {
             if left.is_zero() {
                 return Ok(());
             }
-            let wait = left.as_millis().min(20) as i32;
-            let mut fds = [PollFd::new(&self.stream, PollFlags::IN)];
-            let _ = rustix::event::poll(&mut fds, wait);
-            if fds[0].revents().contains(PollFlags::IN) {
-                let open = self
-                    .decoder
-                    .receive(&self.stream)
-                    .map_err(|error| format!("{error:?}"))?;
-                if !open {
-                    return Err("the server closed the connection".into());
-                }
+            let wait = Instant::now() + left.min(Duration::from_millis(20));
+            let open = self
+                .decoder
+                .wait(&self.stream, Some(wait))
+                .map_err(|error| format!("{error:?}"))?;
+            if !open {
+                return Err("the server closed the connection".into());
             }
         }
     }
@@ -306,8 +289,9 @@ impl Session {
                 self.send(ViewerMessage::Release { id, fence: None })?;
                 self.send(ViewerMessage::Ready)?;
             }
-            ServerMessage::Error { message, .. } => return Err(message),
-            ServerMessage::Close { message, .. } => return Err(message),
+            ServerMessage::Error { message, .. } | ServerMessage::Close { message, .. } => {
+                return Err(message);
+            }
             _ => {}
         }
         Ok(())
@@ -342,12 +326,9 @@ fn chord(text: &str) -> Result<(Vec<u32>, u32), String> {
     let mut parts: Vec<&str> = text.split('+').collect();
     let key = parts.pop().ok_or("an empty chord")?;
     for part in parts {
-        modifiers.push(match part.to_lowercase().as_str() {
-            "super" => KEY_LEFTMETA,
-            "shift" => KEY_LEFTSHIFT,
-            "ctrl" => KEY_LEFTCTRL,
-            "alt" => KEY_LEFTALT,
-            other => return Err(format!("{other} is not a modifier")),
+        modifiers.push(match named_key(part) {
+            Some(key @ (KEY_LEFTMETA | KEY_LEFTSHIFT | KEY_LEFTCTRL | KEY_LEFTALT)) => key,
+            _ => return Err(format!("{part} is not a modifier")),
         });
     }
     let key = named_key(key)

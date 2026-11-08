@@ -37,6 +37,10 @@ with no pane can still send. decade answers:
 another client holds it; in the last two cases an error line comes first.
 Every other message before hello is answered with an error.
 
+A client may send hello again. The new hello replaces its name and
+`accepts` list. The client gives up the pane it held and claims the one the
+new hello names, if any.
+
 ## Messages to a pane
 
 A message names a pane in `to` and carries exactly one verb. decade delivers
@@ -63,7 +67,14 @@ The verbs so far, and what a code pane does with them:
 Verbs are not checked by decade beyond the occupant's `accepts` list; the
 payload is the business of the two clients.
 
+A pane verb may not be one of these names, which decade keeps for its own
+messages: `hello`, `focus`, `status`, `panes`, `welcome`, `error` and
+`from`. decade answers a message to a pane that uses one with an error and
+does not forward it.
+
 ## Messages to decade
+
+A message without `to` is for decade, and carries exactly one of its verbs.
 
 ```json
 {"focus": {"pane": "terminal"}}
@@ -96,8 +107,8 @@ A client that claimed a pane reports what the agent in that pane is doing:
 `message` is optional and is shown beside the state. A state holds until
 it is replaced, either by the client that reported it or by the person at
 the screen, who can return `done` and `attention` to `idle`. Focusing the
-pane changes nothing. A pane whose client never reported, or whose client
-has disconnected, has no agent. A workspace shows the most urgent state of
+pane changes nothing. A pane has no agent when its client never reported,
+has disconnected, or gave the pane up with a new hello. A workspace shows the most urgent state of
 its panes, in the order of the table. When a pane enters `attention` and no
 focused viewer shows its workspace, decade raises a desktop notification.
 There is no reply. A client that claimed no pane gets an error.
@@ -121,11 +132,14 @@ beside `DECADE_SOCKET`. Each workspace has its own address, ending in
 `?workspace=<id>`, and a tool call reaches only the panes of that
 workspace. Its tools are decade's own `focus` and `panes` and, for
 the code pane, `code.show`, `code.mark` and `code.clear`, each with the payload
-described above as its arguments. A tool call becomes the matching socket
-message from a built-in client named `agent`, so a pane sees `"from": "agent"`.
-decade's answer, an error line or the pane list, is the tool result; a message
-that was only forwarded answers "sent". coax passes `DECADE_MCP` to the agent
-in the ACP session's server list, so any agent coax runs sees these tools.
+described above as its arguments. decade delivers a pane verb from a tool
+call with `"from": "agent"`. decade answers `panes` with the pane list, in the
+shape of the socket's `panes` reply, and every other call with a line saying
+what it did. When decade cannot act on a call, the result is a tool error
+whose text is the reason the socket would give in `error`. decade refuses a
+call to an address without `?workspace=` as invalid parameters. coax passes
+`DECADE_MCP` to the agent in the ACP session's server list, so any agent coax
+runs sees these tools.
 
 The person may mark one pane in a workspace as its scratch pane, from the
 Ctrl bar. Two tools reach it. `scratch.open` takes `program`, optional

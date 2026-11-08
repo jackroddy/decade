@@ -1,9 +1,11 @@
+use std::io;
 use std::path::{Path, PathBuf};
-use std::{env, fs, io};
 
 use serde::{Deserialize, Serialize};
 
-const VERSION: i64 = 1;
+use crate::files;
+
+const VERSION: u32 = 1;
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -48,24 +50,27 @@ pub const KNOBS: [Knob; 6] = [
     Knob::Grab,
 ];
 
+#[derive(Clone, Copy)]
+enum Unit {
+    Px,
+    Ms,
+    Percent,
+}
+
+/// Each knob's label, step, least and greatest value, and unit, in the
+/// order of `Knob`'s variants.
+const RANGES: [(&str, f64, f64, f64, Unit); 6] = [
+    ("Font size", 1.0, 8.0, 40.0, Unit::Px),
+    ("Palette font size", 1.0, 8.0, 40.0, Unit::Px),
+    ("Ctrl bar delay", 10.0, 0.0, 1000.0, Unit::Ms),
+    ("Drag size", 0.05, 0.05, 1.0, Unit::Percent),
+    ("Drag opacity", 0.05, 0.05, 1.0, Unit::Percent),
+    ("Drag pickup time", 10.0, 0.0, 1000.0, Unit::Ms),
+];
+
 impl Knob {
     pub fn label(self) -> &'static str {
-        match self {
-            Knob::FontSize => "Font size",
-            Knob::PaletteSize => "Palette font size",
-            Knob::BarHold => "Ctrl bar delay",
-            Knob::GhostScale => "Drag size",
-            Knob::GhostOpacity => "Drag opacity",
-            Knob::Grab => "Drag pickup time",
-        }
-    }
-
-    fn step_and_range(self) -> (f64, f64, f64) {
-        match self {
-            Knob::FontSize | Knob::PaletteSize => (1.0, 8.0, 40.0),
-            Knob::BarHold | Knob::Grab => (10.0, 0.0, 1000.0),
-            Knob::GhostScale | Knob::GhostOpacity => (0.05, 0.05, 1.0),
-        }
+        RANGES[self as usize].0
     }
 
     fn get(self, settings: &Settings) -> f64 {
@@ -80,7 +85,7 @@ impl Knob {
     }
 
     pub fn step(self, settings: &mut Settings, up: bool) {
-        let (step, min, max) = self.step_and_range();
+        let (_, step, min, max, _) = RANGES[self as usize];
         let delta = if up { step } else { -step };
         let value = ((self.get(settings) + delta) / step).round() * step;
         let value = value.clamp(min, max);
@@ -96,48 +101,35 @@ impl Knob {
 
     pub fn show(self, settings: &Settings) -> String {
         let value = self.get(settings);
-        match self {
-            Knob::FontSize | Knob::PaletteSize => format!("{value} px"),
-            Knob::BarHold | Knob::Grab => format!("{value} ms"),
-            Knob::GhostScale | Knob::GhostOpacity => format!("{:.0}%", value * 100.0),
+        match RANGES[self as usize].4 {
+            Unit::Px => format!("{value} px"),
+            Unit::Ms => format!("{value} ms"),
+            Unit::Percent => format!("{:.0}%", value * 100.0),
         }
     }
 }
 
 pub fn path() -> Option<PathBuf> {
-    let config = env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(config.join("decade").join("config.toml"))
+    let config = files::xdg_home("XDG_CONFIG_HOME", ".config")?;
+    Some(config.join(files::DIR).join("config.toml"))
 }
 
 pub fn load(path: &Path) -> Result<Settings, String> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Settings::default()),
-        Err(error) => return Err(error.to_string()),
-    };
-    parse(&text)
+    match files::read(path)? {
+        Some(text) => parse(&text),
+        None => Ok(Settings::default()),
+    }
 }
 
 fn parse(text: &str) -> Result<Settings, String> {
-    let table: toml::Table = toml::from_str(text).map_err(|error| error.to_string())?;
-    match table
-        .get("version")
-        .and_then(|version| version.as_integer())
-    {
-        Some(VERSION) => {}
-        Some(other) => return Err(format!("version {other} is not one decade reads")),
-        None => return Err("the file has no version".to_string()),
+    match files::version(text)? {
+        VERSION => toml::from_str(text).map_err(|error| error.to_string()),
+        other => Err(format!("version {other} is not one decade reads")),
     }
-    toml::from_str(text).map_err(|error| error.to_string())
 }
 
 pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    fs::write(path, render(settings))
+    files::write(path, &render(settings))
 }
 
 fn render(settings: &Settings) -> String {
@@ -170,6 +162,15 @@ mod tests {
     fn a_file_without_version_one_is_refused() {
         assert!(parse("version = 2\n").is_err());
         assert!(parse("font_size = 12.0\n").is_err());
+    }
+
+    #[test]
+    fn every_knob_has_the_range_in_its_variants_place() {
+        let labels = KNOBS.map(Knob::label);
+        assert_eq!(labels[0], "Font size");
+        assert_eq!(labels[5], "Drag pickup time");
+        assert_eq!(Knob::Grab.show(&Settings::default()), "50 ms");
+        assert_eq!(Knob::GhostScale.show(&Settings::default()), "20%");
     }
 
     #[test]

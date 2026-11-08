@@ -1,12 +1,15 @@
 use std::path::PathBuf;
 
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::compositor::with_states;
-use smithay::wayland::shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData};
+use smithay::wayland::shell::xdg::{
+    ToplevelSurface, XdgToplevelSurfaceData, XdgToplevelSurfaceRoleAttributes,
+};
 
-use crate::draw::{Face, Scene};
-use crate::frame::fit;
-use crate::palette;
-use crate::text::Rgba;
+use crate::server::chrome::draw::{Face, Scene};
+use crate::server::chrome::palette;
+use crate::server::chrome::palette::Rgba;
+use crate::server::chrome::text::fit;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;
@@ -63,7 +66,7 @@ impl CellRect {
         )
     }
 
-    pub fn inner(&self) -> CellRect {
+    fn inner(&self) -> CellRect {
         if self.columns < 3 || self.rows < 3 {
             return CellRect::EMPTY;
         }
@@ -94,11 +97,6 @@ pub enum Axis {
     Vertical,
 }
 
-pub enum Kind {
-    Anchor { app_id: String },
-    Transient,
-}
-
 /// One window in a pane, shown as one of the pane's tabs.
 pub struct Client {
     pub toplevel: ToplevelSurface,
@@ -112,12 +110,7 @@ pub struct Client {
 impl Client {
     /// The client's title, or the last part of its app id.
     fn label(&self) -> Option<String> {
-        let title = with_states(self.toplevel.wl_surface(), |states| {
-            states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .and_then(|data| data.lock().unwrap().title.clone())
-        });
+        let title = toplevel_data(self.toplevel.wl_surface(), |data| data.title.clone());
         title.filter(|title| !title.is_empty()).or_else(|| {
             let app_id = self.app_id.as_deref()?;
             Some(app_id.rsplit('.').next().unwrap_or(app_id).to_string())
@@ -125,10 +118,28 @@ impl Client {
     }
 }
 
+/// The app id a toplevel's client set.
+pub fn app_id(surface: &WlSurface) -> Option<String> {
+    toplevel_data(surface, |data| data.app_id.clone())
+}
+
+fn toplevel_data(
+    surface: &WlSurface,
+    read: impl FnOnce(&XdgToplevelSurfaceRoleAttributes) -> Option<String>,
+) -> Option<String> {
+    with_states(surface, |states| {
+        let data = states.data_map.get::<XdgToplevelSurfaceData>()?;
+        read(&data.lock().unwrap())
+    })
+}
+
 pub struct Pane {
     pub id: usize,
     pub name: String,
-    pub kind: Kind,
+
+    /// Whether the pane stays, waiting for its program, when its last
+    /// client goes.
+    pub pinned: bool,
     pub rect: CellRect,
 
     /// The pane's tabs, one window each.
@@ -140,10 +151,8 @@ pub struct Pane {
     /// The number in the app id of the next terminal tab decade starts.
     pub next_tab: u32,
 
-    /// The directories of the terminal tabs to start for a restored pane.
-    pub saved_tabs: Vec<PathBuf>,
-
-    /// The app id of the last client in the pane.
+    /// The app id of the last client in the pane that is not a terminal
+    /// tab, which an empty pane waits for.
     pub app_id: Option<String>,
 
     /// Where decade starts the pane's shell, for a pane that holds a terminal.
@@ -156,12 +165,40 @@ pub struct Pane {
 impl Pane {
     /// Whether the pane is a pinned terminal whose shell has exited.
     pub fn restartable(&self) -> bool {
-        self.clients.is_empty() && self.cwd.is_some() && matches!(self.kind, Kind::Anchor { .. })
+        self.clients.is_empty() && self.cwd.is_some() && self.pinned
+    }
+
+    /// The cells the pane's client fills.
+    pub fn client_rect(&self) -> CellRect {
+        client_area(self.rect, self.clients.len())
     }
 
     /// The window of the tab drawn.
     pub fn toplevel(&self) -> Option<&ToplevelSurface> {
         self.clients.get(self.shown).map(|client| &client.toplevel)
+    }
+
+    /// Add a window as a tab and show it. A terminal tab decade started
+    /// goes last. Any other window goes first, and an empty pane waits for
+    /// its app id.
+    pub fn add_client(&mut self, client: Client) {
+        if client.terminal_tab {
+            self.clients.push(client);
+            self.shown = self.clients.len() - 1;
+        } else {
+            self.app_id = client.app_id.clone();
+            self.clients.insert(0, client);
+            self.shown = 0;
+        }
+    }
+
+    /// Show the tab at `index`, and return whether the pane has one.
+    pub fn show(&mut self, index: usize) -> bool {
+        let shown = index < self.clients.len();
+        if shown {
+            self.shown = index;
+        }
+        shown
     }
 
     /// Show the next tab, or the previous one, wrapping at the ends.
@@ -176,16 +213,15 @@ impl Pane {
         self.shown = shown_after_removal(self.shown, index, self.clients.len());
     }
 
-    pub fn new(id: usize, name: String, kind: Kind) -> Pane {
+    pub fn new(id: usize, name: String) -> Pane {
         Pane {
             id,
             name,
-            kind,
+            pinned: false,
             rect: CellRect::EMPTY,
             clients: Vec::new(),
             shown: 0,
             next_tab: 2,
-            saved_tabs: Vec::new(),
             app_id: None,
             cwd: None,
             pid: None,
@@ -232,36 +268,36 @@ pub struct Boundary {
     axis: Axis,
 }
 
+/// What is drawn over the layout on screen besides its panes.
+#[derive(Clone, Copy, Default)]
+pub struct Chrome<'a> {
+    /// The name of the workspace's scratch pane.
+    pub scratch: Option<&'a str>,
+
+    /// The pane being dragged, drawn as a ghost rather than in its slot.
+    pub dragging: Option<usize>,
+
+    /// Whether the Ctrl bar is shown.
+    pub bar: bool,
+
+    /// The bar button under the pointer.
+    pub hover: Option<(usize, BarButton)>,
+}
+
 pub struct Layout {
     /// The cells the panes share, inside decade's top bar and sidebar.
     pub area: CellRect,
     pub panes: Vec<Pane>,
     pub focused: usize,
     pub zoom: Option<usize>,
-    pub bar: bool,
-    pub drag_cell: Option<(u32, u32)>,
-    pub dragging: Option<usize>,
-    pub hover: Option<(usize, BarButton)>,
     root: Node,
     next_id: usize,
 }
 
 impl Layout {
-    pub fn new(area: CellRect) -> Layout {
-        let mut layout = Layout {
-            area,
-            panes: vec![Pane::new(0, "terminal".to_string(), Kind::Transient)],
-            focused: 0,
-            zoom: None,
-            bar: false,
-            drag_cell: None,
-            dragging: None,
-            hover: None,
-            root: Node::Leaf(0),
-            next_id: 1,
-        };
-        layout.arrange();
-        layout
+    /// A layout holding one empty pane with this name.
+    pub fn new(area: CellRect, name: String) -> Layout {
+        Layout::restore(area, vec![Pane::new(0, name)], Node::Leaf(0), 0, None)
     }
 
     pub fn restore(
@@ -277,10 +313,6 @@ impl Layout {
             panes,
             focused,
             zoom,
-            bar: false,
-            drag_cell: None,
-            dragging: None,
-            hover: None,
             root,
             next_id,
         };
@@ -297,24 +329,19 @@ impl Layout {
         self.arrange();
     }
 
-    fn body(&self) -> CellRect {
-        self.area
-    }
-
-    pub fn arrange(&mut self) {
+    fn arrange(&mut self) {
         for pane in &mut self.panes {
             pane.rect = CellRect::EMPTY;
         }
-        let body = self.body();
         if let Some(zoom) = self.zoom {
             if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == zoom) {
-                pane.rect = body;
+                pane.rect = self.area;
                 return;
             }
             self.zoom = None;
         }
         let mut rects = Vec::new();
-        arrange_node(&self.root, body, &mut rects);
+        arrange_node(&self.root, self.area, &mut rects);
         for (id, rect) in rects {
             if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == id) {
                 pane.rect = rect;
@@ -339,10 +366,6 @@ impl Layout {
 
     pub fn visible(&self) -> impl Iterator<Item = &Pane> {
         self.panes.iter().filter(|pane| !pane.rect.is_empty())
-    }
-
-    pub fn client_rect(&self, pane: &Pane) -> CellRect {
-        client_area(pane.rect, pane.clients.len())
     }
 
     pub fn pane_at(&self, column: u32, row: u32) -> Option<usize> {
@@ -390,8 +413,7 @@ impl Layout {
         let Some(path) = found else {
             return;
         };
-        let area = node_area(&self.root, self.body(), &path);
-        let Some(Node::Split { ratio, .. }) = node_at(&mut self.root, &path) else {
+        let Some((ratio, area)) = split_at(&mut self.root, self.area, &path) else {
             return;
         };
         let (start, length) = match axis {
@@ -428,13 +450,7 @@ impl Layout {
         }
         self.panes
             .iter()
-            .find(|pane| {
-                pane.clients.is_empty()
-                    && match &pane.kind {
-                        Kind::Anchor { app_id: wanted } => wanted == app_id,
-                        Kind::Transient => pane.app_id.as_deref() == Some(app_id),
-                    }
-            })
+            .find(|pane| pane.clients.is_empty() && pane.app_id.as_deref() == Some(app_id))
             .map(|pane| (pane.id, false))
     }
 
@@ -442,20 +458,12 @@ impl Layout {
         let id = self.next_id;
         self.next_id += 1;
         let at = self.focused;
-        let axis = match self.pane(at) {
-            Some(pane) if pane.rect.columns >= pane.rect.rows * 2 => Axis::Horizontal,
-            _ => Axis::Vertical,
+        let side = match self.pane(at) {
+            Some(pane) if pane.rect.columns >= pane.rect.rows * 2 => Side::Right,
+            _ => Side::Below,
         };
-        self.panes.push(Pane::new(id, name, Kind::Transient));
-        if !split_leaf(&mut self.root, at, axis, id) {
-            let old = std::mem::replace(&mut self.root, Node::Leaf(id));
-            self.root = Node::Split {
-                axis,
-                ratio: 0.5,
-                first: Box::new(old),
-                second: Box::new(Node::Leaf(id)),
-            };
-        }
+        self.panes.push(Pane::new(id, name));
+        split_beside(&mut self.root, at, side, id);
         self.zoom = None;
         self.focused = id;
         self.arrange();
@@ -472,9 +480,9 @@ impl Layout {
             return;
         }
         self.panes.remove(index);
-        let heir = sibling_leaf(&self.root, id);
         let root = std::mem::replace(&mut self.root, Node::Leaf(usize::MAX));
-        self.root = remove_leaf(root, id);
+        let (root, heir) = remove_leaf(root, id);
+        self.root = root;
         if self.zoom == Some(id) {
             self.zoom = None;
         }
@@ -502,34 +510,24 @@ impl Layout {
             return None;
         }
         let mut path = Vec::new();
-        find_boundary(&self.root, self.body(), column, row, &mut path)
+        find_boundary(&self.root, self.area, column, row, &mut path)
     }
 
     pub fn drop_at(&self, dragged: usize, column: u32, row: u32) -> Option<Drop> {
-        let body = self.body();
-        if self.panes.len() < 2 || row >= body.rows || body.columns <= EDGE_BAND * 2 {
+        if self.panes.len() < 2 || self.area.columns <= EDGE_BAND * 2 {
             return None;
         }
-        if column < EDGE_BAND {
-            return Some(Drop::Edge(Side::Left));
-        }
-        if column >= body.columns - EDGE_BAND {
-            return Some(Drop::Edge(Side::Right));
-        }
-        if row < EDGE_BAND {
-            return Some(Drop::Edge(Side::Above));
-        }
-        if row >= body.rows.saturating_sub(EDGE_BAND) {
-            return Some(Drop::Edge(Side::Below));
+        if let Some((side, _)) = edge_strips(self.area)
+            .into_iter()
+            .find(|(_, strip)| strip.contains(column, row))
+        {
+            return Some(Drop::Edge(side));
         }
         let target = self.pane_at(column, row).filter(|&id| id != dragged)?;
-        drop_zones(self.pane(target)?.rect)
+        drop_zones(target, self.pane(target)?.rect)
             .into_iter()
             .find(|(_, zone)| zone.contains(column, row))
-            .map(|(side, _)| match side {
-                None => Drop::Swap(target),
-                Some(side) => Drop::Split { target, side },
-            })
+            .map(|(drop, _)| drop)
     }
 
     pub fn apply_drop(&mut self, dragged: usize, drop: Drop) {
@@ -539,66 +537,23 @@ impl Layout {
         self.arrange();
     }
 
-    pub fn draw_drop(&self, scene: &mut Scene) {
-        let (Some(dragged), Some((column, row))) = (self.dragging, self.drag_cell) else {
-            return;
-        };
+    /// Draw the places a pane dragged to the cell could drop.
+    pub fn draw_drop(&self, scene: &mut Scene, dragged: usize, (column, row): (u32, u32)) {
         let active = self.drop_at(dragged, column, row);
         if let Some(target) = self.pane_at(column, row).filter(|&id| id != dragged)
             && let Some(pane) = self.pane(target)
         {
-            for (side, zone) in drop_zones(pane.rect) {
-                let drop = match side {
-                    None => Drop::Swap(target),
-                    Some(side) => Drop::Split { target, side },
-                };
+            for (drop, zone) in drop_zones(target, pane.rect) {
                 draw_zone(scene, zone, active == Some(drop));
             }
         }
-        let body = self.body();
-        let strips = [
-            (
-                Side::Left,
-                CellRect {
-                    columns: EDGE_BAND,
-                    ..body
-                },
-            ),
-            (
-                Side::Right,
-                CellRect {
-                    column: body.columns.saturating_sub(EDGE_BAND),
-                    columns: EDGE_BAND,
-                    ..body
-                },
-            ),
-            (
-                Side::Above,
-                CellRect {
-                    rows: EDGE_BAND,
-                    ..body
-                },
-            ),
-            (
-                Side::Below,
-                CellRect {
-                    row: body.rows.saturating_sub(EDGE_BAND),
-                    rows: EDGE_BAND,
-                    ..body
-                },
-            ),
-        ];
-        for (side, strip) in strips {
+        for (side, strip) in edge_strips(self.area) {
             draw_zone(scene, strip, active == Some(Drop::Edge(side)));
         }
     }
 
     pub fn drag_boundary(&mut self, boundary: &Boundary, column: u32, row: u32) {
-        let area = node_area(&self.root, self.body(), &boundary.path);
-        let Some(node) = node_at(&mut self.root, &boundary.path) else {
-            return;
-        };
-        let Node::Split { ratio, .. } = node else {
+        let Some((ratio, area)) = split_at(&mut self.root, self.area, &boundary.path) else {
             return;
         };
         let (position, start, length) = match boundary.axis {
@@ -615,23 +570,12 @@ impl Layout {
         self.arrange();
     }
 
-    fn bar_row(&self, pane: &Pane) -> Option<(u32, u32, u32)> {
-        if !self.bar {
-            return None;
-        }
-        let inner = pane.rect.inner();
-        if inner.is_empty() {
-            return None;
-        }
-        Some((inner.column, inner.row, inner.columns))
-    }
-
+    /// The pane and Ctrl bar button under the cell, were the bar shown.
     pub fn bar_hit(&self, column: u32, row: u32) -> Option<(usize, BarButton)> {
         for pane in self.visible() {
-            let Some((start, bar_row, width)) = self.bar_row(pane) else {
-                continue;
-            };
-            if row != bar_row || column < start || column >= start + width {
+            let inner = pane.rect.inner();
+            let (start, width) = (inner.column, inner.columns);
+            if inner.is_empty() || row != inner.row || column < start || column >= start + width {
                 continue;
             }
             let button = bar_buttons(start, width)
@@ -658,10 +602,10 @@ impl Layout {
     }
 
     /// Draw every visible pane's outline and, for an empty pane, what it
-    /// waits for; `scratch` names the workspace's scratch pane.
-    pub fn draw(&self, scene: &mut Scene, scratch: Option<&str>) {
+    /// waits for.
+    pub fn draw(&self, scene: &mut Scene, chrome: Chrome) {
         for pane in self.visible() {
-            if self.dragging == Some(pane.id) {
+            if chrome.dragging == Some(pane.id) {
                 continue;
             }
             let outline = if pane.id == self.focused {
@@ -669,7 +613,7 @@ impl Layout {
             } else {
                 OUTLINE
             };
-            let scratched = scratch == Some(pane.name.as_str());
+            let scratched = chrome.scratch == Some(pane.name.as_str());
             self.draw_outline(scene, pane, outline, scratched);
             draw_waiting(scene, pane, pane.rect.inner(), scratched);
             draw_strip(scene, pane, pane.rect.inner(), pane.id == self.focused);
@@ -702,7 +646,7 @@ impl Layout {
         let line_y = y + top;
         let text_y = line_y + line / 2 - cell_height / 2;
         let mut end = x + width - right - cell_width * 2;
-        let pinned = matches!(pane.kind, Kind::Anchor { .. });
+        let pinned = pane.pinned;
         let zoomed = self.zoom == Some(pane.id);
         for (text, face) in [
             (PIN_ICON.to_string(), Face::Icon),
@@ -724,19 +668,18 @@ impl Layout {
         }
     }
 
-    pub fn draw_bars(&self, scene: &mut Scene, scratch: Option<&str>) {
-        if !self.bar {
+    pub fn draw_bars(&self, scene: &mut Scene, chrome: Chrome) {
+        if !chrome.bar {
             return;
         }
         for pane in self.visible() {
-            if self.dragging != Some(pane.id) {
-                let scratched = scratch == Some(pane.name.as_str());
-                self.draw_bar(scene, pane, pane.rect.inner(), scratched);
+            if chrome.dragging != Some(pane.id) {
+                self.draw_bar(scene, pane, pane.rect.inner(), chrome);
             }
         }
     }
 
-    pub fn draw_ghost(&self, id: usize, scene: &mut Scene, scratch: Option<&str>) {
+    pub fn draw_ghost(&self, id: usize, scene: &mut Scene, chrome: Chrome) {
         let Some(pane) = self.pane(id) else {
             return;
         };
@@ -745,18 +688,19 @@ impl Layout {
             row: 0,
             ..pane.rect.inner()
         };
-        let scratched = scratch == Some(pane.name.as_str());
+        let scratched = chrome.scratch == Some(pane.name.as_str());
         draw_waiting(scene, pane, inner, scratched);
         draw_strip(scene, pane, inner, pane.id == self.focused);
-        if self.bar {
-            self.draw_bar(scene, pane, inner, scratched);
+        if chrome.bar {
+            self.draw_bar(scene, pane, inner, chrome);
         }
     }
 
-    fn draw_bar(&self, scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool) {
+    fn draw_bar(&self, scene: &mut Scene, pane: &Pane, inner: CellRect, chrome: Chrome) {
         if inner.is_empty() {
             return;
         }
+        let scratched = chrome.scratch == Some(pane.name.as_str());
         let (start, row, width) = (inner.column, inner.row, inner.columns);
         let focused = pane.id == self.focused;
         let (bg, fg) = if focused {
@@ -768,7 +712,7 @@ impl Layout {
         let buttons = bar_buttons(start, width);
         let room = buttons[0].1.saturating_sub(start + 2) as usize;
         scene.text(start + 1, row, &fit(&pane.name, room), fg);
-        let pinned = matches!(pane.kind, Kind::Anchor { .. });
+        let pinned = pane.pinned;
         let zoomed = self.zoom == Some(pane.id);
         for (button, x) in buttons {
             let (icon, color) = match button {
@@ -790,7 +734,7 @@ impl Layout {
                 BarButton::Close => (CLOSE_ICON, fg),
                 BarButton::Name => continue,
             };
-            let color = match self.hover {
+            let color = match chrome.hover {
                 Some((id, hovered)) if id == pane.id && hovered == button => {
                     let hover = if button == BarButton::Close {
                         CLOSE_HOVER
@@ -812,15 +756,17 @@ impl Layout {
         }
     }
 
+    /// Pin the pane to wait for a window with the app id when it is empty.
     pub fn pin(&mut self, id: usize, app_id: String) {
         if let Some(pane) = self.pane_mut(id) {
-            pane.kind = Kind::Anchor { app_id };
+            pane.pinned = true;
+            pane.app_id = Some(app_id);
         }
     }
 
     pub fn unpin(&mut self, id: usize) {
         if let Some(pane) = self.pane_mut(id) {
-            pane.kind = Kind::Transient;
+            pane.pinned = false;
         }
     }
 }
@@ -960,9 +906,9 @@ fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool
         scene.text(centered(hint), middle, hint, UNPINNED);
         return;
     }
-    let text = match &pane.kind {
-        Kind::Anchor { app_id } => format!("waiting for {app_id}"),
-        Kind::Transient => "no client".to_string(),
+    let text = match &pane.app_id {
+        Some(app_id) if pane.pinned => format!("waiting for {app_id}"),
+        _ => "no client".to_string(),
     };
     scene.text(centered(&text), middle, &text, DIM);
 }
@@ -1036,24 +982,6 @@ fn arrange_node(node: &Node, area: CellRect, out: &mut Vec<(usize, CellRect)>) {
     }
 }
 
-fn split_leaf(node: &mut Node, at: usize, axis: Axis, new: usize) -> bool {
-    match node {
-        Node::Leaf(id) if *id == at => {
-            *node = Node::Split {
-                axis,
-                ratio: 0.5,
-                first: Box::new(Node::Leaf(at)),
-                second: Box::new(Node::Leaf(new)),
-            };
-            true
-        }
-        Node::Leaf(_) => false,
-        Node::Split { first, second, .. } => {
-            split_leaf(first, at, axis, new) || split_leaf(second, at, axis, new)
-        }
-    }
-}
-
 fn split_path(
     node: &Node,
     id: usize,
@@ -1096,7 +1024,7 @@ fn swap_leaves(node: &mut Node, a: usize, b: usize) {
     }
 }
 
-fn drop_zones(rect: CellRect) -> [(Option<Side>, CellRect); 5] {
+fn drop_zones(target: usize, rect: CellRect) -> [(Drop, CellRect); 5] {
     let (quarter_columns, quarter_rows) = (rect.columns / 4, rect.rows / 4);
     let middle_columns = rect.columns - quarter_columns * 2;
     let middle_rows = rect.rows - quarter_rows * 2;
@@ -1106,17 +1034,18 @@ fn drop_zones(rect: CellRect) -> [(Option<Side>, CellRect); 5] {
         columns,
         rows,
     };
+    let split = |side| Drop::Split { target, side };
     [
         (
-            None,
+            Drop::Swap(target),
             zone(quarter_columns, quarter_rows, middle_columns, middle_rows),
         ),
         (
-            Some(Side::Left),
+            split(Side::Left),
             zone(0, quarter_rows, quarter_columns, middle_rows),
         ),
         (
-            Some(Side::Right),
+            split(Side::Right),
             zone(
                 quarter_columns + middle_columns,
                 quarter_rows,
@@ -1125,17 +1054,54 @@ fn drop_zones(rect: CellRect) -> [(Option<Side>, CellRect); 5] {
             ),
         ),
         (
-            Some(Side::Above),
+            split(Side::Above),
             zone(quarter_columns, 0, middle_columns, quarter_rows),
         ),
         (
-            Some(Side::Below),
+            split(Side::Below),
             zone(
                 quarter_columns,
                 quarter_rows + middle_rows,
                 middle_columns,
                 quarter_rows,
             ),
+        ),
+    ]
+}
+
+/// The bands along the edges of the area where a dropped pane spans that
+/// side of every other pane.
+fn edge_strips(area: CellRect) -> [(Side, CellRect); 4] {
+    [
+        (
+            Side::Left,
+            CellRect {
+                columns: EDGE_BAND,
+                ..area
+            },
+        ),
+        (
+            Side::Right,
+            CellRect {
+                column: area.column + area.columns.saturating_sub(EDGE_BAND),
+                columns: EDGE_BAND,
+                ..area
+            },
+        ),
+        (
+            Side::Above,
+            CellRect {
+                rows: EDGE_BAND,
+                ..area
+            },
+        ),
+        (
+            Side::Below,
+            CellRect {
+                row: area.row + area.rows.saturating_sub(EDGE_BAND),
+                rows: EDGE_BAND,
+                ..area
+            },
         ),
     ]
 }
@@ -1155,12 +1121,12 @@ fn dropped(root: Node, dragged: usize, drop: Drop) -> Node {
             root
         }
         Drop::Split { target, side } => {
-            let mut root = remove_leaf(root, dragged);
+            let (mut root, _) = remove_leaf(root, dragged);
             split_beside(&mut root, target, side, dragged);
             root
         }
         Drop::Edge(side) => {
-            let rest = Box::new(remove_leaf(root, dragged));
+            let rest = Box::new(remove_leaf(root, dragged).0);
             let new = Box::new(Node::Leaf(dragged));
             let (axis, before) = side_axis(side);
             let (ratio, first, second) = if before {
@@ -1207,29 +1173,35 @@ fn split_beside(node: &mut Node, target: usize, side: Side, new: usize) -> bool 
     }
 }
 
-fn remove_leaf(node: Node, id: usize) -> Node {
-    match node {
-        Node::Leaf(_) => node,
-        Node::Split {
-            axis,
-            ratio,
-            first,
-            second,
-        } => {
-            if matches!(*first, Node::Leaf(leaf) if leaf == id) {
-                return *second;
-            }
-            if matches!(*second, Node::Leaf(leaf) if leaf == id) {
-                return *first;
-            }
-            Node::Split {
-                axis,
-                ratio,
-                first: Box::new(remove_leaf(*first, id)),
-                second: Box::new(remove_leaf(*second, id)),
-            }
-        }
+/// The tree without the leaf, and the first leaf of the sibling that took
+/// its place.
+fn remove_leaf(node: Node, id: usize) -> (Node, Option<usize>) {
+    let Node::Split {
+        axis,
+        ratio,
+        first,
+        second,
+    } = node
+    else {
+        return (node, None);
+    };
+    if matches!(*first, Node::Leaf(leaf) if leaf == id) {
+        let heir = first_leaf(&second);
+        return (*second, Some(heir));
     }
+    if matches!(*second, Node::Leaf(leaf) if leaf == id) {
+        let heir = first_leaf(&first);
+        return (*first, Some(heir));
+    }
+    let (first, in_first) = remove_leaf(*first, id);
+    let (second, in_second) = remove_leaf(*second, id);
+    let split = Node::Split {
+        axis,
+        ratio,
+        first: Box::new(first),
+        second: Box::new(second),
+    };
+    (split, in_first.or(in_second))
 }
 
 fn first_leaf(node: &Node) -> usize {
@@ -1237,19 +1209,6 @@ fn first_leaf(node: &Node) -> usize {
         Node::Leaf(id) => *id,
         Node::Split { first, .. } => first_leaf(first),
     }
-}
-
-fn sibling_leaf(node: &Node, id: usize) -> Option<usize> {
-    let Node::Split { first, second, .. } = node else {
-        return None;
-    };
-    if matches!(**first, Node::Leaf(leaf) if leaf == id) {
-        return Some(first_leaf(second));
-    }
-    if matches!(**second, Node::Leaf(leaf) if leaf == id) {
-        return Some(first_leaf(first));
-    }
-    sibling_leaf(first, id).or_else(|| sibling_leaf(second, id))
 }
 
 fn find_boundary(
@@ -1304,50 +1263,34 @@ fn find_boundary(
     found
 }
 
-fn node_area(node: &Node, area: CellRect, path: &[bool]) -> CellRect {
-    let Some((&second, rest)) = path.split_first() else {
-        return area;
+/// The ratio of the split at the end of the path, and the cells it divides.
+fn split_at<'a>(
+    node: &'a mut Node,
+    area: CellRect,
+    path: &[bool],
+) -> Option<(&'a mut f32, CellRect)> {
+    let Node::Split {
+        axis,
+        ratio,
+        first,
+        second,
+    } = node
+    else {
+        return None;
     };
-    match node {
-        Node::Leaf(_) => area,
-        Node::Split {
-            axis,
-            ratio,
-            first,
-            second: second_node,
-        } => {
-            let (a, b) = split_area(area, *axis, *ratio);
-            if second {
-                node_area(second_node, b, rest)
-            } else {
-                node_area(first, a, rest)
-            }
-        }
-    }
-}
-
-fn node_at<'a>(node: &'a mut Node, path: &[bool]) -> Option<&'a mut Node> {
-    let Some((&second, rest)) = path.split_first() else {
-        return Some(node);
+    let Some((&in_second, rest)) = path.split_first() else {
+        return Some((ratio, area));
     };
-    match node {
-        Node::Leaf(_) => None,
-        Node::Split {
-            first,
-            second: second_node,
-            ..
-        } => {
-            if second {
-                node_at(second_node, rest)
-            } else {
-                node_at(first, rest)
-            }
-        }
+    let (a, b) = split_area(area, *axis, *ratio);
+    if in_second {
+        split_at(second, b, rest)
+    } else {
+        split_at(first, a, rest)
     }
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(super) mod tests {
     use super::*;
 
     pub const AREA: CellRect = CellRect {
@@ -1358,8 +1301,7 @@ pub(crate) mod tests {
     };
 
     fn three_anchors() -> Layout {
-        let mut layout = Layout::new(AREA);
-        layout.panes[0].name = "chat".to_string();
+        let mut layout = Layout::new(AREA, "chat".to_string());
         layout.add_transient("terminal".to_string());
         layout.add_transient("code".to_string());
         for (id, name) in [(0, "chat"), (1, "terminal"), (2, "code")] {
@@ -1422,6 +1364,43 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn removing_the_focused_pane_focuses_the_first_pane_of_its_sibling() {
+        let mut layout = three_anchors();
+        layout.focused = 0;
+        layout.remove(0);
+        assert_eq!(layout.focused, 1);
+        let mut layout = three_anchors();
+        layout.focused = 1;
+        layout.remove(1);
+        assert_eq!(layout.focused, 2);
+        let mut layout = three_anchors();
+        layout.focused = 2;
+        layout.remove(1);
+        assert_eq!(layout.focused, 2);
+    }
+
+    #[test]
+    fn a_new_pane_beside_a_wide_pane_goes_right_and_beside_a_tall_one_below() {
+        let mut layout = three_anchors();
+        layout.focused = 1;
+        let wide = layout.pane(1).unwrap().rect;
+        let right = layout.add_transient("right".to_string());
+        let rect = layout.pane(right).unwrap().rect;
+        assert_eq!(
+            (rect.column, rect.row),
+            (wide.column + wide.columns / 2, wide.row)
+        );
+        layout.focused = 0;
+        let tall = layout.pane(0).unwrap().rect;
+        let below = layout.add_transient("below".to_string());
+        let rect = layout.pane(below).unwrap().rect;
+        assert_eq!(
+            (rect.column, rect.row),
+            (tall.column, tall.row + tall.rows / 2)
+        );
+    }
+
+    #[test]
     fn zoom_gives_one_pane_the_body_and_hides_the_rest() {
         let mut layout = three_anchors();
         layout.toggle_zoom(2);
@@ -1445,13 +1424,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_bar_covers_the_top_row_of_the_client_and_leaves_its_size_alone() {
-        let mut layout = three_anchors();
+    fn the_ctrl_bar_buttons_are_hit_on_the_top_row_of_the_client() {
+        let layout = three_anchors();
         let pane = layout.pane(0).unwrap();
-        let before = layout.client_rect(pane);
-        layout.bar = true;
-        let pane = layout.pane(0).unwrap();
-        assert_eq!(layout.client_rect(pane), before);
+        let before = pane.client_rect();
         assert_eq!(layout.bar_hit(48, before.row), Some((0, BarButton::Close)));
         assert_eq!(layout.bar_hit(38, before.row), Some((0, BarButton::Pin)));
         assert_eq!(layout.bar_hit(48, 1), Some((0, BarButton::Close)));
@@ -1488,9 +1464,9 @@ pub(crate) mod tests {
         assert_eq!(layout.pane(0).unwrap().rect, code);
         assert_eq!(layout.pane(2).unwrap().rect, chat);
         assert_eq!(layout.pane(0).unwrap().name, "chat");
-        assert!(
-            matches!(&layout.pane(2).unwrap().kind, Kind::Anchor { app_id } if app_id == "decade.code")
-        );
+        let code = layout.pane(2).unwrap();
+        assert!(code.pinned);
+        assert_eq!(code.app_id.as_deref(), Some("decade.code"));
     }
 
     #[test]
@@ -1504,20 +1480,25 @@ pub(crate) mod tests {
 
     #[test]
     fn a_dragged_pane_leaves_its_slot_empty_and_its_ghost_is_the_inside_of_the_pane() {
-        let mut layout = three_anchors();
-        layout.bar = true;
-        layout.dragging = Some(0);
-        let font = crate::text::Font::load(14.0);
-        let mut chrome = Scene::new(&font);
-        layout.draw(&mut chrome, None);
-        let waiting = chrome.shapes.iter().any(|shape| {
-            matches!(shape, crate::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
+        let layout = three_anchors();
+        let chrome = Chrome {
+            dragging: Some(0),
+            bar: true,
+            ..Chrome::default()
+        };
+        let font = crate::server::chrome::text::Font::load(14.0);
+        let mut drawn = Scene::new(&font);
+        layout.draw(&mut drawn, chrome);
+        let waiting = drawn.shapes.iter().any(|shape| {
+            matches!(shape, crate::server::chrome::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
         });
         assert!(!waiting);
         let mut ghost = Scene::new(&font);
-        layout.draw_ghost(0, &mut ghost, None);
+        layout.draw_ghost(0, &mut ghost, chrome);
         let name = ghost.shapes.iter().find_map(|shape| match shape {
-            crate::draw::Shape::Text { at, text, .. } if text == "chat" => Some(*at),
+            crate::server::chrome::draw::Shape::Text { at, text, .. } if text == "chat" => {
+                Some(*at)
+            }
             _ => None,
         });
         assert_eq!(name, Some((font.cell_width as i32, 0).into()));
@@ -1536,10 +1517,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_unpinned_anchor_is_transient() {
+    fn an_unpinned_pane_no_longer_waits_for_its_window() {
         let mut layout = three_anchors();
         layout.unpin(0);
-        assert!(matches!(layout.pane(0).unwrap().kind, Kind::Transient));
+        let texts = drawn_texts(&layout, Chrome::default());
+        assert!(!texts.iter().any(|text| text == "waiting for decade.chat"));
+        assert!(texts.iter().any(|text| text == "waiting for decade.code"));
     }
 
     #[test]
@@ -1558,6 +1541,38 @@ pub(crate) mod tests {
         assert_eq!(layout.drop_at(1, 0, 10), Some(Drop::Edge(Side::Left)));
         assert_eq!(layout.drop_at(0, code.column + 3, code.row + 3), None);
         assert_eq!(layout.drop_at(0, 20, 20), None);
+    }
+
+    #[test]
+    fn the_edge_strips_are_hit_where_they_are_drawn_when_the_area_is_inset() {
+        let area = CellRect {
+            column: 24,
+            row: 1,
+            columns: 96,
+            rows: 40,
+        };
+        let mut layout = Layout::new(area, "terminal".to_string());
+        layout.add_transient("code".to_string());
+        assert_eq!(layout.drop_at(1, 24, 20), Some(Drop::Edge(Side::Left)));
+        assert_eq!(layout.drop_at(1, 0, 20), None);
+        assert_eq!(layout.drop_at(1, 119, 20), Some(Drop::Edge(Side::Right)));
+        assert_ne!(layout.drop_at(1, 94, 20), Some(Drop::Edge(Side::Right)));
+        assert_eq!(layout.drop_at(1, 30, 1), Some(Drop::Edge(Side::Above)));
+        assert_eq!(layout.drop_at(1, 30, 40), Some(Drop::Edge(Side::Below)));
+
+        let font = crate::server::chrome::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw_drop(&mut scene, 1, (24, 20));
+        let active = scene.shapes.iter().find_map(|shape| match shape {
+            crate::server::chrome::draw::Shape::Rect { at, color, .. } if color[3] < 1.0 => {
+                Some(*at)
+            }
+            _ => None,
+        });
+        assert_eq!(
+            active,
+            Some((24 * font.cell_width as i32, font.cell_height as i32).into())
+        );
     }
 
     #[test]
@@ -1597,12 +1612,21 @@ pub(crate) mod tests {
         assert_eq!(layout.pane(1).unwrap().rect.rows, terminal - 2);
     }
 
+    fn drawn_texts(layout: &Layout, chrome: Chrome) -> Vec<String> {
+        let font = crate::server::chrome::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, chrome);
+        texts(&scene)
+    }
+
     fn texts(scene: &Scene) -> Vec<String> {
         scene
             .shapes
             .iter()
             .filter_map(|shape| match shape {
-                crate::draw::Shape::Text { text, .. } => Some(text.trim().to_string()),
+                crate::server::chrome::draw::Shape::Text { text, .. } => {
+                    Some(text.trim().to_string())
+                }
                 _ => None,
             })
             .collect()
@@ -1610,25 +1634,25 @@ pub(crate) mod tests {
 
     #[test]
     fn a_pinned_terminal_whose_shell_exited_shows_a_restart_button() {
-        let mut layout = Layout::new(AREA);
+        let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.panes[0].cwd = Some(PathBuf::from("/home/jack"));
         layout.pin(0, "decade.w0.terminal".to_string());
-        let font = crate::text::Font::load(14.0);
-        let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, None);
-        let texts = texts(&scene);
+        let texts = drawn_texts(&layout, Chrome::default());
         assert!(texts.iter().any(|text| text == "shell exited"));
         assert!(texts.iter().any(|text| text == "restart"));
     }
 
     #[test]
     fn a_long_name_on_the_ctrl_bar_is_cut_before_the_icons() {
-        let mut layout = Layout::new(AREA);
+        let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.panes[0].name = "x".repeat(200);
-        layout.bar = true;
-        let font = crate::text::Font::load(14.0);
+        let font = crate::server::chrome::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw_bars(&mut scene, None);
+        let chrome = Chrome {
+            bar: true,
+            ..Chrome::default()
+        };
+        layout.draw_bars(&mut scene, chrome);
         let inner = layout.panes[0].rect.inner();
         let first = bar_buttons(inner.column, inner.columns)[0].1;
         let name = texts(&scene)
@@ -1641,13 +1665,10 @@ pub(crate) mod tests {
 
     #[test]
     fn a_pinned_gui_pane_without_its_window_waits_and_offers_no_restart() {
-        let mut layout = Layout::new(AREA);
+        let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.pin(0, "org.gnome.Nautilus".to_string());
         assert!(!layout.panes[0].restartable());
-        let font = crate::text::Font::load(14.0);
-        let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, None);
-        let texts = texts(&scene);
+        let texts = drawn_texts(&layout, Chrome::default());
         assert!(
             texts
                 .iter()
@@ -1658,11 +1679,12 @@ pub(crate) mod tests {
 
     #[test]
     fn an_empty_scratch_pane_says_it_is_the_scratch_pane() {
-        let layout = Layout::new(AREA);
-        let font = crate::text::Font::load(14.0);
-        let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, Some("terminal"));
-        let texts = texts(&scene);
+        let layout = Layout::new(AREA, "terminal".to_string());
+        let chrome = Chrome {
+            scratch: Some("terminal"),
+            ..Chrome::default()
+        };
+        let texts = drawn_texts(&layout, chrome);
         assert!(texts.iter().any(|text| text == "agents show things here"));
         assert!(!texts.iter().any(|text| text == "no client"));
     }

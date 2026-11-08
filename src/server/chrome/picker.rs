@@ -1,34 +1,31 @@
 use smithay::utils::{Physical, Point, Rectangle, Size};
 
-use crate::menu::MenuKey;
+use crate::server::chrome::draw::{Face, Scene};
+use crate::server::chrome::menu::{Action, MenuKey, Outcome};
+use crate::server::chrome::palette::{self, ACCENT};
+use crate::server::chrome::text::Text;
+use crate::server::chrome::text::fit;
+use crate::server::workspace::Workspace;
 
 const DRAG_THRESHOLD: i32 = 8;
 
 /// The least width and height in physical pixels of a cell's close button.
 const MIN_BUTTON: i32 = 24;
 
+const CLOSE_ICON: char = '\u{f0156}';
+
 pub struct Picker {
     /// The selected cell: a workspace, or past the last one the new-workspace cell.
-    pub selected: usize,
+    selected: usize,
 
     /// The workspace whose close waits for a second press on its x.
-    pub confirming: Option<u32>,
+    confirming: Option<u32>,
 
     /// The cell a press landed on, and where.
     press: Option<(usize, Point<i32, Physical>)>,
 
     /// The workspace cell being dragged to a new place.
-    pub dragging: Option<usize>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Outcome {
-    Open,
-    Close,
-    Show(u32),
-    New,
-    CloseWorkspace(u32),
-    Move { from: usize, to: usize },
+    dragging: Option<usize>,
 }
 
 pub struct Grid {
@@ -39,6 +36,11 @@ pub struct Grid {
 
     /// The height of the label row under each thumbnail.
     pub label: i32,
+
+    /// The side of each cell's close button.
+    button: i32,
+
+    size: Size<i32, Physical>,
 }
 
 impl Grid {
@@ -70,16 +72,18 @@ impl Grid {
             cells,
             columns,
             label,
+            button: (cell_height * 3 / 2).max(MIN_BUTTON),
+            size,
         }
     }
 
-    pub fn cell_at(&self, point: Point<i32, Physical>) -> Option<usize> {
+    fn cell_at(&self, point: Point<i32, Physical>) -> Option<usize> {
         self.cells.iter().position(|cell| cell.contains(point))
     }
 
-    pub fn close_button(&self, cell: usize, cell_height: i32) -> Rectangle<i32, Physical> {
+    fn close_button(&self, cell: usize) -> Rectangle<i32, Physical> {
         let thumbnail = self.cells[cell];
-        let side = (cell_height * 3 / 2).max(MIN_BUTTON);
+        let side = self.button;
         let at = thumbnail.loc + Point::from((thumbnail.size.w - side, 0));
         Rectangle::new(at, (side, side).into())
     }
@@ -95,20 +99,23 @@ impl Picker {
         }
     }
 
-    pub fn key(&mut self, key: MenuKey, ids: &[u32], columns: usize) -> Outcome {
+    /// Keep the selection on a cell after the grid shrank to `cells`.
+    pub fn clamp(&mut self, cells: usize) {
+        self.selected = self.selected.min(cells - 1);
+    }
+
+    pub fn key(&mut self, key: MenuKey, ids: &[u32], grid: &Grid) -> Outcome {
         let count = ids.len() + 1;
+        let columns = grid.columns;
         let selected = self.selected;
         match key {
             MenuKey::Escape if self.confirming.is_some() => self.confirming = None,
             MenuKey::Escape => return Outcome::Close,
             MenuKey::Enter => {
                 if let Some(id) = self.confirming.take() {
-                    return Outcome::CloseWorkspace(id);
+                    return Outcome::Apply(Action::CloseWorkspace(id));
                 }
-                return match ids.get(self.selected) {
-                    Some(&id) => Outcome::Show(id),
-                    None => Outcome::New,
-                };
+                return Outcome::Run(open(ids, self.selected));
             }
             MenuKey::Tab => self.selected = (self.selected + 1) % count,
             MenuKey::Left => self.selected = self.selected.saturating_sub(1),
@@ -123,24 +130,18 @@ impl Picker {
         Outcome::Open
     }
 
-    pub fn press(
-        &mut self,
-        point: Point<i32, Physical>,
-        ids: &[u32],
-        grid: &Grid,
-        cell_height: i32,
-    ) -> Outcome {
+    pub fn press(&mut self, point: Point<i32, Physical>, ids: &[u32], grid: &Grid) -> Outcome {
         let Some(cell) = grid.cell_at(point) else {
             self.confirming = None;
             return Outcome::Open;
         };
         self.selected = cell;
         if let Some(&id) = ids.get(cell)
-            && grid.close_button(cell, cell_height).contains(point)
+            && grid.close_button(cell).contains(point)
         {
             if self.confirming == Some(id) {
                 self.confirming = None;
-                return Outcome::CloseWorkspace(id);
+                return Outcome::Apply(Action::CloseWorkspace(id));
             }
             self.confirming = Some(id);
             return Outcome::Open;
@@ -171,16 +172,116 @@ impl Picker {
             return if to == from {
                 Outcome::Open
             } else {
-                Outcome::Move { from, to }
+                Outcome::Apply(Action::MoveWorkspace { from, to })
             };
         }
         match (pressed, target) {
-            (Some((cell, _)), Some(target)) if cell == target => match ids.get(cell) {
-                Some(&id) => Outcome::Show(id),
-                None => Outcome::New,
-            },
+            (Some((cell, _)), Some(target)) if cell == target => Outcome::Run(open(ids, cell)),
             _ => Outcome::Open,
         }
+    }
+
+    /// The cells' outlines, labels and close buttons and the hint under the
+    /// grid, then the cells' backgrounds, to be drawn over and under the
+    /// thumbnails.
+    pub fn draw(
+        &self,
+        grid: &Grid,
+        workspaces: &[Workspace],
+        current: usize,
+        pointer: Point<i32, Physical>,
+        text: &Text,
+    ) -> (Scene, Scene) {
+        let (menu_width, menu_height) = (text.menu.cell_width as i32, text.menu.cell_height as i32);
+        let mut over = Scene::new(&text.chrome);
+        let mut under = Scene::new(&text.chrome);
+        let line = over.line_width();
+        let label_width = |text: &str| text.chars().count() as i32 * menu_width;
+        let drop_target = self.dragging.and_then(|_| grid.cell_at(pointer));
+        for (i, cell) in grid.cells.iter().enumerate() {
+            let (outline, stroke) = if drop_target == Some(i) {
+                (palette::CYAN, line)
+            } else if self.selected == i {
+                (ACCENT, line * 2)
+            } else {
+                (palette::MUTED, line)
+            };
+            for ring in 1..=stroke / line {
+                over.box_lines(
+                    cell.loc.x - line * ring,
+                    cell.loc.y - line * ring,
+                    cell.size.w + line * ring * 2,
+                    cell.size.h + line * ring * 2,
+                    outline,
+                );
+            }
+            under.rect(
+                cell.loc.x,
+                cell.loc.y,
+                cell.size.w,
+                cell.size.h,
+                palette::DARK_BACKGROUND,
+            );
+            let room = (cell.size.w / menu_width).max(1) as usize;
+            let label_y = cell.loc.y + cell.size.h + (grid.label - menu_height) / 2;
+            let Some(workspace) = workspaces.get(i) else {
+                let text = fit("+ New workspace", room);
+                let x = cell.loc.x + (cell.size.w - label_width(&text)) / 2;
+                let y = cell.loc.y + (cell.size.h - menu_height) / 2;
+                over.text_px(x, y, &text, Face::Menu, palette::FOREGROUND);
+                continue;
+            };
+            let confirming = self.confirming == Some(workspace.id);
+            let label = if confirming {
+                "close? x again".to_string()
+            } else if workspace.closing() {
+                format!("{} closing", workspace.name)
+            } else if i == current {
+                format!("● {}", workspace.name)
+            } else {
+                workspace.name.clone()
+            };
+            let label = fit(&label, room);
+            let label_color = if confirming {
+                palette::RED
+            } else {
+                palette::FOREGROUND
+            };
+            let x = cell.loc.x + (cell.size.w - label_width(&label)) / 2;
+            over.text_px(x, label_y, &label, Face::Menu, label_color);
+            let button = grid.close_button(i);
+            let icon_color = if confirming {
+                palette::RED
+            } else {
+                palette::LIGHT_FOREGROUND
+            };
+            let icon_x = button.loc.x + (button.size.w - menu_width) / 2;
+            let icon_y = button.loc.y + (button.size.h - menu_height) / 2;
+            over.text_px(
+                icon_x,
+                icon_y,
+                &CLOSE_ICON.to_string(),
+                Face::Menu,
+                icon_color,
+            );
+        }
+        let size = grid.size;
+        let hint = fit(
+            "tab move · enter show · esc close · x close",
+            (size.w / menu_width).max(1) as usize,
+        );
+        let hint_y = size.h - (grid.label + menu_height) / 2;
+        let hint_x = (size.w - label_width(&hint)) / 2;
+        over.text_px(hint_x, hint_y, &hint, Face::Menu, palette::LIGHT_FOREGROUND);
+        (over, under)
+    }
+}
+
+/// Show the workspace in `cell`, or start a new one from the cell past them.
+fn open(ids: &[u32], cell: usize) -> Action {
+    match ids.get(cell) {
+        Some(&id) => Action::ShowWorkspace(id),
+        None => Action::StartNewWorkspace,
     }
 }
 
@@ -218,50 +319,53 @@ mod tests {
     fn tab_steps_through_every_cell_and_wraps() {
         let mut picker = Picker::new(0);
         let ids = [3, 5];
-        picker.key(MenuKey::Tab, &ids, 2);
-        picker.key(MenuKey::Tab, &ids, 2);
+        let grid = grid(3);
+        picker.key(MenuKey::Tab, &ids, &grid);
+        picker.key(MenuKey::Tab, &ids, &grid);
         assert_eq!(picker.selected, 2);
-        picker.key(MenuKey::Tab, &ids, 2);
+        picker.key(MenuKey::Tab, &ids, &grid);
         assert_eq!(picker.selected, 0);
     }
 
     #[test]
     fn enter_shows_the_selected_workspace_or_starts_a_new_one() {
         let ids = [3, 5];
+        let grid = grid(3);
         let mut picker = Picker::new(1);
-        assert_eq!(picker.key(MenuKey::Enter, &ids, 2), Outcome::Show(5));
-        picker.key(MenuKey::Down, &ids, 2);
-        assert_eq!(picker.key(MenuKey::Enter, &ids, 2), Outcome::New);
+        let show = Outcome::Run(Action::ShowWorkspace(5));
+        assert_eq!(picker.key(MenuKey::Enter, &ids, &grid), show);
+        picker.key(MenuKey::Down, &ids, &grid);
+        let new = Outcome::Run(Action::StartNewWorkspace);
+        assert_eq!(picker.key(MenuKey::Enter, &ids, &grid), new);
     }
 
     #[test]
     fn a_workspace_closes_only_on_a_second_press_of_its_x() {
         let ids = [3, 5];
         let grid = grid(3);
-        let button = grid.close_button(1, CELL);
+        let button = grid.close_button(1);
         let on_x = button.loc + Point::from((button.size.w / 2, button.size.h / 2));
         let mut picker = Picker::new(0);
-        assert_eq!(picker.press(on_x, &ids, &grid, CELL), Outcome::Open);
+        assert_eq!(picker.press(on_x, &ids, &grid), Outcome::Open);
         assert_eq!(picker.confirming, Some(5));
-        assert_eq!(
-            picker.press(on_x, &ids, &grid, CELL),
-            Outcome::CloseWorkspace(5)
-        );
+        let close = Outcome::Apply(Action::CloseWorkspace(5));
+        assert_eq!(picker.press(on_x, &ids, &grid), close);
     }
 
     #[test]
     fn the_close_button_is_at_least_the_least_button_size_with_a_small_font() {
-        let button = grid(3).close_button(0, 8);
+        let button = Grid::new(3, SIZE.into(), 8).close_button(0);
         assert!(button.size.w >= MIN_BUTTON && button.size.h >= MIN_BUTTON);
     }
 
     #[test]
     fn escape_cancels_a_pending_close_before_it_closes_the_picker() {
+        let grid = grid(2);
         let mut picker = Picker::new(0);
         picker.confirming = Some(3);
-        assert_eq!(picker.key(MenuKey::Escape, &[3], 1), Outcome::Open);
+        assert_eq!(picker.key(MenuKey::Escape, &[3], &grid), Outcome::Open);
         assert_eq!(picker.confirming, None);
-        assert_eq!(picker.key(MenuKey::Escape, &[3], 1), Outcome::Close);
+        assert_eq!(picker.key(MenuKey::Escape, &[3], &grid), Outcome::Close);
     }
 
     #[test]
@@ -269,16 +373,16 @@ mod tests {
         let ids = [3, 5, 8];
         let grid = grid(4);
         let mut picker = Picker::new(0);
-        picker.press(center(&grid, 1), &ids, &grid, CELL);
+        picker.press(center(&grid, 1), &ids, &grid);
         assert_eq!(
             picker.release(center(&grid, 1), &ids, &grid),
-            Outcome::Show(5)
+            Outcome::Run(Action::ShowWorkspace(5))
         );
-        picker.press(center(&grid, 0), &ids, &grid, CELL);
+        picker.press(center(&grid, 0), &ids, &grid);
         assert!(picker.motion(center(&grid, 2), &ids));
         assert_eq!(
             picker.release(center(&grid, 2), &ids, &grid),
-            Outcome::Move { from: 0, to: 2 }
+            Outcome::Apply(Action::MoveWorkspace { from: 0, to: 2 })
         );
     }
 
@@ -287,11 +391,11 @@ mod tests {
         let ids = [3, 5];
         let grid = grid(3);
         let mut picker = Picker::new(0);
-        picker.press(center(&grid, 0), &ids, &grid, CELL);
+        picker.press(center(&grid, 0), &ids, &grid);
         picker.motion(center(&grid, 2), &ids);
         assert_eq!(
             picker.release(center(&grid, 2), &ids, &grid),
-            Outcome::Move { from: 0, to: 1 }
+            Outcome::Apply(Action::MoveWorkspace { from: 0, to: 1 })
         );
     }
 }

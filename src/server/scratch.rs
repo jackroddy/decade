@@ -1,6 +1,10 @@
 use std::ffi::OsStr;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use serde::Deserialize;
+
+use crate::server::proc;
 
 /// How many parents up from a window's client to look for the program
 /// `scratch.open` started.
@@ -18,10 +22,18 @@ pub struct Scratch {
     pub next: Option<Launch>,
 }
 
+/// The arguments of `scratch.open`.
+#[derive(Deserialize)]
 pub struct Launch {
     pub program: String,
+    #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default = "in_terminal")]
     pub terminal: bool,
+}
+
+fn in_terminal() -> bool {
+    true
 }
 
 impl Scratch {
@@ -34,9 +46,9 @@ impl Scratch {
     }
 }
 
-/// The path of `program` in one of the `PATH` directories, if it is a bare
-/// name starting with `decade-` and an executable file there.
-pub fn find_program(program: &str, path: &OsStr) -> Result<PathBuf, String> {
+/// Check that `program` is a bare name starting with `decade-` and an
+/// executable file in one of the `PATH` directories.
+pub fn check_program(program: &str, path: &OsStr) -> Result<(), String> {
     if !program.starts_with("decade-") || program.contains('/') {
         return Err(format!(
             "{program} is not a bare program name starting with decade-"
@@ -44,7 +56,8 @@ pub fn find_program(program: &str, path: &OsStr) -> Result<PathBuf, String> {
     }
     std::env::split_paths(path)
         .map(|dir| dir.join(program))
-        .find(|candidate| is_executable(candidate))
+        .any(|candidate| is_executable(&candidate))
+        .then_some(())
         .ok_or_else(|| format!("{program} is not on decade's PATH"))
 }
 
@@ -60,7 +73,7 @@ pub fn descends_from(pid: u32, ancestor: u32) -> bool {
         if pid == ancestor {
             return true;
         }
-        match parent(pid) {
+        match proc::parent(pid) {
             Some(parent) if parent > 1 => pid = parent,
             _ => return false,
         }
@@ -68,22 +81,12 @@ pub fn descends_from(pid: u32, ancestor: u32) -> bool {
     false
 }
 
-fn parent(pid: u32) -> Option<u32> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-
-    // the command name sits in parentheses and may hold spaces or ')', so
-    // the fields are read after the last ')': state, then the parent pid
-    let (_, fields) = stat.rsplit_once(')')?;
-    fields.split_whitespace().nth(1)?.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     #[test]
-    fn only_a_bare_decade_program_on_the_path_is_found() {
+    fn only_a_bare_decade_program_on_the_path_passes() {
         let dir = std::env::temp_dir().join(format!("decade-scratch-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let program = dir.join("decade-code");
@@ -91,40 +94,25 @@ mod tests {
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
         let path = std::env::join_paths(["/nonexistent", dir.to_str().unwrap()]).unwrap();
 
-        assert_eq!(find_program("decade-code", &path), Ok(program));
-        assert!(find_program("decade-missing", &path).is_err());
-        assert!(find_program("/bin/sh", &path).is_err());
-        assert!(find_program("bash", OsStr::new("/usr/bin:/bin")).is_err());
-        assert!(find_program("decade-x/y", &path).is_err());
+        assert_eq!(check_program("decade-code", &path), Ok(()));
+        assert!(check_program("decade-missing", &path).is_err());
+        assert!(check_program("/bin/sh", &path).is_err());
+        assert!(check_program("bash", OsStr::new("/usr/bin:/bin")).is_err());
+        assert!(check_program("decade-x/y", &path).is_err());
         std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    fn first_child(pid: u32) -> Option<u32> {
-        let children = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).ok()?;
-        children.split_whitespace().next()?.parse().ok()
     }
 
     #[test]
     fn a_grandchild_descends_from_the_process_that_started_it() {
         // the subshell forks sleep rather than becoming it, since a
         // command follows it
-        let mut parent = Command::new("sh")
-            .args(["-c", "(sleep 5; true) & wait"])
-            .spawn()
-            .unwrap();
-        let mut grandchild = None;
-        for _ in 0..100 {
-            grandchild = first_child(parent.id()).and_then(first_child);
-            if grandchild.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        let descends = grandchild.is_some_and(|pid| descends_from(pid, parent.id()));
-        let unrelated = descends_from(std::process::id(), parent.id());
-        let _ = parent.kill();
-        let _ = parent.wait();
-        assert!(descends);
-        assert!(!unrelated);
+        let found = proc::tests::under_shell("(sleep 5; true) & wait", |shell| {
+            let grandchild = proc::first_child(proc::first_child(shell)?)?;
+            Some((
+                descends_from(grandchild, shell),
+                descends_from(std::process::id(), shell),
+            ))
+        });
+        assert_eq!(found, Some((true, false)));
     }
 }

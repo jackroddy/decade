@@ -16,10 +16,7 @@ use wayland_protocols::wp::primary_selection::zv1::client::{
 };
 
 use super::Viewer;
-use crate::wire::ViewerMessage;
-
-const CLIPBOARD: usize = 0;
-const PRIMARY: usize = 1;
+use crate::wire::{Selection, ViewerMessage};
 
 // the viewer offers this MIME type in every source it
 // sets on the host, so it can tell its own selection
@@ -40,11 +37,11 @@ pub(super) struct Clipboard {
     input_serial: Option<u32>,
 
     /// Each selection, clipboard first.
-    selections: [Selection; 2],
+    selections: [Clip; 2],
 }
 
 #[derive(Default)]
-struct Selection {
+struct Clip {
     /// The host's selection, while another host client owns it.
     offer: Option<Offer>,
 
@@ -135,10 +132,11 @@ impl Viewer {
     /// Offer the host's selections to a server that has just welcomed the viewer.
     pub(super) fn send_selections(&mut self) {
         let mut messages = Vec::new();
-        for (selection, clip) in self.clipboard.selections.iter().enumerate() {
+        let selections = [Selection::Clipboard, Selection::Primary];
+        for (selection, clip) in selections.into_iter().zip(&self.clipboard.selections) {
             if let Some(offer) = &clip.offer {
                 messages.push(ViewerMessage::Offer {
-                    selection: selection as u32,
+                    selection,
                     serial: clip.serial,
                     seen: clip.seen,
                     mimes: offer.mimes(),
@@ -157,41 +155,38 @@ impl Viewer {
     /// Set a server offer the host has not taken yet, now that the window has focus.
     pub(super) fn keyboard_entered(&mut self, serial: u32) {
         self.input_serial(serial);
-        self.set_host_selection(CLIPBOARD);
-        self.set_host_selection(PRIMARY);
+        self.set_host_selection(Selection::Clipboard);
+        self.set_host_selection(Selection::Primary);
     }
 
-    pub(super) fn server_offer(&mut self, selection: u32, serial: u32, mimes: Vec<String>) {
+    pub(super) fn server_offer(&mut self, selection: Selection, serial: u32, mimes: Vec<String>) {
         let Clipboard {
             data,
             primary,
             selections,
             ..
         } = &mut self.clipboard;
-        let Some(clip) = selections.get_mut(selection as usize) else {
-            return;
-        };
+        let clip = &mut selections[selection as usize];
         clip.seen = serial;
-        let source = if selection as usize == CLIPBOARD {
-            data.as_ref().map(|(manager, _)| {
+        let source = match selection {
+            Selection::Clipboard => data.as_ref().map(|(manager, _)| {
                 let source = manager.create_data_source(&self.qh, serial);
                 for mime in mimes.into_iter().chain([OWN_MIME.to_string()]) {
                     source.offer(mime);
                 }
                 Source::Data(source)
-            })
-        } else {
-            primary.as_ref().map(|(manager, _)| {
+            }),
+            Selection::Primary => primary.as_ref().map(|(manager, _)| {
                 let source = manager.create_source(&self.qh, serial);
                 for mime in mimes.into_iter().chain([OWN_MIME.to_string()]) {
                     source.offer(mime);
                 }
                 Source::Primary(source)
-            })
+            }),
         };
         let old = std::mem::replace(&mut clip.source, source);
         clip.owned = false;
-        self.set_host_selection(selection as usize);
+        self.set_host_selection(selection);
 
         // destroyed after the new source is set, so the
         // host never clears its selection in between
@@ -200,10 +195,8 @@ impl Viewer {
         }
     }
 
-    pub(super) fn server_cleared(&mut self, selection: u32, serial: u32) {
-        let Some(clip) = self.clipboard.selections.get_mut(selection as usize) else {
-            return;
-        };
+    pub(super) fn server_cleared(&mut self, selection: Selection, serial: u32) {
+        let clip = &mut self.clipboard.selections[selection as usize];
         clip.seen = serial;
         if let Some(source) = clip.source.take() {
             source.destroy();
@@ -211,15 +204,13 @@ impl Viewer {
     }
 
     pub(super) fn server_request(
-        &mut self,
-        selection: u32,
+        &self,
+        selection: Selection,
         serial: u32,
         mime: String,
         fd: OwnedFd,
     ) {
-        let Some(clip) = self.clipboard.selections.get(selection as usize) else {
-            return;
-        };
+        let clip = &self.clipboard.selections[selection as usize];
         if clip.serial == serial
             && let Some(offer) = &clip.offer
         {
@@ -227,14 +218,14 @@ impl Viewer {
         }
     }
 
-    fn set_host_selection(&mut self, selection: usize) {
+    fn set_host_selection(&mut self, selection: Selection) {
         let Clipboard {
             data,
             primary,
             input_serial,
             selections,
         } = &mut self.clipboard;
-        let clip = &selections[selection];
+        let clip = &selections[selection as usize];
         let Some(serial) = *input_serial else {
             return;
         };
@@ -256,8 +247,8 @@ impl Viewer {
         }
     }
 
-    fn host_selection(&mut self, selection: usize, offer: Option<Offer>) {
-        let clip = &mut self.clipboard.selections[selection];
+    fn host_selection(&mut self, selection: Selection, offer: Option<Offer>) {
+        let clip = &mut self.clipboard.selections[selection as usize];
         if let Some(old) = clip.offer.take() {
             old.destroy();
         }
@@ -274,7 +265,6 @@ impl Viewer {
         clip.serial += 1;
         let (serial, seen) = (clip.serial, clip.seen);
         clip.offer = offer;
-        let selection = selection as u32;
         self.input(match mimes {
             Some(mimes) => ViewerMessage::Offer {
                 selection,
@@ -286,8 +276,8 @@ impl Viewer {
         });
     }
 
-    fn source_cancelled(&mut self, selection: usize, cancelled: &Source) {
-        let clip = &mut self.clipboard.selections[selection];
+    fn source_cancelled(&mut self, selection: Selection, cancelled: &Source) {
+        let clip = &mut self.clipboard.selections[selection as usize];
         let current = match (&clip.source, cancelled) {
             (Some(Source::Data(source)), Source::Data(other)) => source == other,
             (Some(Source::Primary(source)), Source::Primary(other)) => source == other,
@@ -312,7 +302,7 @@ impl Dispatch<WlDataDevice, ()> for Viewer {
     ) {
         match event {
             wl_data_device::Event::Selection { id } => {
-                viewer.host_selection(CLIPBOARD, id.map(Offer::Data))
+                viewer.host_selection(Selection::Clipboard, id.map(Offer::Data))
             }
 
             // the viewer takes no drops, and a destroyed offer
@@ -355,13 +345,13 @@ impl Dispatch<WlDataSource, u32> for Viewer {
     ) {
         match event {
             wl_data_source::Event::Send { mime_type, fd } => viewer.input(ViewerMessage::Request {
-                selection: CLIPBOARD as u32,
+                selection: Selection::Clipboard,
                 serial: *serial,
                 mime: mime_type,
                 fd,
             }),
             wl_data_source::Event::Cancelled => {
-                viewer.source_cancelled(CLIPBOARD, &Source::Data(source.clone()))
+                viewer.source_cancelled(Selection::Clipboard, &Source::Data(source.clone()))
             }
             _ => {}
         }
@@ -378,7 +368,7 @@ impl Dispatch<ZwpPrimarySelectionDeviceV1, ()> for Viewer {
         _: &QueueHandle<Self>,
     ) {
         if let zwp_primary_selection_device_v1::Event::Selection { id } = event {
-            viewer.host_selection(PRIMARY, id.map(Offer::Primary));
+            viewer.host_selection(Selection::Primary, id.map(Offer::Primary));
         }
     }
 
@@ -414,14 +404,14 @@ impl Dispatch<ZwpPrimarySelectionSourceV1, u32> for Viewer {
         match event {
             zwp_primary_selection_source_v1::Event::Send { mime_type, fd } => {
                 viewer.input(ViewerMessage::Request {
-                    selection: PRIMARY as u32,
+                    selection: Selection::Primary,
                     serial: *serial,
                     mime: mime_type,
                     fd,
                 })
             }
             zwp_primary_selection_source_v1::Event::Cancelled => {
-                viewer.source_cancelled(PRIMARY, &Source::Primary(source.clone()))
+                viewer.source_cancelled(Selection::Primary, &Source::Primary(source.clone()))
             }
             _ => {}
         }

@@ -1,11 +1,13 @@
-#![allow(dead_code)]
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::{self, IoSlice, IoSliceMut};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
+use std::time::{Duration, Instant};
 
+use rustix::event::{PollFd, PollFlags};
 use rustix::io::Errno;
 use rustix::net::{
     RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, SendAncillaryBuffer,
@@ -24,8 +26,33 @@ const OPCODE: usize = 4;
 const FDS: usize = 6;
 const FLAGS: usize = 7;
 
-pub const MAX_MESSAGE_LEN: usize = 1 << 20;
-pub const MAX_FDS_PER_SEND: usize = 28;
+/// The newest protocol version this build speaks.
+pub const VERSION: u32 = 1;
+
+/// The `transport` of a viewer on the server's machine.
+pub const LOCAL: u32 = 0;
+
+/// The denominator of a scale: 120 is 1, 150 is 1.25.
+pub const SCALE: u32 = 120;
+
+/// The Caps Lock bit of `locked` in `keys`.
+pub const CAPS_LOCK: u32 = 1;
+
+/// The Num Lock bit of `locked` in `keys`.
+pub const NUM_LOCK: u32 = 2;
+
+/// How long a side with unsent messages waits before trying the socket again.
+pub const OUTBOX_RETRY: Duration = Duration::from_millis(5);
+
+// linux evdev codes, from <linux/input-event-codes.h>
+pub const BTN_LEFT: u32 = 0x110;
+pub const KEY_LEFTCTRL: u32 = 29;
+pub const KEY_LEFTSHIFT: u32 = 42;
+pub const KEY_LEFTALT: u32 = 56;
+pub const KEY_LEFTMETA: u32 = 125;
+
+const MAX_MESSAGE_LEN: usize = 1 << 20;
+const MAX_FDS_PER_SEND: usize = 28;
 
 const FD_SPACE: usize = rustix::cmsg_space!(ScmRights(MAX_FDS_PER_SEND));
 const RECEIVE_CHUNK: usize = 64 * 1024;
@@ -55,7 +82,6 @@ const RECEIVE_FLAGS: RecvFlags = RecvFlags::DONTWAIT;
 #[derive(Debug)]
 pub enum ViewerMessage {
     Error {
-        code: u32,
         message: String,
     },
     Hello {
@@ -66,7 +92,6 @@ pub enum ViewerMessage {
         scale: u32,
     },
     Formats {
-        device: u64,
         formats: Vec<Format>,
     },
     Resize {
@@ -97,48 +122,39 @@ pub enum ViewerMessage {
         x: f64,
         y: f64,
     },
-    PointerLeft,
     Button {
         time: u32,
         button: u32,
         pressed: bool,
     },
-    Scroll {
-        time: u32,
-        source: u32,
-        axis: u32,
-        amount: f64,
-        steps: i32,
-        stop: bool,
-        inverted: bool,
-    },
+    Scroll(Scroll),
     Offer {
-        selection: u32,
+        selection: Selection,
         serial: u32,
         seen: u32,
         mimes: Vec<String>,
     },
     Cleared {
-        selection: u32,
+        selection: Selection,
         serial: u32,
     },
     Request {
-        selection: u32,
+        selection: Selection,
         serial: u32,
         mime: String,
         fd: OwnedFd,
     },
-    Show {
-        id: u32,
-    },
     List,
+    Repeat {
+        rate: u32,
+        delay: u32,
+    },
 }
 
 /// A message from the server to a viewer.
 #[derive(Debug)]
 pub enum ServerMessage {
     Error {
-        code: u32,
         message: String,
     },
     Welcome {
@@ -155,7 +171,6 @@ pub enum ServerMessage {
         height: u32,
         format: u32,
         modifier: u64,
-        opaque: bool,
         planes: Vec<Plane>,
     },
     Forget {
@@ -163,37 +178,23 @@ pub enum ServerMessage {
     },
     Frame {
         id: u32,
-        damage: Vec<Rect>,
         fence: Option<OwnedFd>,
-    },
-    CursorImage {
-        id: u32,
-        hotspot_x: i32,
-        hotspot_y: i32,
-        width: u32,
-        height: u32,
-        scale: u32,
-        pixels: Vec<u8>,
-    },
-    Cursor {
-        id: u32,
     },
     CursorShape {
         shape: String,
     },
     CursorHidden,
     Offer {
-        selection: u32,
+        selection: Selection,
         serial: u32,
-        seen: u32,
         mimes: Vec<String>,
     },
     Cleared {
-        selection: u32,
+        selection: Selection,
         serial: u32,
     },
     Request {
-        selection: u32,
+        selection: Selection,
         serial: u32,
         mime: String,
         fd: OwnedFd,
@@ -205,7 +206,6 @@ pub enum ServerMessage {
         id: u32,
     },
     Close {
-        reason: u32,
         message: String,
     },
     Listing {
@@ -220,6 +220,13 @@ pub struct Format {
     pub modifier: u64,
 }
 
+/// A selection that crosses between server and viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Selection {
+    Clipboard,
+    Primary,
+}
+
 /// One plane of a dmabuf.
 #[derive(Debug)]
 pub struct Plane {
@@ -228,19 +235,22 @@ pub struct Plane {
     pub stride: u32,
 }
 
-/// A damaged rectangle in buffer pixels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rect {
-    pub x: i32,
-    pub y: i32,
-    pub width: u32,
-    pub height: u32,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
     pub id: u32,
     pub name: String,
+}
+
+/// One axis of a pointer scroll, as `scroll` carries it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scroll {
+    pub time: u32,
+    pub source: u32,
+    pub axis: u32,
+    pub amount: f64,
+    pub steps: i32,
+    pub stop: bool,
+    pub inverted: bool,
 }
 
 /// A workspace as `listing` describes it.
@@ -293,8 +303,7 @@ impl ViewerMessage {
     pub fn encode(self, bytes: &mut Vec<u8>, fds: &mut Vec<OwnedFd>) -> Result<(), Error> {
         let mut w = Writer::new(bytes, fds);
         let opcode = match self {
-            ViewerMessage::Error { code, message } => {
-                w.u32(code);
+            ViewerMessage::Error { message } => {
                 w.string(&message);
                 0
             }
@@ -312,8 +321,7 @@ impl ViewerMessage {
                 w.u32(scale);
                 1
             }
-            ViewerMessage::Formats { device, formats } => {
-                w.u64(device);
+            ViewerMessage::Formats { formats } => {
                 w.count(formats.len());
                 for format in formats {
                     w.u32(format.format);
@@ -366,7 +374,6 @@ impl ViewerMessage {
                 w.fixed(y);
                 10
             }
-            ViewerMessage::PointerLeft => 11,
             ViewerMessage::Button {
                 time,
                 button,
@@ -375,9 +382,9 @@ impl ViewerMessage {
                 w.u32(time);
                 w.u32(button);
                 w.bool(pressed);
-                12
+                11
             }
-            ViewerMessage::Scroll {
+            ViewerMessage::Scroll(Scroll {
                 time,
                 source,
                 axis,
@@ -385,7 +392,7 @@ impl ViewerMessage {
                 steps,
                 stop,
                 inverted,
-            } => {
+            }) => {
                 w.u32(time);
                 w.u32(source);
                 w.u32(axis);
@@ -393,7 +400,7 @@ impl ViewerMessage {
                 w.i32(steps);
                 w.bool(stop);
                 w.bool(inverted);
-                13
+                12
             }
             ViewerMessage::Offer {
                 selection,
@@ -401,13 +408,16 @@ impl ViewerMessage {
                 seen,
                 mimes,
             } => {
-                w.offer(selection, serial, seen, &mimes);
-                14
+                w.selection(selection);
+                w.u32(serial);
+                w.u32(seen);
+                w.strings(&mimes);
+                13
             }
             ViewerMessage::Cleared { selection, serial } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
-                15
+                14
             }
             ViewerMessage::Request {
                 selection,
@@ -415,17 +425,18 @@ impl ViewerMessage {
                 mime,
                 fd,
             } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
                 w.string(&mime);
                 w.fd(fd);
-                16
+                15
             }
-            ViewerMessage::Show { id } => {
-                w.u32(id);
+            ViewerMessage::List => 16,
+            ViewerMessage::Repeat { rate, delay } => {
+                w.u32(rate);
+                w.u32(delay);
                 17
             }
-            ViewerMessage::List => 18,
         };
         w.finish(opcode)
     }
@@ -440,8 +451,7 @@ impl ServerMessage {
     pub fn encode(self, bytes: &mut Vec<u8>, fds: &mut Vec<OwnedFd>) -> Result<(), Error> {
         let mut w = Writer::new(bytes, fds);
         let opcode = match self {
-            ServerMessage::Error { code, message } => {
-                w.u32(code);
+            ServerMessage::Error { message } => {
                 w.string(&message);
                 0
             }
@@ -465,7 +475,6 @@ impl ServerMessage {
                 height,
                 format,
                 modifier,
-                opaque,
                 planes,
             } => {
                 w.u32(id);
@@ -473,7 +482,6 @@ impl ServerMessage {
                 w.u32(height);
                 w.u32(format);
                 w.u64(modifier);
-                w.bool(opaque);
                 w.count(planes.len());
                 for plane in planes {
                     w.fd(plane.fd);
@@ -486,61 +494,30 @@ impl ServerMessage {
                 w.u32(id);
                 4
             }
-            ServerMessage::Frame { id, damage, fence } => {
+            ServerMessage::Frame { id, fence } => {
                 w.u32(id);
-                w.bool(fence.is_some());
-                w.count(damage.len());
-                for rect in damage {
-                    w.i32(rect.x);
-                    w.i32(rect.y);
-                    w.u32(rect.width);
-                    w.u32(rect.height);
-                }
-                if let Some(fd) = fence {
-                    w.fd(fd);
-                }
+                w.fence(fence);
                 5
-            }
-            ServerMessage::CursorImage {
-                id,
-                hotspot_x,
-                hotspot_y,
-                width,
-                height,
-                scale,
-                pixels,
-            } => {
-                w.u32(id);
-                w.i32(hotspot_x);
-                w.i32(hotspot_y);
-                w.u32(width);
-                w.u32(height);
-                w.u32(scale);
-                w.bytes(&pixels);
-                6
-            }
-            ServerMessage::Cursor { id } => {
-                w.u32(id);
-                7
             }
             ServerMessage::CursorShape { shape } => {
                 w.string(&shape);
-                8
+                6
             }
-            ServerMessage::CursorHidden => 9,
+            ServerMessage::CursorHidden => 7,
             ServerMessage::Offer {
                 selection,
                 serial,
-                seen,
                 mimes,
             } => {
-                w.offer(selection, serial, seen, &mimes);
-                10
+                w.selection(selection);
+                w.u32(serial);
+                w.strings(&mimes);
+                8
             }
             ServerMessage::Cleared { selection, serial } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
-                11
+                9
             }
             ServerMessage::Request {
                 selection,
@@ -548,11 +525,11 @@ impl ServerMessage {
                 mime,
                 fd,
             } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
                 w.string(&mime);
                 w.fd(fd);
-                12
+                10
             }
             ServerMessage::Workspaces { workspaces } => {
                 w.count(workspaces.len());
@@ -560,16 +537,15 @@ impl ServerMessage {
                     w.u32(workspace.id);
                     w.string(&workspace.name);
                 }
-                13
+                11
             }
             ServerMessage::Showing { id } => {
                 w.u32(id);
-                14
+                12
             }
-            ServerMessage::Close { reason, message } => {
-                w.u32(reason);
+            ServerMessage::Close { message } => {
                 w.string(&message);
-                15
+                13
             }
             ServerMessage::Listing { workspaces } => {
                 w.count(workspaces.len());
@@ -579,7 +555,7 @@ impl ServerMessage {
                     w.string(&workspace.cwd);
                     w.u32(workspace.panes);
                 }
-                16
+                14
             }
         };
         w.finish(opcode)
@@ -631,15 +607,15 @@ impl<'a> Writer<'a> {
         self.u32(count as u32);
     }
 
-    fn bytes(&mut self, data: &[u8]) {
-        self.count(data.len());
-        self.bytes.extend_from_slice(data);
-        let padding = data.len().next_multiple_of(4) - data.len();
-        self.bytes.extend_from_slice(&[0; 3][..padding]);
+    fn selection(&mut self, selection: Selection) {
+        self.u32(selection as u32);
     }
 
     fn string(&mut self, s: &str) {
-        self.bytes(s.as_bytes());
+        self.count(s.len());
+        self.bytes.extend_from_slice(s.as_bytes());
+        let padding = s.len().next_multiple_of(4) - s.len();
+        self.bytes.extend_from_slice(&[0; 3][..padding]);
     }
 
     fn fd(&mut self, fd: OwnedFd) {
@@ -653,13 +629,10 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn offer(&mut self, selection: u32, serial: u32, seen: u32, mimes: &[String]) {
-        self.u32(selection);
-        self.u32(serial);
-        self.u32(seen);
-        self.count(mimes.len());
-        for mime in mimes {
-            self.string(mime);
+    fn strings(&mut self, strings: &[String]) {
+        self.count(strings.len());
+        for s in strings {
+            self.string(s);
         }
     }
 
@@ -762,6 +735,31 @@ impl Outbox {
         self.next_header = 0;
         Ok(true)
     }
+
+    /// Send everything, waiting for the socket until `deadline` or forever with none, and return whether everything is sent.
+    pub fn flush(&mut self, stream: &UnixStream, deadline: Option<Instant>) -> io::Result<bool> {
+        while !self.send(stream)? {
+            if !ready(stream, PollFlags::OUT, deadline) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// Whether `stream` became ready for `flags` before `deadline`, waiting forever with none.
+fn ready(stream: &UnixStream, flags: PollFlags, deadline: Option<Instant>) -> bool {
+    loop {
+        let timeout = deadline.map_or(-1, |deadline| {
+            let left = deadline.saturating_duration_since(Instant::now());
+            left.as_millis().min(i32::MAX as u128) as i32
+        });
+        let mut fds = [PollFd::new(stream, flags)];
+        match rustix::event::poll(&mut fds, timeout) {
+            Err(Errno::INTR) => {}
+            _ => return !fds[0].revents().is_empty(),
+        }
+    }
 }
 
 /// Received bytes and fds, from which complete messages are taken.
@@ -776,16 +774,6 @@ pub struct Decoder {
 impl Decoder {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn push_bytes(&mut self, data: &[u8]) {
-        self.make_room(data.len());
-        self.bytes[self.end..self.end + data.len()].copy_from_slice(data);
-        self.end += data.len();
-    }
-
-    pub fn push_fd(&mut self, fd: OwnedFd) {
-        self.fds.push_back(fd);
     }
 
     /// Read once from the socket without blocking, and return false when the peer has closed it.
@@ -819,6 +807,15 @@ impl Decoder {
             }
             Err(Errno::AGAIN) => Ok(true),
             Err(errno) => Err(Error::Io(errno.into())),
+        }
+    }
+
+    /// Wait until `deadline`, or forever with none, for the socket to be readable and read once if it is.
+    pub fn wait(&mut self, stream: &UnixStream, deadline: Option<Instant>) -> Result<bool, Error> {
+        if ready(stream, PollFlags::IN, deadline) {
+            self.receive(stream)
+        } else {
+            Ok(true)
         }
     }
 
@@ -874,7 +871,6 @@ impl Decoder {
         };
         let message = match opcode {
             0 => ViewerMessage::Error {
-                code: a.u32()?,
                 message: a.string()?,
             },
             1 => ViewerMessage::Hello {
@@ -885,7 +881,6 @@ impl Decoder {
                 scale: a.u32()?,
             },
             2 => {
-                let device = a.u64()?;
                 let count = a.count(12)?;
                 let mut formats = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -894,7 +889,7 @@ impl Decoder {
                         modifier: a.u64()?,
                     });
                 }
-                ViewerMessage::Formats { device, formats }
+                ViewerMessage::Formats { formats }
             }
             3 => ViewerMessage::Resize {
                 width: a.u32()?,
@@ -927,13 +922,12 @@ impl Decoder {
                 x: a.fixed()?,
                 y: a.fixed()?,
             },
-            11 => ViewerMessage::PointerLeft,
-            12 => ViewerMessage::Button {
+            11 => ViewerMessage::Button {
                 time: a.u32()?,
                 button: a.u32()?,
                 pressed: a.bool()?,
             },
-            13 => ViewerMessage::Scroll {
+            12 => ViewerMessage::Scroll(Scroll {
                 time: a.u32()?,
                 source: a.u32()?,
                 axis: a.u32()?,
@@ -941,25 +935,28 @@ impl Decoder {
                 steps: a.i32()?,
                 stop: a.bool()?,
                 inverted: a.bool()?,
-            },
-            14 => ViewerMessage::Offer {
-                selection: a.u32()?,
+            }),
+            13 => ViewerMessage::Offer {
+                selection: a.selection()?,
                 serial: a.u32()?,
                 seen: a.u32()?,
                 mimes: a.strings()?,
             },
-            15 => ViewerMessage::Cleared {
-                selection: a.u32()?,
+            14 => ViewerMessage::Cleared {
+                selection: a.selection()?,
                 serial: a.u32()?,
             },
-            16 => ViewerMessage::Request {
-                selection: a.u32()?,
+            15 => ViewerMessage::Request {
+                selection: a.selection()?,
                 serial: a.u32()?,
                 mime: a.string()?,
                 fd: a.fd()?,
             },
-            17 => ViewerMessage::Show { id: a.u32()? },
-            18 => ViewerMessage::List,
+            16 => ViewerMessage::List,
+            17 => ViewerMessage::Repeat {
+                rate: a.u32()?,
+                delay: a.u32()?,
+            },
             _ => return Err(Error::UnknownOpcode(opcode)),
         };
         a.finish()?;
@@ -973,7 +970,6 @@ impl Decoder {
         };
         let message = match opcode {
             0 => ServerMessage::Error {
-                code: a.u32()?,
                 message: a.string()?,
             },
             1 => ServerMessage::Welcome { version: a.u32()? },
@@ -988,7 +984,6 @@ impl Decoder {
                 let height = a.u32()?;
                 let format = a.u32()?;
                 let modifier = a.u64()?;
-                let opaque = a.bool()?;
                 let count = a.count(8)?;
                 let mut planes = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -1004,56 +999,32 @@ impl Decoder {
                     height,
                     format,
                     modifier,
-                    opaque,
                     planes,
                 }
             }
             4 => ServerMessage::Forget { id: a.u32()? },
-            5 => {
-                let id = a.u32()?;
-                let fenced = a.bool()?;
-                let count = a.count(16)?;
-                let mut damage = Vec::with_capacity(count);
-                for _ in 0..count {
-                    damage.push(Rect {
-                        x: a.i32()?,
-                        y: a.i32()?,
-                        width: a.u32()?,
-                        height: a.u32()?,
-                    });
-                }
-                let fence = if fenced { Some(a.fd()?) } else { None };
-                ServerMessage::Frame { id, damage, fence }
-            }
-            6 => ServerMessage::CursorImage {
+            5 => ServerMessage::Frame {
                 id: a.u32()?,
-                hotspot_x: a.i32()?,
-                hotspot_y: a.i32()?,
-                width: a.u32()?,
-                height: a.u32()?,
-                scale: a.u32()?,
-                pixels: a.bytes()?.to_vec(),
+                fence: a.fence()?,
             },
-            7 => ServerMessage::Cursor { id: a.u32()? },
-            8 => ServerMessage::CursorShape { shape: a.string()? },
-            9 => ServerMessage::CursorHidden,
-            10 => ServerMessage::Offer {
-                selection: a.u32()?,
+            6 => ServerMessage::CursorShape { shape: a.string()? },
+            7 => ServerMessage::CursorHidden,
+            8 => ServerMessage::Offer {
+                selection: a.selection()?,
                 serial: a.u32()?,
-                seen: a.u32()?,
                 mimes: a.strings()?,
             },
-            11 => ServerMessage::Cleared {
-                selection: a.u32()?,
+            9 => ServerMessage::Cleared {
+                selection: a.selection()?,
                 serial: a.u32()?,
             },
-            12 => ServerMessage::Request {
-                selection: a.u32()?,
+            10 => ServerMessage::Request {
+                selection: a.selection()?,
                 serial: a.u32()?,
                 mime: a.string()?,
                 fd: a.fd()?,
             },
-            13 => {
+            11 => {
                 let count = a.count(8)?;
                 let mut workspaces = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -1064,12 +1035,11 @@ impl Decoder {
                 }
                 ServerMessage::Workspaces { workspaces }
             }
-            14 => ServerMessage::Showing { id: a.u32()? },
-            15 => ServerMessage::Close {
-                reason: a.u32()?,
+            12 => ServerMessage::Showing { id: a.u32()? },
+            13 => ServerMessage::Close {
                 message: a.string()?,
             },
-            16 => {
+            14 => {
                 let count = a.count(16)?;
                 let mut workspaces = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -1131,6 +1101,14 @@ impl<'a> Args<'a> {
         }
     }
 
+    fn selection(&mut self) -> Result<Selection, Error> {
+        match self.u32()? {
+            0 => Ok(Selection::Clipboard),
+            1 => Ok(Selection::Primary),
+            _ => Err(Error::Malformed),
+        }
+    }
+
     /// Read an element count, rejecting one whose elements of
     /// at least `min_size` bytes could not fit in what is left.
     fn count(&mut self, min_size: usize) -> Result<usize, Error> {
@@ -1141,15 +1119,10 @@ impl<'a> Args<'a> {
         Ok(count)
     }
 
-    fn bytes(&mut self) -> Result<&'a [u8], Error> {
+    fn string(&mut self) -> Result<String, Error> {
         let len = self.u32()? as usize;
         let padded = self.take(len.next_multiple_of(4))?;
-        Ok(&padded[..len])
-    }
-
-    fn string(&mut self) -> Result<String, Error> {
-        let bytes = self.bytes()?;
-        let s = std::str::from_utf8(bytes).map_err(|_| Error::Malformed)?;
+        let s = std::str::from_utf8(&padded[..len]).map_err(|_| Error::Malformed)?;
         Ok(s.to_owned())
     }
 
@@ -1201,10 +1174,21 @@ mod tests {
         pipe().1
     }
 
+    impl Decoder {
+        fn push_bytes(&mut self, data: &[u8]) {
+            self.make_room(data.len());
+            self.bytes[self.end..self.end + data.len()].copy_from_slice(data);
+            self.end += data.len();
+        }
+
+        fn push_fd(&mut self, fd: OwnedFd) {
+            self.fds.push_back(fd);
+        }
+    }
+
     fn viewer_messages() -> Vec<ViewerMessage> {
         vec![
             ViewerMessage::Error {
-                code: 3,
                 message: "it broke".into(),
             },
             ViewerMessage::Hello {
@@ -1215,7 +1199,6 @@ mod tests {
                 scale: 150,
             },
             ViewerMessage::Formats {
-                device: 0xe200,
                 formats: vec![
                     Format {
                         format: 0x34325241,
@@ -1254,13 +1237,12 @@ mod tests {
                 x: -1.5,
                 y: 1000.25,
             },
-            ViewerMessage::PointerLeft,
             ViewerMessage::Button {
                 time: 1002,
                 button: 0x110,
                 pressed: false,
             },
-            ViewerMessage::Scroll {
+            ViewerMessage::Scroll(Scroll {
                 time: 1003,
                 source: 1,
                 axis: 0,
@@ -1268,32 +1250,34 @@ mod tests {
                 steps: -120,
                 stop: false,
                 inverted: true,
-            },
+            }),
             ViewerMessage::Offer {
-                selection: 0,
+                selection: Selection::Clipboard,
                 serial: 4,
                 seen: 2,
                 mimes: vec!["text/plain".into(), "UTF8_STRING".into(), "".into()],
             },
             ViewerMessage::Cleared {
-                selection: 1,
+                selection: Selection::Primary,
                 serial: 5,
             },
             ViewerMessage::Request {
-                selection: 0,
+                selection: Selection::Clipboard,
                 serial: 9,
                 mime: "text/plain;charset=utf-8".into(),
                 fd: fd(),
             },
-            ViewerMessage::Show { id: 2 },
             ViewerMessage::List,
+            ViewerMessage::Repeat {
+                rate: 25,
+                delay: 600,
+            },
         ]
     }
 
     fn server_messages() -> Vec<ServerMessage> {
         vec![
             ServerMessage::Error {
-                code: 1,
                 message: "unknown opcode".into(),
             },
             ServerMessage::Welcome { version: 1 },
@@ -1308,7 +1292,6 @@ mod tests {
                 height: 1200,
                 format: 0x34325241,
                 modifier: 0x0100_0000_0000_0002,
-                opaque: true,
                 planes: vec![
                     Plane {
                         fd: fd(),
@@ -1323,55 +1306,26 @@ mod tests {
                 ],
             },
             ServerMessage::Forget { id: 1 },
-            ServerMessage::Frame {
-                id: 1,
-                damage: vec![],
-                fence: None,
-            },
+            ServerMessage::Frame { id: 1, fence: None },
             ServerMessage::Frame {
                 id: 2,
-                damage: vec![
-                    Rect {
-                        x: -4,
-                        y: 0,
-                        width: 10,
-                        height: 20,
-                    },
-                    Rect {
-                        x: 100,
-                        y: 200,
-                        width: 1,
-                        height: 1,
-                    },
-                ],
                 fence: Some(fd()),
             },
-            ServerMessage::CursorImage {
-                id: 3,
-                hotspot_x: 1,
-                hotspot_y: -2,
-                width: 1,
-                height: 2,
-                scale: 240,
-                pixels: vec![1, 2, 3, 4, 5, 6, 7, 8],
-            },
-            ServerMessage::Cursor { id: 3 },
             ServerMessage::CursorShape {
                 shape: "default".into(),
             },
             ServerMessage::CursorHidden,
             ServerMessage::Offer {
-                selection: 1,
+                selection: Selection::Primary,
                 serial: 8,
-                seen: 0,
                 mimes: vec!["image/png".into()],
             },
             ServerMessage::Cleared {
-                selection: 0,
+                selection: Selection::Clipboard,
                 serial: 9,
             },
             ServerMessage::Request {
-                selection: 1,
+                selection: Selection::Primary,
                 serial: 4,
                 mime: "text/uri-list".into(),
                 fd: fd(),
@@ -1390,7 +1344,6 @@ mod tests {
             },
             ServerMessage::Showing { id: 2 },
             ServerMessage::Close {
-                reason: 1,
                 message: "shutting down".into(),
             },
             ServerMessage::Listing {
@@ -1404,33 +1357,38 @@ mod tests {
         ]
     }
 
-    fn encode_viewer(messages: Vec<ViewerMessage>) -> (Vec<u8>, Vec<OwnedFd>) {
+    type Encode<T> = fn(T, &mut Vec<u8>, &mut Vec<OwnedFd>) -> Result<(), Error>;
+
+    fn encode<T>(messages: Vec<T>, encode_one: Encode<T>) -> (Vec<u8>, Vec<OwnedFd>) {
         let mut bytes = Vec::new();
         let mut fds = Vec::new();
         for message in messages {
-            message.encode(&mut bytes, &mut fds).unwrap();
+            encode_one(message, &mut bytes, &mut fds).unwrap();
         }
         (bytes, fds)
     }
 
-    fn encode_server(messages: Vec<ServerMessage>) -> (Vec<u8>, Vec<OwnedFd>) {
-        let mut bytes = Vec::new();
-        let mut fds = Vec::new();
-        for message in messages {
-            message.encode(&mut bytes, &mut fds).unwrap();
-        }
-        (bytes, fds)
-    }
-
-    fn drain_viewer(decoder: &mut Decoder, out: &mut Vec<String>) {
-        while let Some(message) = decoder.next_viewer_message().unwrap() {
-            out.push(format!("{message:?}"));
-        }
-    }
-
-    fn drain_server(decoder: &mut Decoder, out: &mut Vec<String>) {
-        while let Some(message) = decoder.next_server_message().unwrap() {
-            out.push(format!("{message:?}"));
+    /// Check that `messages` decode with `next` however their bytes split in two.
+    fn decode_split_anywhere<T: fmt::Debug>(
+        messages: fn() -> Vec<T>,
+        encode_one: Encode<T>,
+        next: fn(&mut Decoder) -> Result<Option<T>, Error>,
+    ) {
+        let len = encode(messages(), encode_one).0.len();
+        for split in 0..=len {
+            let messages = messages();
+            let expected = debug(&messages);
+            let (bytes, fds) = encode(messages, encode_one);
+            let mut decoder = Decoder::new();
+            fds.into_iter().for_each(|fd| decoder.push_fd(fd));
+            let mut decoded = Vec::new();
+            for part in [&bytes[..split], &bytes[split..]] {
+                decoder.push_bytes(part);
+                while let Some(message) = next(&mut decoder).unwrap() {
+                    decoded.push(format!("{message:?}"));
+                }
+            }
+            assert_eq!(decoded, expected, "split at {split}");
         }
     }
 
@@ -1451,65 +1409,21 @@ mod tests {
     // included, matches the originals exactly
 
     #[test]
-    fn every_viewer_message_survives_encoding_and_decoding() {
-        let messages = viewer_messages();
-        let expected = debug(&messages);
-        let (bytes, fds) = encode_viewer(messages);
-        let mut decoder = Decoder::new();
-        decoder.push_bytes(&bytes);
-        fds.into_iter().for_each(|fd| decoder.push_fd(fd));
-        let mut decoded = Vec::new();
-        drain_viewer(&mut decoder, &mut decoded);
-        assert_eq!(decoded, expected);
-    }
-
-    #[test]
-    fn every_server_message_survives_encoding_and_decoding() {
-        let messages = server_messages();
-        let expected = debug(&messages);
-        let (bytes, fds) = encode_server(messages);
-        let mut decoder = Decoder::new();
-        decoder.push_bytes(&bytes);
-        fds.into_iter().for_each(|fd| decoder.push_fd(fd));
-        let mut decoded = Vec::new();
-        drain_server(&mut decoder, &mut decoded);
-        assert_eq!(decoded, expected);
-    }
-
-    #[test]
     fn viewer_messages_decode_when_the_bytes_split_at_any_offset() {
-        let len = encode_viewer(viewer_messages()).0.len();
-        for split in 0..=len {
-            let messages = viewer_messages();
-            let expected = debug(&messages);
-            let (bytes, fds) = encode_viewer(messages);
-            let mut decoder = Decoder::new();
-            fds.into_iter().for_each(|fd| decoder.push_fd(fd));
-            let mut decoded = Vec::new();
-            decoder.push_bytes(&bytes[..split]);
-            drain_viewer(&mut decoder, &mut decoded);
-            decoder.push_bytes(&bytes[split..]);
-            drain_viewer(&mut decoder, &mut decoded);
-            assert_eq!(decoded, expected, "split at {split}");
-        }
+        decode_split_anywhere(
+            viewer_messages,
+            ViewerMessage::encode,
+            Decoder::next_viewer_message,
+        );
     }
 
     #[test]
     fn server_messages_decode_when_the_bytes_split_at_any_offset() {
-        let len = encode_server(server_messages()).0.len();
-        for split in 0..=len {
-            let messages = server_messages();
-            let expected = debug(&messages);
-            let (bytes, fds) = encode_server(messages);
-            let mut decoder = Decoder::new();
-            fds.into_iter().for_each(|fd| decoder.push_fd(fd));
-            let mut decoded = Vec::new();
-            decoder.push_bytes(&bytes[..split]);
-            drain_server(&mut decoder, &mut decoded);
-            decoder.push_bytes(&bytes[split..]);
-            drain_server(&mut decoder, &mut decoded);
-            assert_eq!(decoded, expected, "split at {split}");
-        }
+        decode_split_anywhere(
+            server_messages,
+            ServerMessage::encode,
+            Decoder::next_server_message,
+        );
     }
 
     #[test]
@@ -1518,28 +1432,29 @@ mod tests {
         let raw: Vec<i32> = planes.iter().map(|fd| fd.as_raw_fd()).collect();
         let fence = fd();
         let fence_raw = fence.as_raw_fd();
-        let (bytes, _) = encode_server(vec![
-            ServerMessage::Buffer {
-                id: 1,
-                width: 1,
-                height: 1,
-                format: 0,
-                modifier: 0,
-                opaque: false,
-                planes: (0..3)
-                    .map(|_| Plane {
-                        fd: fd(),
-                        offset: 0,
-                        stride: 4,
-                    })
-                    .collect(),
-            },
-            ServerMessage::Frame {
-                id: 1,
-                damage: vec![],
-                fence: Some(fd()),
-            },
-        ]);
+        let (bytes, _) = encode(
+            vec![
+                ServerMessage::Buffer {
+                    id: 1,
+                    width: 1,
+                    height: 1,
+                    format: 0,
+                    modifier: 0,
+                    planes: (0..3)
+                        .map(|_| Plane {
+                            fd: fd(),
+                            offset: 0,
+                            stride: 4,
+                        })
+                        .collect(),
+                },
+                ServerMessage::Frame {
+                    id: 1,
+                    fence: Some(fd()),
+                },
+            ],
+            ServerMessage::encode,
+        );
         let mut decoder = Decoder::new();
         decoder.push_bytes(&bytes);
         planes.into_iter().for_each(|fd| decoder.push_fd(fd));
@@ -1559,38 +1474,24 @@ mod tests {
     }
 
     #[test]
-    fn a_complete_message_whose_fds_have_not_arrived_is_an_error() {
-        let (bytes, _) = encode_viewer(vec![ViewerMessage::Request {
-            selection: 0,
-            serial: 1,
-            mime: "text/plain".into(),
-            fd: fd(),
-        }]);
-        let mut decoder = Decoder::new();
-        decoder.push_bytes(&bytes);
-        assert!(matches!(
-            decoder.next_viewer_message(),
-            Err(Error::MissingFds)
-        ));
-    }
-
-    #[test]
     fn a_buffer_with_fewer_fds_queued_than_planes_is_an_error() {
-        let (bytes, mut fds) = encode_server(vec![ServerMessage::Buffer {
-            id: 1,
-            width: 1,
-            height: 1,
-            format: 0,
-            modifier: 0,
-            opaque: false,
-            planes: (0..3)
-                .map(|_| Plane {
-                    fd: fd(),
-                    offset: 0,
-                    stride: 4,
-                })
-                .collect(),
-        }]);
+        let (bytes, mut fds) = encode(
+            vec![ServerMessage::Buffer {
+                id: 1,
+                width: 1,
+                height: 1,
+                format: 0,
+                modifier: 0,
+                planes: (0..3)
+                    .map(|_| Plane {
+                        fd: fd(),
+                        offset: 0,
+                        stride: 4,
+                    })
+                    .collect(),
+            }],
+            ServerMessage::encode,
+        );
         fds.pop();
         let mut decoder = Decoder::new();
         decoder.push_bytes(&bytes);
@@ -1661,18 +1562,24 @@ mod tests {
     fn encoding_a_message_over_one_mebibyte_fails_and_appends_nothing() {
         let mut bytes = vec![1, 2, 3, 4];
         let mut fds = Vec::new();
-        let result = ServerMessage::CursorImage {
-            id: 1,
-            hotspot_x: 0,
-            hotspot_y: 0,
-            width: 512,
-            height: 512,
-            scale: 120,
-            pixels: vec![0; 512 * 512 * 4],
+        let result = ServerMessage::CursorShape {
+            shape: "x".repeat(MAX_MESSAGE_LEN),
         }
         .encode(&mut bytes, &mut fds);
         assert!(matches!(result, Err(Error::TooLong(_))));
         assert_eq!(bytes, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_selection_past_the_primary_selection_is_malformed() {
+        let mut bytes = header(16, 14, 0, 0);
+        bytes.extend_from_slice(&[2, 0, 0, 0, 1, 0, 0, 0]);
+        let mut decoder = Decoder::new();
+        decoder.push_bytes(&bytes);
+        assert!(matches!(
+            decoder.next_viewer_message(),
+            Err(Error::Malformed)
+        ));
     }
 
     #[test]
@@ -1688,57 +1595,56 @@ mod tests {
     }
 
     #[test]
-    fn strings_and_bytes_carry_a_count_and_pad_to_a_word_with_zeros() {
-        let (bytes, _) = encode_server(vec![
-            ServerMessage::CursorShape {
-                shape: "text".into(),
-            },
-            ServerMessage::CursorShape {
-                shape: "default".into(),
-            },
-            ServerMessage::CursorShape { shape: "".into() },
-        ]);
-        let mut expected = header(16, 8, 0, 0);
+    fn strings_carry_a_count_and_pad_to_a_word_with_zeros() {
+        let (bytes, _) = encode(
+            vec![
+                ServerMessage::CursorShape {
+                    shape: "text".into(),
+                },
+                ServerMessage::CursorShape {
+                    shape: "default".into(),
+                },
+                ServerMessage::CursorShape { shape: "".into() },
+            ],
+            ServerMessage::encode,
+        );
+        let mut expected = header(16, 6, 0, 0);
         expected.extend_from_slice(&[4, 0, 0, 0]);
         expected.extend_from_slice(b"text");
-        expected.extend_from_slice(&header(20, 8, 0, 0));
+        expected.extend_from_slice(&header(20, 6, 0, 0));
         expected.extend_from_slice(&[7, 0, 0, 0]);
         expected.extend_from_slice(b"default\0");
-        expected.extend_from_slice(&header(12, 8, 0, 0));
+        expected.extend_from_slice(&header(12, 6, 0, 0));
         expected.extend_from_slice(&[0, 0, 0, 0]);
         assert_eq!(bytes, expected);
-
-        let (bytes, _) = encode_server(vec![ServerMessage::CursorImage {
-            id: 0,
-            hotspot_x: 0,
-            hotspot_y: 0,
-            width: 0,
-            height: 0,
-            scale: 0,
-            pixels: vec![9; 5],
-        }]);
-        assert_eq!(bytes.len(), 8 + 6 * 4 + 4 + 8);
-        assert_eq!(&bytes[32..], [5, 0, 0, 0, 9, 9, 9, 9, 9, 0, 0, 0]);
     }
 
     #[test]
     fn a_u64_is_written_low_word_first() {
-        let (bytes, _) = encode_viewer(vec![ViewerMessage::Formats {
-            device: 0x1122_3344_5566_7788,
-            formats: vec![],
-        }]);
+        let (bytes, _) = encode(
+            vec![ViewerMessage::Formats {
+                formats: vec![Format {
+                    format: 0,
+                    modifier: 0x1122_3344_5566_7788,
+                }],
+            }],
+            ViewerMessage::encode,
+        );
         assert_eq!(
-            &bytes[8..],
-            [0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0, 0, 0, 0]
+            &bytes[16..],
+            [0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
         );
     }
 
     #[test]
     fn a_header_counts_the_fds_its_message_carries() {
-        let (bytes, fds) = encode_viewer(vec![ViewerMessage::Release {
-            id: 1,
-            fence: Some(fd()),
-        }]);
+        let (bytes, fds) = encode(
+            vec![ViewerMessage::Release {
+                id: 1,
+                fence: Some(fd()),
+            }],
+            ViewerMessage::encode,
+        );
         assert_eq!(bytes, [16, 0, 0, 0, 5, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
         assert_eq!(fds.len(), 1);
     }
@@ -1766,7 +1672,6 @@ mod tests {
                 height: 768,
                 format: 0x34325241,
                 modifier: 0,
-                opaque: true,
                 planes,
             })
             .unwrap();
@@ -1779,17 +1684,11 @@ mod tests {
             outbox
                 .push_server_message(ServerMessage::Frame {
                     id,
-                    damage: vec![Rect {
-                        x: 0,
-                        y: 0,
-                        width: id,
-                        height: 1,
-                    }],
                     fence: Some(writer),
                 })
                 .unwrap();
             outbox
-                .push_server_message(ServerMessage::Cursor { id })
+                .push_server_message(ServerMessage::Showing { id })
                 .unwrap();
         }
         while !outbox.send(&server).unwrap() {}
@@ -1813,7 +1712,7 @@ mod tests {
                     }
                 }
                 ServerMessage::Frame { fence, .. } => written.push(fence.unwrap()),
-                ServerMessage::Cursor { .. } => {}
+                ServerMessage::Showing { .. } => {}
                 other => panic!("unexpected {other:?}"),
             }
         }

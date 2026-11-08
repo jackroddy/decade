@@ -1,0 +1,11 @@
+mod apps;
+mod channel;
+mod children;
+pub(super) mod chrome;
+pub(super) mod compositor;
+mod mcp;
+mod panes;
+mod proc;
+mod save;
+mod scratch;
+mod workspace;

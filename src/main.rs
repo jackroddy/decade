@@ -1,48 +1,18 @@
 #[cfg(target_os = "linux")]
-mod apps;
-#[cfg(target_os = "linux")]
-mod channel;
-#[cfg(target_os = "linux")]
-mod compositor;
-#[cfg(target_os = "linux")]
 mod control;
 #[cfg(target_os = "linux")]
-mod draw;
-#[cfg(target_os = "linux")]
-mod frame;
+mod files;
 #[cfg(target_os = "linux")]
 mod gpu;
 #[cfg(target_os = "linux")]
-mod hypr;
-#[cfg(target_os = "linux")]
-mod inhibit;
-#[cfg(target_os = "linux")]
-mod mcp;
-#[cfg(target_os = "linux")]
-mod menu;
-#[cfg(target_os = "linux")]
-mod palette;
-#[cfg(target_os = "linux")]
-mod panel;
-#[cfg(target_os = "linux")]
-mod panes;
-#[cfg(target_os = "linux")]
-mod picker;
-#[cfg(target_os = "linux")]
-mod save;
-#[cfg(target_os = "linux")]
-mod scratch;
+mod lines;
 #[cfg(target_os = "linux")]
 mod script;
 #[cfg(target_os = "linux")]
-mod settings;
-#[cfg(target_os = "linux")]
-mod text;
+mod server;
 #[cfg(target_os = "linux")]
 mod viewer;
 mod wire;
-#[cfg(target_os = "linux")]
-mod workspace;
 
 #[cfg(target_os = "linux")]
 const USAGE: &str = "usage: decade [--class <app id>]
@@ -54,7 +24,7 @@ const USAGE: &str = "usage: decade [--class <app id>]
 fn main() {
     let mut args = std::env::args().skip(1);
     match (args.next().as_deref(), args.next(), args.next()) {
-        (Some("server"), None, _) => compositor::run(),
+        (Some("server"), None, _) => server::compositor::run(),
         (Some("start"), None, _) => start(),
         (Some("stop"), None, _) => stop(),
         (Some("restart"), None, _) => {

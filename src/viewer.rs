@@ -1,13 +1,10 @@
 mod clipboard;
+mod hypr;
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::time::Duration;
 
-use rustix::fs::MemfdFlags;
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::dmabuf::{DmabufFeedback, DmabufHandler, DmabufState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
@@ -30,8 +27,7 @@ use smithay_client_toolkit::{
 use wayland_client::globals::{GlobalList, registry_queue_init};
 use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_data_device_manager::WlDataDeviceManager, wl_keyboard, wl_keyboard::WlKeyboard, wl_output, wl_pointer,
-    wl_pointer::WlPointer, wl_region::WlRegion, wl_seat, wl_seat::WlSeat, wl_shm, wl_shm::WlShm,
-    wl_shm_pool::WlShmPool, wl_subsurface::WlSubsurface, wl_surface::WlSurface,
+    wl_pointer::WlPointer, wl_region::WlRegion, wl_seat, wl_seat::WlSeat, wl_subsurface::WlSubsurface, wl_surface::WlSurface,
 };
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::cursor_shape::v1::client::{
@@ -57,21 +53,19 @@ use wayland_protocols::wp::viewporter::client::{
 };
 
 use crate::control::connect_or_start;
-use crate::hypr::{self, Hyprland};
-use crate::inhibit::Shortcuts;
-use crate::palette::BACKGROUND;
-use crate::wire::{Decoder, Format, Outbox, Plane, ServerMessage, ViewerMessage};
+use crate::lines::Lines;
+use crate::server::chrome::palette::BACKGROUND;
+use crate::wire::{self, Decoder, Format, Outbox, Plane, SCALE, ServerMessage, ViewerMessage};
 use clipboard::Clipboard;
+use hypr::Hyprland;
 
-const PROTOCOL_VERSION: u32 = 1;
-const LOCAL: u32 = 0;
 const DEFAULT_SIZE: (u32, u32) = (1280, 800);
 
 // xkb's eight real modifiers have fixed indices, Shift
 // first; Caps Lock is Lock, and the standard keymaps
 // bind Num Lock to Mod2
-const CAPS_LOCK: u32 = 1 << 1;
-const NUM_LOCK: u32 = 1 << 4;
+const XKB_CAPS_LOCK: u32 = 1 << 1;
+const XKB_NUM_LOCK: u32 = 1 << 4;
 
 // the names of cursor-shape-v1's version 1 shapes, in the
 // order of its enum, which starts at 1
@@ -151,11 +145,11 @@ pub fn run(class: String) {
         .unwrap_or_else(|error| fail(&error.to_string()));
 
     let mut viewer = Viewer::open(&globals, qh, event_loop.handle(), class, server);
-    viewer.set_shortcuts(true);
+    viewer.inhibit_shortcuts(true);
     viewer.watch_hyprland(&event_loop);
 
     let exit = loop {
-        let timeout = (!viewer.outbox.is_empty()).then_some(Duration::from_millis(5));
+        let timeout = (!viewer.outbox.is_empty()).then_some(wire::OUTBOX_RETRY);
         if let Err(error) = event_loop.dispatch(timeout, &mut viewer) {
             eprintln!("decade: the Wayland connection failed: {error}");
             break 1;
@@ -183,26 +177,12 @@ fn missing(name: &str) -> ! {
 
 /// A 1×1 buffer of the background colour, for the window behind the frame.
 fn background(globals: &GlobalList, qh: &QueueHandle<Viewer>) -> WlBuffer {
-    if let Ok(manager) = globals.bind::<WpSinglePixelBufferManagerV1, _, _>(qh, 1..=1, ()) {
-        let [red, green, blue, alpha] = BACKGROUND.map(|c| (c as f64 * u32::MAX as f64) as u32);
-        let buffer = manager.create_u32_rgba_buffer(red, green, blue, alpha, qh, ());
-        manager.destroy();
-        return buffer;
-    }
-    let shm: WlShm = globals
+    let manager: WpSinglePixelBufferManagerV1 = globals
         .bind(qh, 1..=1, ())
-        .unwrap_or_else(|_| missing("wl_shm"));
-    let [red, green, blue, _] = BACKGROUND.map(|c| (c * 255.0).round() as u8);
-    let mut file = rustix::fs::memfd_create("decade-background", MemfdFlags::CLOEXEC)
-        .map(File::from)
-        .unwrap_or_else(|error| fail(&format!("no memfd for the background: {error}")));
-    // xrgb8888 is a little-endian u32, so blue comes first
-    if let Err(error) = file.write_all(&[blue, green, red, 0xff]) {
-        fail(&format!("the background did not write: {error}"));
-    }
-    let pool = shm.create_pool(file.as_fd(), 4, qh, ());
-    let buffer = pool.create_buffer(0, 1, 1, 4, wl_shm::Format::Xrgb8888, qh, ());
-    pool.destroy();
+        .unwrap_or_else(|_| missing("wp_single_pixel_buffer_manager_v1"));
+    let [red, green, blue, alpha] = BACKGROUND.map(|c| (c as f64 * u32::MAX as f64) as u32);
+    let buffer = manager.create_u32_rgba_buffer(red, green, blue, alpha, qh, ());
+    manager.destroy();
     buffer
 }
 
@@ -304,41 +284,23 @@ struct Viewer {
     fractional: bool,
     configured: bool,
 
-    /// The host's main device and the formats it imports for the window.
-    formats: Option<(u64, Vec<Format>)>,
+    /// The formats the host imports for the window.
+    formats: Option<Vec<Format>>,
 
     /// The size and scale the server last heard, once `hello` is sent.
     sent: Option<(u32, u32, u32)>,
     welcomed: bool,
-    buffers: HashMap<u32, Imported>,
 
-    /// A frame not yet on screen.
-    pending: Option<Pending>,
-
-    /// The size of the frame on screen.
-    shown: Option<(u32, u32)>,
-
+    /// The host's key repeat rate and delay, once the host has sent them.
+    repeat: Option<(u32, u32)>,
+    frames: Frames,
     seat: WlSeat,
-    pointer: Option<WlPointer>,
-    cursor_shape: Option<WpCursorShapeManagerV1>,
-    shape_device: Option<WpCursorShapeDeviceV1>,
-    enter_serial: Option<u32>,
-
-    /// The time of the latest timed pointer event, for `pointer` on enter.
-    pointer_time: u32,
-
-    /// The cursor the server asked for, or None when hidden.
-    cursor: Option<Shape>,
-
-    /// The scroll on each axis in the current pointer frame, vertical first.
-    scroll: [Scroll; 2],
-    scroll_source: u32,
-
+    pointer: Pointer,
     keyboard: Option<WlKeyboard>,
     keys: Keys,
     clipboard: Clipboard,
-
-    shortcuts: Option<Shortcuts>,
+    inhibit_manager: Option<ZwpKeyboardShortcutsInhibitManagerV1>,
+    inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
     hyprland: Option<Hyprland>,
     exit: Option<i32>,
 }
@@ -349,6 +311,17 @@ struct Imported {
     params: ZwpLinuxBufferParamsV1,
     width: u32,
     height: u32,
+}
+
+#[derive(Default)]
+struct Frames {
+    buffers: HashMap<u32, Imported>,
+
+    /// A frame not yet on screen.
+    pending: Option<Pending>,
+
+    /// The size of the frame on screen.
+    shown: Option<(u32, u32)>,
 }
 
 struct Pending {
@@ -365,6 +338,23 @@ impl Imported {
         }
         self.params.destroy();
     }
+}
+
+struct Pointer {
+    shape_manager: Option<WpCursorShapeManagerV1>,
+    pointer: Option<WlPointer>,
+    shape_device: Option<WpCursorShapeDeviceV1>,
+    enter_serial: Option<u32>,
+
+    /// The time of the latest timed pointer event, for `pointer` on enter.
+    time: u32,
+
+    /// The cursor the server asked for, or None when hidden.
+    cursor: Option<Shape>,
+
+    /// The scroll on each axis in the current pointer frame, vertical first.
+    scroll: [Scroll; 2],
+    scroll_source: u32,
 }
 
 #[derive(Default)]
@@ -391,6 +381,140 @@ struct Keys {
     locked: u32,
 }
 
+impl Frames {
+    fn find(&self, params: &ZwpLinuxBufferParamsV1) -> Option<u32> {
+        self.buffers
+            .iter()
+            .find(|(_, imported)| &imported.params == params)
+            .map(|(&id, _)| id)
+    }
+
+    fn forget(&mut self, id: u32) {
+        if let Some(imported) = self.buffers.remove(&id) {
+            imported.destroy();
+        }
+    }
+
+    fn is_pending(&self, id: u32) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| pending.id == id)
+    }
+}
+
+impl Pointer {
+    fn new(shape_manager: Option<WpCursorShapeManagerV1>) -> Pointer {
+        Pointer {
+            shape_manager,
+            pointer: None,
+            shape_device: None,
+            enter_serial: None,
+            time: 0,
+            cursor: Some(Shape::Default),
+            scroll: [Scroll::default(), Scroll::default()],
+            scroll_source: 0,
+        }
+    }
+
+    fn seat_has_pointer(&mut self, has_pointer: bool, seat: &WlSeat, qh: &QueueHandle<Viewer>) {
+        if has_pointer && self.pointer.is_none() {
+            let pointer = seat.get_pointer(qh, ());
+            self.shape_device = self
+                .shape_manager
+                .as_ref()
+                .map(|manager| manager.get_pointer(&pointer, qh, ()));
+            self.pointer = Some(pointer);
+        } else if !has_pointer && let Some(pointer) = self.pointer.take() {
+            if let Some(device) = self.shape_device.take() {
+                device.destroy();
+            }
+            pointer.release();
+        }
+    }
+
+    fn apply_cursor(&self) {
+        let (Some(pointer), Some(serial)) = (&self.pointer, self.enter_serial) else {
+            return;
+        };
+        match (self.cursor, &self.shape_device) {
+            (None, _) => pointer.set_cursor(serial, None, 0, 0),
+            (Some(shape), Some(device)) => device.set_shape(serial, shape),
+            (Some(_), None) => {}
+        }
+    }
+
+    fn scroll_event(&mut self, event: wl_pointer::Event) {
+        match event {
+            wl_pointer::Event::Axis { time, axis, value } => {
+                if let Some(scroll) = self.axis(axis) {
+                    scroll.time = time;
+                    scroll.moved = true;
+                    scroll.value += value;
+                }
+            }
+            wl_pointer::Event::AxisSource {
+                axis_source: WEnum::Value(source),
+            } => self.scroll_source = source as u32,
+            wl_pointer::Event::AxisStop { time, axis } => {
+                if let Some(scroll) = self.axis(axis) {
+                    scroll.time = time;
+                    scroll.moved = true;
+                    scroll.stop = true;
+                }
+            }
+            wl_pointer::Event::AxisDiscrete { axis, discrete } => {
+                if let Some(scroll) = self.axis(axis) {
+                    scroll.steps += discrete * 120;
+                }
+            }
+            wl_pointer::Event::AxisValue120 { axis, value120 } => {
+                if let Some(scroll) = self.axis(axis) {
+                    scroll.steps += value120;
+                }
+            }
+            wl_pointer::Event::AxisRelativeDirection { axis, direction } => {
+                if let Some(scroll) = self.axis(axis) {
+                    scroll.inverted =
+                        direction == WEnum::Value(wl_pointer::AxisRelativeDirection::Inverted);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn axis(&mut self, axis: WEnum<wl_pointer::Axis>) -> Option<&mut Scroll> {
+        match axis {
+            WEnum::Value(wl_pointer::Axis::VerticalScroll) => Some(&mut self.scroll[0]),
+            WEnum::Value(wl_pointer::Axis::HorizontalScroll) => Some(&mut self.scroll[1]),
+            _ => None,
+        }
+    }
+
+    /// Take the scroll of the pointer frame that just ended, with distances
+    /// multiplied by `scale`, the frame pixels per logical pixel.
+    fn take_scroll(&mut self, scale: (f64, f64)) -> Vec<ViewerMessage> {
+        let source = std::mem::take(&mut self.scroll_source);
+        let mut messages = Vec::new();
+        for axis in 0..2 {
+            let scroll = std::mem::take(&mut self.scroll[axis]);
+            if !scroll.moved {
+                continue;
+            }
+            let factor = if axis == 0 { scale.1 } else { scale.0 };
+            messages.push(ViewerMessage::Scroll(wire::Scroll {
+                time: scroll.time,
+                source,
+                axis: axis as u32,
+                amount: scroll.value * factor,
+                steps: scroll.steps,
+                stop: scroll.stop,
+                inverted: scroll.inverted,
+            }));
+        }
+        messages
+    }
+}
+
 impl Viewer {
     fn open(
         globals: &GlobalList,
@@ -412,11 +536,9 @@ impl Viewer {
         let dmabuf_state = DmabufState::new(globals, &qh);
         let fractional_scale: Option<WpFractionalScaleManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
-        let cursor_shape: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
-        let shortcuts = globals
-            .bind::<ZwpKeyboardShortcutsInhibitManagerV1, _, _>(&qh, 1..=1, ())
-            .ok()
-            .map(Shortcuts::new);
+        let shape_manager: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
+        let inhibit_manager: Option<ZwpKeyboardShortcutsInhibitManagerV1> =
+            globals.bind(&qh, 1..=1, ()).ok();
 
         let subcompositor =
             SubcompositorState::bind(compositor.wl_compositor().clone(), globals, &qh)
@@ -461,28 +583,21 @@ impl Viewer {
             decoder: Decoder::new(),
             outbox: Outbox::new(),
             size: DEFAULT_SIZE,
-            scale: 120,
+            scale: SCALE,
             fractional: fractional_scale.is_some(),
             configured: false,
             formats: None,
             sent: None,
             welcomed: false,
-            buffers: HashMap::new(),
-            pending: None,
-            shown: None,
+            repeat: None,
+            frames: Frames::default(),
             seat,
-            pointer: None,
-            cursor_shape,
-            shape_device: None,
-            enter_serial: None,
-            pointer_time: 0,
-            cursor: Some(Shape::Default),
-            scroll: [Scroll::default(), Scroll::default()],
-            scroll_source: 0,
+            pointer: Pointer::new(shape_manager),
             keyboard: None,
             keys: Keys::default(),
             clipboard,
-            shortcuts,
+            inhibit_manager,
+            inhibitor: None,
             hyprland: Hyprland::find(),
             exit: None,
         }
@@ -505,18 +620,18 @@ impl Viewer {
         if self.sent.is_some() || !self.configured {
             return;
         }
-        let Some((device, formats)) = self.formats.clone() else {
+        let Some(formats) = self.formats.clone() else {
             return;
         };
         let (width, height) = self.size;
         self.send(ViewerMessage::Hello {
-            version: PROTOCOL_VERSION,
-            transport: LOCAL,
+            version: wire::VERSION,
+            transport: wire::LOCAL,
             width,
             height,
             scale: self.scale,
         });
-        self.send(ViewerMessage::Formats { device, formats });
+        self.send(ViewerMessage::Formats { formats });
         self.sent = Some((width, height, self.scale));
     }
 
@@ -553,7 +668,6 @@ impl Viewer {
                 Err(error) => {
                     eprintln!("decade: the server sent a bad message: {error}");
                     self.send(ViewerMessage::Error {
-                        code: 1,
                         message: error.to_string(),
                     });
                     self.exit = Some(1);
@@ -568,12 +682,8 @@ impl Viewer {
                 eprintln!("decade: the server reported an error: {message}");
                 self.exit = Some(1);
             }
-            ServerMessage::Close { reason, message } => {
-                if reason == 1 {
-                    eprintln!("decade: the server is shutting down");
-                } else {
-                    eprintln!("decade: the server closed this viewer: {message}");
-                }
+            ServerMessage::Close { message } => {
+                eprintln!("decade: {message}");
                 self.exit = Some(0);
             }
             ServerMessage::Listing { .. } => {}
@@ -581,6 +691,7 @@ impl Viewer {
                 self.welcomed = true;
                 self.sync_size();
                 self.send_keys();
+                self.send_repeat();
                 self.send_selections();
             }
             ServerMessage::Buffer {
@@ -592,22 +703,14 @@ impl Viewer {
                 planes,
                 ..
             } => self.import(id, width, height, format, modifier, &planes),
-            ServerMessage::Forget { id } => {
-                if let Some(imported) = self.buffers.remove(&id) {
-                    imported.destroy();
-                }
-            }
+            ServerMessage::Forget { id } => self.frames.forget(id),
             ServerMessage::Frame { id, fence, .. } => self.frame(id, fence),
             ServerMessage::CursorShape { shape: name } => self.set_cursor(Some(shape(&name))),
-            ServerMessage::CursorImage { .. } | ServerMessage::Cursor { .. } => {
-                self.set_cursor(Some(Shape::Default))
-            }
             ServerMessage::CursorHidden => self.set_cursor(None),
             ServerMessage::Offer {
                 selection,
                 serial,
                 mimes,
-                ..
             } => self.server_offer(selection, serial, mimes),
             ServerMessage::Cleared { selection, serial } => self.server_cleared(selection, serial),
             ServerMessage::Request {
@@ -656,13 +759,13 @@ impl Viewer {
             width,
             height,
         };
-        if let Some(old) = self.buffers.insert(id, imported) {
+        if let Some(old) = self.frames.buffers.insert(id, imported) {
             old.destroy();
         }
     }
 
     fn frame(&mut self, id: u32, fence: Option<OwnedFd>) {
-        if !self.buffers.contains_key(&id) {
+        if !self.frames.buffers.contains_key(&id) {
             self.send(ViewerMessage::Release { id, fence: None });
             return;
         }
@@ -673,11 +776,11 @@ impl Viewer {
             });
         }
         let fence = fence.and_then(|fence| self.watch(id, fence));
-        self.pending = Some(Pending { id, fence });
+        self.frames.pending = Some(Pending { id, fence });
         self.show_pending();
     }
 
-    fn watch(&mut self, id: u32, fence: OwnedFd) -> Option<RegistrationToken> {
+    fn watch(&self, id: u32, fence: OwnedFd) -> Option<RegistrationToken> {
         let source = Generic::new(fence, Interest::READ, Mode::OneShot);
         let inserted = self
             .loop_handle
@@ -695,7 +798,7 @@ impl Viewer {
     }
 
     fn signalled(&mut self, id: u32) {
-        if let Some(pending) = &mut self.pending
+        if let Some(pending) = &mut self.frames.pending
             && pending.id == id
         {
             pending.fence = None;
@@ -705,7 +808,7 @@ impl Viewer {
 
     /// Drop the pending frame, returning its buffer's id.
     fn take_pending(&mut self) -> Option<u32> {
-        let pending = self.pending.take()?;
+        let pending = self.frames.pending.take()?;
         if let Some(token) = pending.fence {
             self.loop_handle.remove(token);
         }
@@ -713,10 +816,10 @@ impl Viewer {
     }
 
     fn show_pending(&mut self) {
-        let Some(Pending { id, fence: None }) = self.pending else {
+        let Some(Pending { id, fence: None }) = self.frames.pending else {
             return;
         };
-        let Some(imported) = self.buffers.get(&id) else {
+        let Some(imported) = self.frames.buffers.get(&id) else {
             return;
         };
         let Some(buffer) = &imported.buffer else {
@@ -727,8 +830,8 @@ impl Viewer {
             .damage_buffer(0, 0, imported.width as i32, imported.height as i32);
         self.frame_surface
             .frame(&self.qh, self.frame_surface.clone());
-        self.shown = Some((imported.width, imported.height));
-        self.pending = None;
+        self.frames.shown = Some((imported.width, imported.height));
+        self.frames.pending = None;
         self.place();
     }
 
@@ -743,25 +846,16 @@ impl Viewer {
     }
 
     fn fit(&self) -> Fit {
-        let physical = |logical: u32| ((logical as u64 * self.scale as u64 + 60) / 120) as u32;
+        let physical = |logical: u32| {
+            ((logical as u64 * self.scale as u64 + SCALE as u64 / 2) / SCALE as u64) as u32
+        };
         let physical = (physical(self.size.0), physical(self.size.1));
-        Fit::new(self.shown.unwrap_or(physical), self.size, physical)
+        Fit::new(self.frames.shown.unwrap_or(physical), self.size, physical)
     }
 
     fn set_cursor(&mut self, cursor: Option<Shape>) {
-        self.cursor = cursor;
-        self.apply_cursor();
-    }
-
-    fn apply_cursor(&self) {
-        let (Some(pointer), Some(serial)) = (&self.pointer, self.enter_serial) else {
-            return;
-        };
-        match (self.cursor, &self.shape_device) {
-            (None, _) => pointer.set_cursor(serial, None, 0, 0),
-            (Some(shape), Some(device)) => device.set_shape(serial, shape),
-            (Some(_), None) => {}
-        }
+        self.pointer.cursor = cursor;
+        self.pointer.apply_cursor();
     }
 
     fn send_keys(&mut self) {
@@ -775,15 +869,28 @@ impl Viewer {
         });
     }
 
-    fn set_shortcuts(&mut self, on: bool) {
-        if let Some(shortcuts) = &mut self.shortcuts {
-            shortcuts.set(on, self.window.wl_surface(), &self.seat, &self.qh);
+    fn send_repeat(&mut self) {
+        if let (true, Some((rate, delay))) = (self.welcomed, self.repeat) {
+            self.send(ViewerMessage::Repeat { rate, delay });
+        }
+    }
+
+    fn inhibit_shortcuts(&mut self, inhibit: bool) {
+        if !inhibit {
+            if let Some(inhibitor) = self.inhibitor.take() {
+                inhibitor.destroy();
+            }
+        } else if self.inhibitor.is_none()
+            && let Some(manager) = &self.inhibit_manager
+        {
+            let surface = self.window.wl_surface();
+            self.inhibitor = Some(manager.inhibit_shortcuts(surface, &self.seat, &self.qh, ()));
         }
     }
 
     fn recount_alone(&mut self) {
         if let Some(alone) = self.hyprland.as_ref().and_then(Hyprland::alone) {
-            self.set_shortcuts(alone);
+            self.inhibit_shortcuts(alone);
         }
     }
 
@@ -798,31 +905,20 @@ impl Viewer {
                 return;
             }
         };
-        let mut buffer: Vec<u8> = Vec::new();
+        let mut lines = Lines::default();
         let inserted = event_loop.handle().insert_source(
             Generic::new(stream, Interest::READ, Mode::Level),
             move |_, stream, viewer: &mut Viewer| {
-                let mut chunk = [0u8; 4096];
-                loop {
-                    match (&**stream).read(&mut chunk) {
-                        Ok(0) => return Ok(PostAction::Remove),
-                        Ok(n) => {
-                            buffer.extend_from_slice(&chunk[..n]);
-                            let mut recount = false;
-                            while let Some(end) = buffer.iter().position(|&b| b == b'\n') {
-                                let line: Vec<u8> = buffer.drain(..=end).collect();
-                                recount |= hypr::wants_recount(&String::from_utf8_lossy(&line));
-                            }
-                            if recount {
-                                viewer.recount_alone();
-                            }
-                        }
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            return Ok(PostAction::Continue);
-                        }
-                        Err(_) => return Ok(PostAction::Remove),
-                    }
+                let mut recount = false;
+                let open = lines.read(stream, |line| recount |= hypr::wants_recount(line));
+                if recount {
+                    viewer.recount_alone();
                 }
+                Ok(if open {
+                    PostAction::Continue
+                } else {
+                    PostAction::Remove
+                })
             },
         );
         if inserted.is_ok() {
@@ -838,22 +934,21 @@ impl Viewer {
                 surface_y,
                 ..
             } => {
-                self.enter_serial = Some(serial);
-                self.apply_cursor();
+                self.pointer.enter_serial = Some(serial);
+                self.pointer.apply_cursor();
                 let (x, y) = self.fit().to_frame(surface_x, surface_y);
-                let time = self.pointer_time;
+                let time = self.pointer.time;
                 self.input(ViewerMessage::Pointer { time, x, y });
             }
             wl_pointer::Event::Leave { .. } => {
-                self.enter_serial = None;
-                self.input(ViewerMessage::PointerLeft);
+                self.pointer.enter_serial = None;
             }
             wl_pointer::Event::Motion {
                 time,
                 surface_x,
                 surface_y,
             } => {
-                self.pointer_time = time;
+                self.pointer.time = time;
                 let (x, y) = self.fit().to_frame(surface_x, surface_y);
                 self.input(ViewerMessage::Pointer { time, x, y });
             }
@@ -863,7 +958,7 @@ impl Viewer {
                 button,
                 state,
             } => {
-                self.pointer_time = time;
+                self.pointer.time = time;
                 self.input_serial(serial);
                 let pressed = state == WEnum::Value(wl_pointer::ButtonState::Pressed);
                 self.input(ViewerMessage::Button {
@@ -872,70 +967,12 @@ impl Viewer {
                     pressed,
                 });
             }
-            wl_pointer::Event::Axis { time, axis, value } => {
-                if let Some(scroll) = self.axis(axis) {
-                    scroll.time = time;
-                    scroll.moved = true;
-                    scroll.value += value;
+            wl_pointer::Event::Frame => {
+                for message in self.pointer.take_scroll(self.fit().scale()) {
+                    self.input(message);
                 }
             }
-            wl_pointer::Event::AxisSource {
-                axis_source: WEnum::Value(source),
-            } => self.scroll_source = source as u32,
-            wl_pointer::Event::AxisStop { time, axis } => {
-                if let Some(scroll) = self.axis(axis) {
-                    scroll.time = time;
-                    scroll.moved = true;
-                    scroll.stop = true;
-                }
-            }
-            wl_pointer::Event::AxisDiscrete { axis, discrete } => {
-                if let Some(scroll) = self.axis(axis) {
-                    scroll.steps += discrete * 120;
-                }
-            }
-            wl_pointer::Event::AxisValue120 { axis, value120 } => {
-                if let Some(scroll) = self.axis(axis) {
-                    scroll.steps += value120;
-                }
-            }
-            wl_pointer::Event::AxisRelativeDirection { axis, direction } => {
-                if let Some(scroll) = self.axis(axis) {
-                    scroll.inverted =
-                        direction == WEnum::Value(wl_pointer::AxisRelativeDirection::Inverted);
-                }
-            }
-            wl_pointer::Event::Frame => self.send_scroll(),
-            _ => {}
-        }
-    }
-
-    fn axis(&mut self, axis: WEnum<wl_pointer::Axis>) -> Option<&mut Scroll> {
-        match axis {
-            WEnum::Value(wl_pointer::Axis::VerticalScroll) => Some(&mut self.scroll[0]),
-            WEnum::Value(wl_pointer::Axis::HorizontalScroll) => Some(&mut self.scroll[1]),
-            _ => None,
-        }
-    }
-
-    fn send_scroll(&mut self) {
-        let (x_factor, y_factor) = self.fit().scale();
-        let source = std::mem::take(&mut self.scroll_source);
-        for axis in 0..2 {
-            let scroll = std::mem::take(&mut self.scroll[axis]);
-            if !scroll.moved {
-                continue;
-            }
-            let factor = if axis == 0 { y_factor } else { x_factor };
-            self.input(ViewerMessage::Scroll {
-                time: scroll.time,
-                source,
-                axis: axis as u32,
-                amount: scroll.value * factor,
-                steps: scroll.steps,
-                stop: scroll.stop,
-                inverted: scroll.inverted,
-            });
+            event => self.pointer.scroll_event(event),
         }
     }
 
@@ -961,9 +998,18 @@ impl Viewer {
                     ..Keys::default()
                 };
             }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                self.repeat = Some((rate.max(0) as u32, delay.max(0) as u32));
+                self.send_repeat();
+            }
             wl_keyboard::Event::Modifiers { mods_locked, .. } => {
-                self.keys.locked = (mods_locked & CAPS_LOCK != 0) as u32
-                    | ((mods_locked & NUM_LOCK != 0) as u32) << 1;
+                self.keys.locked = 0;
+                if mods_locked & XKB_CAPS_LOCK != 0 {
+                    self.keys.locked |= wire::CAPS_LOCK;
+                }
+                if mods_locked & XKB_NUM_LOCK != 0 {
+                    self.keys.locked |= wire::NUM_LOCK;
+                }
                 self.send_keys();
             }
             wl_keyboard::Event::Key {
@@ -1000,7 +1046,7 @@ impl CompositorHandler for Viewer {
         factor: i32,
     ) {
         if !self.fractional {
-            self.scale = factor.max(1) as u32 * 120;
+            self.scale = factor.max(1) as u32 * SCALE;
             self.sync_size();
         }
     }
@@ -1093,16 +1139,14 @@ impl DmabufHandler for Viewer {
                 modifier: entry.modifier,
             })
             .collect();
-        let formats = Some((feedback.main_device(), formats));
-        if formats == self.formats {
+        if self.formats.as_ref() == Some(&formats) {
             return;
         }
-        self.formats = formats;
-        match (&self.sent, self.formats.clone()) {
-            (Some(_), Some((device, formats))) => {
-                self.send(ViewerMessage::Formats { device, formats })
-            }
-            _ => self.hello(),
+        self.formats = Some(formats.clone());
+        if self.sent.is_some() {
+            self.send(ViewerMessage::Formats { formats });
+        } else {
+            self.hello();
         }
     }
 
@@ -1113,42 +1157,25 @@ impl DmabufHandler for Viewer {
         params: &ZwpLinuxBufferParamsV1,
         buffer: WlBuffer,
     ) {
-        let Some((&id, imported)) = self
-            .buffers
-            .iter_mut()
-            .find(|(_, imported)| &imported.params == params)
-        else {
+        let Some(id) = self.frames.find(params) else {
             buffer.destroy();
             return;
         };
-        imported.buffer = Some(buffer);
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.id == id)
-        {
+        if let Some(imported) = self.frames.buffers.get_mut(&id) {
+            imported.buffer = Some(buffer);
+        }
+        if self.frames.is_pending(id) {
             self.show_pending();
         }
     }
 
     fn failed(&mut self, _: &Connection, _: &QueueHandle<Self>, params: &ZwpLinuxBufferParamsV1) {
-        let failed = self
-            .buffers
-            .iter()
-            .find(|(_, imported)| &imported.params == params)
-            .map(|(&id, _)| id);
-        let Some(id) = failed else {
+        let Some(id) = self.frames.find(params) else {
             return;
         };
-        if let Some(imported) = self.buffers.remove(&id) {
-            imported.destroy();
-        }
+        self.frames.forget(id);
         self.send(ViewerMessage::BufferFailed { id });
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.id == id)
-        {
+        if self.frames.is_pending(id) {
             self.take_pending();
             self.send(ViewerMessage::Ready);
         }
@@ -1156,6 +1183,7 @@ impl DmabufHandler for Viewer {
 
     fn released(&mut self, _: &Connection, _: &QueueHandle<Self>, buffer: &WlBuffer) {
         let released = self
+            .frames
             .buffers
             .iter()
             .find(|(_, imported)| imported.buffer.as_ref() == Some(buffer))
@@ -1202,19 +1230,7 @@ impl Dispatch<WlSeat, ()> for Viewer {
             return;
         };
         let has_pointer = capabilities.contains(wl_seat::Capability::Pointer);
-        if has_pointer && viewer.pointer.is_none() {
-            let pointer = seat.get_pointer(qh, ());
-            viewer.shape_device = viewer
-                .cursor_shape
-                .as_ref()
-                .map(|manager| manager.get_pointer(&pointer, qh, ()));
-            viewer.pointer = Some(pointer);
-        } else if !has_pointer && let Some(pointer) = viewer.pointer.take() {
-            if let Some(device) = viewer.shape_device.take() {
-                device.destroy();
-            }
-            pointer.release();
-        }
+        viewer.pointer.seat_has_pointer(has_pointer, seat, qh);
         let has_keyboard = capabilities.contains(wl_seat::Capability::Keyboard);
         if has_keyboard && viewer.keyboard.is_none() {
             viewer.keyboard = Some(seat.get_keyboard(qh, ()));
@@ -1287,8 +1303,6 @@ macro_rules! no_events {
 no_events!(
     WlBuffer,
     WlRegion,
-    WlShm,
-    WlShmPool,
     WpSinglePixelBufferManagerV1,
     WpViewporter,
     WpViewport,
@@ -1342,5 +1356,84 @@ mod tests {
         assert_eq!((fit.x, fit.y, fit.width, fit.height), (300, 0, 200, 400));
         assert_eq!(fit.to_frame(300.0, 400.0), (0.0, 1000.0));
         assert_eq!(fit.scale(), (2.5, 2.5));
+    }
+
+    #[test]
+    fn a_pointer_frame_sends_one_scroll_per_moved_axis_in_frame_pixels() {
+        let mut pointer = Pointer::new(None);
+        let vertical = WEnum::Value(wl_pointer::Axis::VerticalScroll);
+        pointer.scroll_event(wl_pointer::Event::AxisSource {
+            axis_source: WEnum::Value(wl_pointer::AxisSource::Finger),
+        });
+        pointer.scroll_event(wl_pointer::Event::Axis {
+            time: 7,
+            axis: vertical,
+            value: 10.0,
+        });
+        pointer.scroll_event(wl_pointer::Event::Axis {
+            time: 8,
+            axis: vertical,
+            value: 5.0,
+        });
+        pointer.scroll_event(wl_pointer::Event::AxisDiscrete {
+            axis: vertical,
+            discrete: 1,
+        });
+        pointer.scroll_event(wl_pointer::Event::AxisValue120 {
+            axis: vertical,
+            value120: 60,
+        });
+        let messages = pointer.take_scroll((2.0, 1.5));
+        let [
+            ViewerMessage::Scroll(wire::Scroll {
+                time,
+                source,
+                axis,
+                amount,
+                steps,
+                stop,
+                inverted,
+            }),
+        ] = messages.as_slice()
+        else {
+            panic!("{messages:?}");
+        };
+        assert_eq!(
+            (*time, *source, *axis, *amount, *steps, *stop, *inverted),
+            (8, 1, 0, 22.5, 180, false, false)
+        );
+        assert!(pointer.take_scroll((2.0, 1.5)).is_empty());
+    }
+
+    #[test]
+    fn a_horizontal_stop_is_sent_with_no_distance_and_keeps_its_inverted_direction() {
+        let mut pointer = Pointer::new(None);
+        let horizontal = WEnum::Value(wl_pointer::Axis::HorizontalScroll);
+        pointer.scroll_event(wl_pointer::Event::AxisRelativeDirection {
+            axis: horizontal,
+            direction: WEnum::Value(wl_pointer::AxisRelativeDirection::Inverted),
+        });
+        pointer.scroll_event(wl_pointer::Event::AxisStop {
+            time: 3,
+            axis: horizontal,
+        });
+        let messages = pointer.take_scroll((2.0, 1.5));
+        let [
+            ViewerMessage::Scroll(wire::Scroll {
+                time,
+                axis,
+                amount,
+                stop,
+                inverted,
+                ..
+            }),
+        ] = messages.as_slice()
+        else {
+            panic!("{messages:?}");
+        };
+        assert_eq!(
+            (*time, *axis, *amount, *stop, *inverted),
+            (3, 1, 0.0, true, true)
+        );
     }
 }

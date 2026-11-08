@@ -4,15 +4,12 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::panes::{Axis, CellRect, Kind, Layout, Node, Pane};
-use crate::workspace::Workspace;
+use crate::files;
+use crate::server::panes::{Axis, CellRect, Layout, Node, Pane};
+use crate::server::proc;
+use crate::server::workspace::Workspace;
 
 const VERSION: u32 = 2;
-
-#[derive(Deserialize)]
-struct Version {
-    version: u32,
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct File {
@@ -25,13 +22,13 @@ pub struct File {
 /// One workspace as the file holds it.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Saved {
-    pub name: String,
-    pub cwd: PathBuf,
-    pub active_tab: usize,
+    name: String,
+    cwd: PathBuf,
+    active_tab: usize,
 
     /// The name of the scratch pane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scratch: Option<String>,
+    scratch: Option<String>,
     #[serde(rename = "tab")]
     tabs: Vec<SavedTab>,
 }
@@ -101,28 +98,18 @@ struct SavedPane {
 }
 
 pub fn path() -> Option<PathBuf> {
-    let state = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-        })?;
-    Some(state.join("decade").join("workspaces.toml"))
+    let state = files::xdg_home("XDG_STATE_HOME", ".local/state")?;
+    Some(state.join(files::DIR).join("workspaces.toml"))
 }
 
 /// The saved file, or `None` when there is none.
 pub fn load(path: &Path) -> Result<Option<File>, String> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    read(&text).map(Some)
+    files::read(path)?.map(|text| read(&text)).transpose()
 }
 
 fn read(text: &str) -> Result<File, String> {
     let error = |error: toml::de::Error| error.to_string();
-    let version: Version = toml::from_str(text).map_err(error)?;
-    match version.version {
+    match files::version(text)? {
         1 => {
             let old: FileV1 = toml::from_str(text).map_err(error)?;
             let workspaces = old
@@ -148,18 +135,17 @@ fn read(text: &str) -> Result<File, String> {
 }
 
 pub fn save(path: &Path, workspaces: &[Workspace], sidebar_open: bool) -> io::Result<()> {
-    let file = File {
+    let text =
+        to_text(workspaces.iter().map(saved).collect(), sidebar_open).map_err(io::Error::other)?;
+    files::write(path, &text)
+}
+
+fn to_text(workspaces: Vec<Saved>, sidebar_open: bool) -> Result<String, toml::ser::Error> {
+    toml::to_string(&File {
         version: VERSION,
         sidebar_open,
-        workspaces: workspaces.iter().map(saved).collect(),
-    };
-    let text = toml::to_string(&file).map_err(io::Error::other)?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let partial = path.with_extension("toml.partial");
-    std::fs::write(&partial, text)?;
-    std::fs::rename(&partial, path)
+        workspaces,
+    })
 }
 
 fn saved(workspace: &Workspace) -> Saved {
@@ -191,10 +177,6 @@ fn saved_tab(layout: &Layout) -> SavedTab {
                 .cwd
                 .as_ref()
                 .map(|cwd| pane.pid.and_then(shell_cwd).unwrap_or_else(|| cwd.clone()));
-            let (pinned, app_id) = match &pane.kind {
-                Kind::Anchor { app_id } => (true, app_id.clone()),
-                Kind::Transient => (false, pane.app_id.clone().unwrap_or_default()),
-            };
             let mut tabs: Vec<PathBuf> = pane
                 .clients
                 .iter()
@@ -209,8 +191,11 @@ fn saved_tab(layout: &Layout) -> SavedTab {
             }
             SavedPane {
                 name: pane.name.clone(),
-                pinned,
-                app_id: (cwd.is_none() && !app_id.is_empty()).then_some(app_id),
+                pinned: pane.pinned,
+                app_id: pane
+                    .app_id
+                    .clone()
+                    .filter(|app_id| cwd.is_none() && !app_id.is_empty()),
                 cwd,
                 tabs,
             }
@@ -246,24 +231,52 @@ fn saved_node(node: &Node, name_of: &impl Fn(usize) -> String) -> SavedNode {
 
 /// The cwd of the shell running under a ghostty.
 fn shell_cwd(ghostty: u32) -> Option<PathBuf> {
-    let tasks = std::fs::read_dir(format!("/proc/{ghostty}/task")).ok()?;
-    let shell = tasks
-        .flatten()
-        .filter_map(|task| std::fs::read_to_string(task.path().join("children")).ok())
-        .flat_map(|children| {
-            children
-                .split_whitespace()
-                .filter_map(|pid| pid.parse::<u32>().ok())
-                .collect::<Vec<_>>()
-        })
-        .next()?;
-    std::fs::read_link(format!("/proc/{shell}/cwd")).ok()
+    proc::first_child(ghostty).and_then(proc::cwd)
+}
+
+/// A terminal tab to start in a restored pane.
+#[derive(Debug, PartialEq)]
+pub struct TerminalTab {
+    pub tab: usize,
+    pub pane: usize,
+    pub cwd: PathBuf,
 }
 
 impl Saved {
-    /// Rebuild the layout of each tab, with each pinned terminal waiting for
-    /// the app id that starts with `prefix`.
-    pub fn layouts(&self, area: CellRect, prefix: &str) -> Result<Vec<Layout>, String> {
+    /// Rebuild the workspace with the id `id`, and list the terminal tabs
+    /// to start in its panes.
+    pub fn workspace(
+        &self,
+        id: u32,
+        area: CellRect,
+    ) -> Result<(Workspace, Vec<TerminalTab>), String> {
+        let layouts = self.layouts(area)?;
+        let mut restored = Workspace::with_tabs(
+            id,
+            self.name.clone(),
+            self.cwd.clone(),
+            layouts,
+            self.active_tab,
+        );
+        if let Some(name) = &self.scratch
+            && restored.by_name(name).is_some()
+        {
+            restored.toggle_scratch(name);
+        }
+        let mut tabs = Vec::new();
+        for (tab, saved) in self.tabs.iter().enumerate() {
+            for (pane, saved) in saved.panes.iter().enumerate() {
+                for cwd in &saved.tabs {
+                    let cwd = cwd.clone();
+                    tabs.push(TerminalTab { tab, pane, cwd });
+                }
+            }
+        }
+        Ok((restored, tabs))
+    }
+
+    /// Rebuild the layout of each tab.
+    fn layouts(&self, area: CellRect) -> Result<Vec<Layout>, String> {
         if self.tabs.is_empty() {
             return Err(format!("workspace {} has no tab", self.name));
         }
@@ -278,13 +291,13 @@ impl Saved {
         }
         self.tabs
             .iter()
-            .map(|tab| tab.layout(area, prefix, &self.name))
+            .map(|tab| tab.layout(area, &self.name))
             .collect()
     }
 }
 
 impl SavedTab {
-    fn layout(&self, area: CellRect, prefix: &str, workspace: &str) -> Result<Layout, String> {
+    fn layout(&self, area: CellRect, workspace: &str) -> Result<Layout, String> {
         let ids: HashMap<&str, usize> = self
             .panes
             .iter()
@@ -306,19 +319,14 @@ impl SavedTab {
             .iter()
             .enumerate()
             .map(|(id, saved)| {
-                let kind = match (&saved.cwd, &saved.app_id, saved.pinned) {
-                    (Some(_), _, true) => Kind::Anchor {
-                        app_id: format!("{prefix}{}", saved.name),
-                    },
-                    (None, Some(app_id), true) => Kind::Anchor {
-                        app_id: app_id.clone(),
-                    },
-                    _ => Kind::Transient,
-                };
-                let mut pane = Pane::new(id, saved.name.clone(), kind);
+                let mut pane = Pane::new(id, saved.name.clone());
+
+                // a pinned terminal waits for its ghostty by name, and a
+                // pinned pane with neither a cwd nor an app id has
+                // nothing to wait for
+                pane.pinned = saved.pinned && (saved.cwd.is_some() || saved.app_id.is_some());
                 pane.cwd = saved.cwd.clone();
                 pane.app_id = saved.app_id.clone();
-                pane.saved_tabs = saved.tabs.clone();
                 pane
             })
             .collect();
@@ -366,7 +374,7 @@ mod tests {
         let mut workspace = Workspace::new(
             2,
             PathBuf::from("/home/jack/projects/decade"),
-            crate::panes::tests::AREA,
+            crate::server::panes::tests::AREA,
         );
         let layout = workspace.layout_mut();
         let code = layout.add_transient("code".to_string());
@@ -379,7 +387,7 @@ mod tests {
 
     fn first_layout(saved: &Saved) -> Layout {
         saved
-            .layouts(crate::panes::tests::AREA, "decade.w0.")
+            .layouts(crate::server::panes::tests::AREA)
             .unwrap()
             .remove(0)
     }
@@ -387,12 +395,7 @@ mod tests {
     #[test]
     fn a_saved_workspace_reads_back_with_the_same_tree_and_panes() {
         let workspace = workspace();
-        let text = toml::to_string(&File {
-            version: VERSION,
-            sidebar_open: true,
-            workspaces: vec![saved(&workspace)],
-        })
-        .unwrap();
+        let text = to_text(vec![saved(&workspace)], true).unwrap();
         let file = read(&text).unwrap();
         let back = &file.workspaces[0];
         assert_eq!(back, &saved(&workspace));
@@ -419,13 +422,17 @@ mod tests {
             .layout_mut()
             .pin(0, "decade.w2.terminal".to_string());
         let layout = first_layout(&saved(&workspace));
-        let app_id = |id: usize| match &layout.pane(id).unwrap().kind {
-            Kind::Anchor { app_id } => Some(app_id.clone()),
-            Kind::Transient => None,
-        };
-        assert_eq!(app_id(0).as_deref(), Some("decade.w0.terminal"));
-        assert_eq!(app_id(2).as_deref(), Some("org.gnome.Nautilus"));
-        assert_eq!(app_id(1), None);
+        let pinned: Vec<bool> = layout.panes.iter().map(|pane| pane.pinned).collect();
+        assert_eq!(pinned, [true, false, true]);
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal"), "decade.w0."),
+            Some((0, false))
+        );
+        assert_eq!(
+            layout.place(Some("org.gnome.Nautilus"), "decade.w0."),
+            Some((2, false))
+        );
+        assert_eq!(layout.place(Some("decade.w2.terminal"), "decade.w0."), None);
     }
 
     #[test]
@@ -445,35 +452,24 @@ mod tests {
     fn a_tree_naming_a_missing_pane_is_refused() {
         let mut saved = saved(&workspace());
         saved.tabs[0].panes.pop();
-        assert!(
-            saved
-                .layouts(crate::panes::tests::AREA, "decade.w0.")
-                .is_err()
-        );
+        assert!(saved.layouts(crate::server::panes::tests::AREA).is_err());
     }
 
     #[test]
     fn two_tabs_read_back_with_their_trees_and_the_active_tab() {
         let mut workspace = workspace();
-        let (second, _) = workspace.add_tab(crate::panes::tests::AREA);
+        let (second, _) = workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.tabs[second]
             .layout
             .add_transient("logs".to_string());
         workspace.active_tab = second;
-        let text = toml::to_string(&File {
-            version: VERSION,
-            sidebar_open: false,
-            workspaces: vec![saved(&workspace)],
-        })
-        .unwrap();
+        let text = to_text(vec![saved(&workspace)], false).unwrap();
         let file = read(&text).unwrap();
         assert!(!file.sidebar_open);
         let back = &file.workspaces[0];
         assert_eq!(back, &saved(&workspace));
         assert_eq!(back.active_tab, 1);
-        let layouts = back
-            .layouts(crate::panes::tests::AREA, "decade.w0.")
-            .unwrap();
+        let layouts = back.layouts(crate::server::panes::tests::AREA).unwrap();
         let names: Vec<Vec<&str>> = layouts
             .iter()
             .map(|layout| layout.panes.iter().map(|pane| pane.name.as_str()).collect())
@@ -492,12 +488,7 @@ mod tests {
     fn the_scratch_pane_reads_back_by_name() {
         let mut workspace = workspace();
         workspace.toggle_scratch("nautilus");
-        let text = toml::to_string(&File {
-            version: VERSION,
-            sidebar_open: true,
-            workspaces: vec![saved(&workspace), saved(&self::workspace())],
-        })
-        .unwrap();
+        let text = to_text(vec![saved(&workspace), saved(&self::workspace())], true).unwrap();
         let file = read(&text).unwrap();
         assert_eq!(file.workspaces[0].scratch.as_deref(), Some("nautilus"));
         assert_eq!(file.workspaces[1].scratch, None);
@@ -535,9 +526,7 @@ cwd = "/tmp"
         assert!(file.sidebar_open);
         let back = &file.workspaces[0];
         assert_eq!(back.active_tab, 0);
-        let layouts = back
-            .layouts(crate::panes::tests::AREA, "decade.w0.")
-            .unwrap();
+        let layouts = back.layouts(crate::server::panes::tests::AREA).unwrap();
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].panes.len(), 2);
         assert_eq!(layouts[0].pane(layouts[0].focused).unwrap().name, "code");
@@ -546,33 +535,13 @@ cwd = "/tmp"
     #[test]
     fn a_pane_name_repeated_in_another_tab_is_refused() {
         let mut workspace = workspace();
-        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.tabs[1].layout.panes[0].name = "code".to_string();
         assert!(
             saved(&workspace)
-                .layouts(crate::panes::tests::AREA, "decade.w0.")
+                .layouts(crate::server::panes::tests::AREA)
                 .is_err()
         );
-    }
-
-    #[test]
-    fn the_shell_cwd_is_read_from_the_first_child_of_the_process() {
-        let mut parent = std::process::Command::new("sh")
-            .args(["-c", "(cd / && sleep 5); true"])
-            .current_dir(std::env::temp_dir())
-            .spawn()
-            .unwrap();
-        let mut cwd = None;
-        for _ in 0..100 {
-            cwd = shell_cwd(parent.id());
-            if cwd.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        let _ = parent.kill();
-        let _ = parent.wait();
-        assert_eq!(cwd.as_deref(), Some(Path::new("/")));
     }
 
     #[test]
@@ -586,20 +555,24 @@ cwd = "/tmp"
     }
 
     #[test]
-    fn the_directories_of_a_panes_terminal_tabs_read_back_onto_the_pane() {
+    fn the_directories_of_a_panes_terminal_tabs_read_back_with_the_pane() {
         let mut saved = saved(&workspace());
         let tabs = vec![PathBuf::from("/tmp"), PathBuf::from("/home/jack")];
         saved.tabs[0].panes[1].tabs = tabs.clone();
-        let text = toml::to_string(&File {
-            version: VERSION,
-            sidebar_open: true,
-            workspaces: vec![saved],
-        })
-        .unwrap();
+        let text = to_text(vec![saved], true).unwrap();
         let back = &read(&text).unwrap().workspaces[0];
-        let layout = first_layout(back);
-        assert_eq!(layout.pane(1).unwrap().saved_tabs, tabs);
-        assert!(layout.pane(0).unwrap().saved_tabs.is_empty());
+        let (_, restored) = back
+            .workspace(0, crate::server::panes::tests::AREA)
+            .unwrap();
+        let expected: Vec<TerminalTab> = tabs
+            .into_iter()
+            .map(|cwd| TerminalTab {
+                tab: 0,
+                pane: 1,
+                cwd,
+            })
+            .collect();
+        assert_eq!(restored, expected);
         assert!(!text.contains("tabs = []"));
     }
 }

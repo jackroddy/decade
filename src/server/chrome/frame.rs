@@ -1,13 +1,14 @@
 use std::cmp::Reverse;
 
-use crate::draw::Scene;
-use crate::palette;
-use crate::panes::CellRect;
-use crate::text::Rgba;
+use crate::server::chrome::draw::Scene;
+use crate::server::chrome::palette;
+use crate::server::chrome::palette::Rgba;
+use crate::server::chrome::text::fit;
+use crate::server::panes::CellRect;
 use decade_channel::AgentState;
 
 /// The rows above the panes that the top bar takes.
-pub const TOP: u32 = 1;
+const TOP: u32 = 1;
 const OPEN_WIDTH: u32 = 24;
 const CLOSED_WIDTH: u32 = 3;
 const DIAMOND: char = '◆';
@@ -21,7 +22,7 @@ const TEXT: Rgba = palette::FOREGROUND;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 const MUTED: Rgba = palette::MUTED;
 
-pub fn sidebar_width(open: bool) -> u32 {
+fn sidebar_width(open: bool) -> u32 {
     if open { OPEN_WIDTH } else { CLOSED_WIDTH }
 }
 
@@ -83,15 +84,6 @@ fn mark(state: Option<AgentState>) -> (char, Rgba) {
         Some(AgentState::Idle) => ('○', DIM),
         None => ('·', MUTED),
     }
-}
-
-/// `text` cut to `max` characters, with an ellipsis where it was cut.
-pub fn fit(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    let kept: String = text.chars().take(max.saturating_sub(1)).collect();
-    format!("{kept}…")
 }
 
 impl Frame {
@@ -450,11 +442,5 @@ mod tests {
     #[test]
     fn the_next_workspace_needing_the_person_skips_the_current_one() {
         assert_eq!(frame(true).next_needing(), Some(2));
-    }
-
-    #[test]
-    fn long_names_are_cut_with_an_ellipsis() {
-        assert_eq!(fit("website-redesign", 8), "website…");
-        assert_eq!(fit("nail", 8), "nail");
     }
 }
