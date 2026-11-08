@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -778,16 +778,6 @@ impl Decoder {
         Self::default()
     }
 
-    pub fn push_bytes(&mut self, data: &[u8]) {
-        self.make_room(data.len());
-        self.bytes[self.end..self.end + data.len()].copy_from_slice(data);
-        self.end += data.len();
-    }
-
-    pub fn push_fd(&mut self, fd: OwnedFd) {
-        self.fds.push_back(fd);
-    }
-
     /// Read once from the socket without blocking, and return false when the peer has closed it.
     pub fn receive(&mut self, stream: &UnixStream) -> Result<bool, Error> {
         self.make_room(RECEIVE_CHUNK);
@@ -1199,6 +1189,18 @@ mod tests {
 
     fn fd() -> OwnedFd {
         pipe().1
+    }
+
+    impl Decoder {
+        fn push_bytes(&mut self, data: &[u8]) {
+            self.make_room(data.len());
+            self.bytes[self.end..self.end + data.len()].copy_from_slice(data);
+            self.end += data.len();
+        }
+
+        fn push_fd(&mut self, fd: OwnedFd) {
+            self.fds.push_back(fd);
+        }
     }
 
     fn viewer_messages() -> Vec<ViewerMessage> {

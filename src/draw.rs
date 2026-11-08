@@ -6,8 +6,9 @@ use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
 use smithay::utils::{Physical, Point, Size};
 use swash::scale::ScaleContext;
 
+use crate::palette::Rgba;
 use crate::panes::CellRect;
-use crate::text::{Font, Rgba, raster_icon, raster_run};
+use crate::text::{Font, raster_icon, raster_run};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Face {

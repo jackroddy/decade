@@ -6,7 +6,7 @@ use smithay::wayland::shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData};
 use crate::draw::{Face, Scene};
 use crate::frame::fit;
 use crate::palette;
-use crate::text::Rgba;
+use crate::palette::Rgba;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;

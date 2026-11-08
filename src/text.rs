@@ -1,6 +1,8 @@
 use swash::scale::{Render, ScaleContext, Source};
 use swash::{CacheKey, FontRef};
 
+use crate::palette::Rgba;
+
 pub const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 
 pub struct Font {
@@ -55,8 +57,6 @@ impl Font {
         }
     }
 }
-
-pub type Rgba = [f32; 4];
 
 pub struct Run {
     pub pixels: Vec<u8>,

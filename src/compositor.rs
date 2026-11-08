@@ -93,6 +93,7 @@ use crate::gpu::Gpu;
 use crate::hypr::Hyprland;
 use crate::mcp;
 use crate::menu::{Action, Menu, MenuKey, Outcome};
+use crate::palette::Rgba;
 use crate::palette::{self, ACCENT};
 use crate::panel::{Panel, PanelOutcome};
 use crate::panes::{
@@ -103,7 +104,7 @@ use crate::picker::{self, Grid, Picker};
 use crate::save;
 use crate::scratch::{self, Launch};
 use crate::settings::{self, Settings};
-use crate::text::{Font, Rgba};
+use crate::text::Font;
 use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
 use crate::workspace::{self, Workspace};
 use decade_channel::AgentState;
