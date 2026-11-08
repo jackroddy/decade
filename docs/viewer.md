@@ -255,16 +255,18 @@ Two selections cross between server and viewer.
 | 0 | the clipboard |
 | 1 | the primary selection |
 
-Either side can own a selection. The same messages run in both directions.
-A side offers a selection when one of its own clients, or its host, sets it.
+Either side can own a selection. The same messages run in both directions,
+except that only the viewer's `offer` carries `seen`. A side offers a
+selection when one of its own clients, or its host, sets it.
 
 `offer(selection: u32, serial: u32, seen: u32, count: u32, then for each:
-mime: string)`
+mime: string)` from the viewer, and `offer(selection: u32, serial: u32,
+count: u32, then for each: mime: string)` from the server
 : The sender owns `selection`, with data available in these MIME types.
   `serial` names this offer. Each side numbers its own offers, increasing,
   and a newer offer from a side replaces its older one. `seen` is the
-  serial of the newest offer for this selection that the sender had
-  received from the other side, or 0.
+  serial of the newest offer or clear for this selection that the viewer
+  had received from the server, or 0.
 : The receiver presents the offer to its own clients, or to its host, as
   their selection.
 

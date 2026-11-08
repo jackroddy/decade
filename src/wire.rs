@@ -164,7 +164,6 @@ pub enum ServerMessage {
     Offer {
         selection: u32,
         serial: u32,
-        seen: u32,
         mimes: Vec<String>,
     },
     Cleared {
@@ -367,7 +366,10 @@ impl ViewerMessage {
                 seen,
                 mimes,
             } => {
-                w.offer(selection, serial, seen, &mimes);
+                w.u32(selection);
+                w.u32(serial);
+                w.u32(seen);
+                w.strings(&mimes);
                 13
             }
             ViewerMessage::Cleared { selection, serial } => {
@@ -458,10 +460,11 @@ impl ServerMessage {
             ServerMessage::Offer {
                 selection,
                 serial,
-                seen,
                 mimes,
             } => {
-                w.offer(selection, serial, seen, &mimes);
+                w.u32(selection);
+                w.u32(serial);
+                w.strings(&mimes);
                 8
             }
             ServerMessage::Cleared { selection, serial } => {
@@ -575,13 +578,10 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn offer(&mut self, selection: u32, serial: u32, seen: u32, mimes: &[String]) {
-        self.u32(selection);
-        self.u32(serial);
-        self.u32(seen);
-        self.count(mimes.len());
-        for mime in mimes {
-            self.string(mime);
+    fn strings(&mut self, strings: &[String]) {
+        self.count(strings.len());
+        for s in strings {
+            self.string(s);
         }
     }
 
@@ -923,7 +923,6 @@ impl Decoder {
             8 => ServerMessage::Offer {
                 selection: a.u32()?,
                 serial: a.u32()?,
-                seen: a.u32()?,
                 mimes: a.strings()?,
             },
             9 => ServerMessage::Cleared {
@@ -1218,7 +1217,6 @@ mod tests {
             ServerMessage::Offer {
                 selection: 1,
                 serial: 8,
-                seen: 0,
                 mimes: vec!["image/png".into()],
             },
             ServerMessage::Cleared {

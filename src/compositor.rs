@@ -271,9 +271,6 @@ struct Viewer {
     buttons: Vec<u32>,
     workspace: u32,
 
-    /// Per selection, the serial of this viewer's newest offer or clear.
-    seen: [u32; 2],
-
     /// Whether the viewer's window has keyboard focus on its host.
     focused: bool,
 }
@@ -771,7 +768,6 @@ impl State {
                 keys: Vec::new(),
                 buttons: Vec::new(),
                 workspace: self.workspaces[0].id,
-                seen: [0; 2],
                 focused: false,
             },
         );
@@ -1386,10 +1382,7 @@ impl State {
                 seen,
                 mimes,
             } => self.viewer_offer(id, selection, serial, seen, mimes),
-            ViewerMessage::Cleared { selection, serial } => {
-                if let Some(viewer) = self.viewers.get_mut(&id) {
-                    viewer.seen[selection as usize] = serial;
-                }
+            ViewerMessage::Cleared { selection, .. } => {
                 if self.viewer_owns(selection, id) {
                     self.clear_selection(selection);
                 }
@@ -1442,9 +1435,6 @@ impl State {
         seen: u32,
         mimes: Vec<String>,
     ) {
-        if let Some(viewer) = self.viewers.get_mut(&id) {
-            viewer.seen[selection as usize] = serial;
-        }
         let offered = &mut self.offered[selection as usize];
         if crossed(seen, offered.serial) {
             return;
@@ -1486,16 +1476,12 @@ impl State {
     }
 
     fn tell_selection(&mut self, id: usize, selection: u32) {
-        let Some(viewer) = self.viewers.get(&id) else {
-            return;
-        };
         let offered = &self.offered[selection as usize];
         let serial = offered.serial;
         let message = match &offered.mimes {
             Some(mimes) => ServerMessage::Offer {
                 selection,
                 serial,
-                seen: viewer.seen[selection as usize],
                 mimes: mimes.clone(),
             },
             None => ServerMessage::Cleared { selection, serial },

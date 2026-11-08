@@ -599,7 +599,6 @@ impl Viewer {
                 selection,
                 serial,
                 mimes,
-                ..
             } => self.server_offer(selection, serial, mimes),
             ServerMessage::Cleared { selection, serial } => self.server_cleared(selection, serial),
             ServerMessage::Request {
