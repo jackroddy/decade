@@ -1,0 +1,30 @@
+{
+  "id": "decade-71f6dd",
+  "title": "allow(dead_code) in wire.rs and palette.rs hides dead code from Linux builds",
+  "body": "`wire.rs` opens with `#![allow(dead_code)]` because it is the one module compiled off Linux, where nothing uses it. The allow also applies on Linux, so `CursorImage`, `Cursor`, `ViewerMessage::Show`, and the test-only `pub fn push_bytes` and `push_fd` draw no warning. `palette.rs` has the same allow over six constants with no use: `DARKER_BACKGROUND`, `DARK_FOREGROUND`, `ORANGE`, `BLUE`, `MAGENTA` and `BROWN`; `DARK_FOREGROUND` equals `MUTED` and `ORANGE` equals `ACCENT`. `Rgba` is defined in `text.rs` and is the colour type of `palette`, `frame` and `panes`.\n\nThe non-Linux `main` prints \"not built yet\" and exits. For it, `main.rs` carries 22 per-module `cfg` lines and `Cargo.toml` a target-split dependency table.\n\n## Proposal\n\n`#![cfg_attr(not(target_os = \"linux\"), allow(dead_code))]` in `wire.rs`. Delete the six constants and the allow in `palette.rs`, and move `Rgba` there. Whether the macOS placeholder from commit 2cae090 stays until a remote viewer exists is Jack's call; dropping it removes the cfg lines and the split table.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:40:26.047282002Z",
+  "updated_at": "2026-11-08T07:40:26.047282002Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
