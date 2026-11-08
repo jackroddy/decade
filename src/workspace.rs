@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use smithay::reexports::calloop::RegistrationToken;
 
-use crate::channel::{AGENT, Router};
+use crate::channel::{AGENT, Out, Router};
 use crate::panes::{CellRect, Layout, Pane};
 use crate::scratch::Scratch;
 use decade_channel::AgentState;
@@ -18,9 +17,6 @@ pub struct Workspace {
 
     /// The event source accepting connections on this workspace's socket.
     pub listener: Option<RegistrationToken>,
-
-    /// The agent state each pane last reported, by pane name.
-    pub agents: HashMap<String, Agent>,
     pub scratch: Option<Scratch>,
 }
 
@@ -30,14 +26,6 @@ pub struct Tab {
 
     /// Whether the tab goes once its last client has.
     pub closing: bool,
-}
-
-pub struct Agent {
-    pub state: AgentState,
-    pub message: Option<String>,
-
-    /// The socket client that reported it.
-    pub client: usize,
 }
 
 /// The app id prefix of a terminal started for one of the workspace's panes.
@@ -86,14 +74,8 @@ impl Workspace {
                 closing: false,
             })
             .collect();
-        let names = tabs
-            .iter()
-            .flat_map(|tab| &tab.layout.panes)
-            .map(|pane| pane.name.clone())
-            .collect();
-        let mut router = Router::new(names);
-        router.connected(AGENT);
-        router.handle(AGENT, r#"{"hello":{"name":"agent"}}"#);
+        let mut router = Router::default();
+        router.handle(AGENT, r#"{"hello":{"name":"agent"}}"#, &[]);
         Workspace {
             id,
             name,
@@ -102,9 +84,17 @@ impl Workspace {
             tabs,
             router,
             listener: None,
-            agents: HashMap::new(),
             scratch: None,
         }
+    }
+
+    /// Answer one line from socket client `id`.
+    pub fn channel_line(&mut self, id: usize, line: &str) -> Vec<Out> {
+        let panes: Vec<&str> = (self.tabs.iter())
+            .flat_map(|tab| &tab.layout.panes)
+            .map(|pane| pane.name.as_str())
+            .collect();
+        self.router.handle(id, line, &panes)
     }
 
     /// The layout of the active tab.
@@ -150,7 +140,6 @@ impl Workspace {
         if let Some(pane) = layout.pane_mut(id) {
             pane.cwd = cwd;
         }
-        self.router.add_pane(name);
         id
     }
 
@@ -164,7 +153,6 @@ impl Workspace {
             layout,
             closing: false,
         });
-        self.router.add_pane(name.clone());
         (self.tabs.len() - 1, name)
     }
 
@@ -195,11 +183,10 @@ impl Workspace {
         was_active
     }
 
-    /// Drop what the workspace keeps about a pane that has gone: its router
-    /// entry, its agent state and its scratch mark.
+    /// Drop what the workspace keeps about a pane that has gone: its
+    /// client's claim, its agent state and its scratch mark.
     pub fn forget_pane(&mut self, name: &str) {
-        self.router.remove_pane(name);
-        self.agents.remove(name);
+        self.router.release(name);
         if self.scratch_pane() == Some(name) {
             self.scratch = None;
         }
@@ -218,7 +205,7 @@ impl Workspace {
     /// The most urgent state of the workspace's agents, or `None` when no
     /// agent has reported.
     pub fn agent_state(&self) -> Option<AgentState> {
-        self.agents.values().map(|agent| agent.state).max()
+        self.router.statuses().map(|status| status.state).max()
     }
 
     /// The name of the scratch pane, if the workspace has one.
@@ -292,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn an_added_pane_takes_a_free_name_and_the_router_knows_it() {
+    fn an_added_pane_takes_a_free_name() {
         let mut workspace =
             Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
         workspace.add_tab(crate::panes::tests::AREA);
@@ -301,7 +288,6 @@ mod tests {
         assert_eq!(pane.name, "terminal3");
         assert_eq!(pane.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
         assert_eq!(workspace.tabs[0].layout.focused, id);
-        assert!(workspace.router.panes.contains(&pane.name));
     }
 
     #[test]
@@ -365,5 +351,18 @@ mod tests {
         assert_eq!(workspace.scratch_pane(), Some("terminal2"));
         workspace.toggle_scratch("terminal2");
         assert_eq!(workspace.scratch_pane(), None);
+    }
+
+    #[test]
+    fn a_pane_that_goes_takes_its_clients_claim_and_agent_state_with_it() {
+        let mut workspace =
+            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.channel_line(1, r#"{"hello": {"name": "coax", "pane": "terminal2"}}"#);
+        workspace.channel_line(1, r#"{"status": {"state": "working"}}"#);
+        assert_eq!(workspace.agent_state(), Some(AgentState::Working));
+        workspace.remove_tab(1);
+        assert_eq!(workspace.agent_state(), None);
+        assert!(workspace.router.occupant("terminal2").is_none());
     }
 }

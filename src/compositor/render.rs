@@ -186,12 +186,15 @@ impl State {
     pub(super) fn frame(&self, shown: usize) -> frame::Frame {
         let entries = (self.workspaces.iter().enumerate())
             .map(|(i, workspace)| {
-                let urgent = workspace.agents.values().max_by_key(|agent| agent.state);
+                let urgent = workspace
+                    .router
+                    .statuses()
+                    .max_by_key(|status| status.state);
                 frame::Entry {
                     id: workspace.id,
                     name: workspace.name.clone(),
                     state: workspace.agent_state(),
-                    message: urgent.and_then(|agent| agent.message.clone()),
+                    message: urgent.and_then(|status| status.message.clone()),
                     current: i == shown,
                 }
             })

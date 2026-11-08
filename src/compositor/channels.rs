@@ -7,10 +7,10 @@ use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{Interest, Mode as CalloopMode, PostAction};
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
-use crate::channel::{AGENT, Host, Out};
+use crate::channel::{AGENT, Out};
 use crate::lines::Lines;
+use crate::mcp;
 use crate::scratch::{self, Launch};
-use crate::{mcp, workspace};
 
 use super::State;
 
@@ -62,12 +62,11 @@ impl State {
         let Ok(writer) = stream.try_clone() else {
             return;
         };
-        let Some(index) = self.workspace_index(workspace) else {
+        if self.workspace_index(workspace).is_none() {
             return;
-        };
+        }
         let id = self.next_client;
         self.next_client += 1;
-        self.workspaces[index].router.connected(id);
         self.sockets.insert(id, (workspace, writer));
         let mut lines = Lines::default();
         let inserted = self.loop_handle.insert_source(
@@ -120,12 +119,12 @@ impl State {
             }
         };
         let mut reply = Vec::new();
-        for out in self.workspaces[workspace].router.handle(AGENT, &line) {
+        for out in self.workspaces[workspace].channel_line(AGENT, &line) {
             match out {
                 Out::Line(to, text) if to == AGENT => reply.push(text),
                 Out::Line(to, text) => self.channel_send(to, &text),
-                Out::Host(Host::Focus(pane)) => self.focus_named(workspace, &pane),
-                Out::Host(Host::Status { .. }) => {}
+                Out::Focus(pane) => self.focus_named(workspace, &pane),
+                Out::Status { .. } => {}
             }
         }
         let _ = request.reply.send(reply);
@@ -231,11 +230,8 @@ impl State {
             return;
         };
         if let Some(index) = self.workspace_index(workspace) {
-            let workspace = &mut self.workspaces[index];
-            workspace.router.disconnected(id);
-            let before = workspace.agents.len();
-            workspace.agents.retain(|_, agent| agent.client != id);
-            if workspace.agents.len() != before {
+            let gone = self.workspaces[index].router.clients.remove(&id);
+            if gone.is_some_and(|client| client.status.is_some()) {
                 self.request_redraw();
             }
         }
@@ -249,16 +245,15 @@ impl State {
         else {
             return;
         };
-        for out in self.workspaces[workspace].router.handle(id, line) {
+        for out in self.workspaces[workspace].channel_line(id, line) {
             match out {
                 Out::Line(to, text) => self.channel_send(to, &text),
-                Out::Host(Host::Focus(pane)) => self.focus_named(workspace, &pane),
-                Out::Host(Host::Status {
-                    client,
+                Out::Focus(pane) => self.focus_named(workspace, &pane),
+                Out::Status {
                     pane,
-                    state,
                     message,
-                }) => self.agent_status(workspace, client, pane, state, message),
+                    raised,
+                } => self.agent_status(workspace, pane, message, raised),
             }
         }
     }
@@ -266,25 +261,11 @@ impl State {
     fn agent_status(
         &mut self,
         workspace: usize,
-        client: usize,
         pane: String,
-        state: AgentState,
         message: Option<String>,
+        raised: bool,
     ) {
-        let agents = &mut self.workspaces[workspace].agents;
-        let raised = state == AgentState::Attention
-            && agents.get(&pane).map(|agent| agent.state) != Some(AgentState::Attention);
-        let body = message
-            .clone()
-            .unwrap_or_else(|| format!("the agent in {pane}"));
-        agents.insert(
-            pane,
-            workspace::Agent {
-                state,
-                message,
-                client,
-            },
-        );
+        let body = message.unwrap_or_else(|| format!("the agent in {pane}"));
         let id = self.workspaces[workspace].id;
         let watched = self
             .viewers
@@ -305,9 +286,10 @@ impl State {
     /// Return every agent in the workspace that is done or needs attention
     /// to idle, as the person at the screen.
     pub(super) fn clear_agents(&mut self, workspace: usize) {
-        for agent in self.workspaces[workspace].agents.values_mut() {
-            if agent.state > AgentState::Working {
-                agent.state = AgentState::Idle;
+        let clients = self.workspaces[workspace].router.clients.values_mut();
+        for status in clients.filter_map(|client| client.status.as_mut()) {
+            if status.state > AgentState::Working {
+                status.state = AgentState::Idle;
             }
         }
         self.request_redraw();

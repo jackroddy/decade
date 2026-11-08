@@ -107,8 +107,8 @@ A client that claimed a pane reports what the agent in that pane is doing:
 `message` is optional and is shown beside the state. A state holds until
 it is replaced, either by the client that reported it or by the person at
 the screen, who can return `done` and `attention` to `idle`. Focusing the
-pane changes nothing. A pane whose client never reported, or whose client
-has disconnected, has no agent. A workspace shows the most urgent state of
+pane changes nothing. A pane has no agent when its client never reported,
+has disconnected, or gave the pane up with a new hello. A workspace shows the most urgent state of
 its panes, in the order of the table. When a pane enters `attention` and no
 focused viewer shows its workspace, decade raises a desktop notification.
 There is no reply. A client that claimed no pane gets an error.
