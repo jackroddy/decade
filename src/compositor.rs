@@ -97,8 +97,7 @@ use crate::palette::Rgba;
 use crate::palette::{self, ACCENT};
 use crate::panel::{Panel, PanelOutcome};
 use crate::panes::{
-    self as panes, BACKGROUND, BarButton, Boundary, CellRect, Chrome, Direction, Drop,
-    Kind as PaneKind, Layout, Pane,
+    self as panes, BACKGROUND, BarButton, Boundary, CellRect, Chrome, Direction, Drop, Layout, Pane,
 };
 use crate::picker::{self, Grid, Picker};
 use crate::pool::Pool;
@@ -2170,17 +2169,13 @@ impl State {
         };
         let current = self.current();
         let scratched = self.workspaces[current].scratch_pane() == Some(pane.name.as_str());
-        match (pane.toplevel(), &pane.kind) {
-            (Some(toplevel), _) => toplevel.send_close(),
-            (None, PaneKind::Transient) => {
+        match pane.toplevel() {
+            Some(toplevel) => toplevel.send_close(),
+            None if !pane.pinned || scratched => {
                 let tab = self.workspaces[current].active_tab;
                 self.remove_pane(current, tab, id);
             }
-            (None, PaneKind::Anchor { .. }) if scratched => {
-                let tab = self.workspaces[current].active_tab;
-                self.remove_pane(current, tab, id);
-            }
-            (None, PaneKind::Anchor { .. }) => {}
+            None => {}
         }
     }
 
@@ -2675,20 +2670,14 @@ impl State {
             .map(|client| client.toplevel.wl_surface().clone());
         let current = self.current();
         let scratched = self.workspaces[current].scratch_pane() == Some(pane.name.as_str());
-        match &pane.kind {
-            PaneKind::Anchor { .. } => {
-                self.layout_mut().unpin(id);
-                if client.is_none() && !scratched {
-                    let current = self.current();
-                    let tab = self.workspaces[current].active_tab;
-                    self.remove_pane(current, tab, id);
-                }
+        if pane.pinned {
+            self.layout_mut().unpin(id);
+            if client.is_none() && !scratched {
+                let tab = self.workspaces[current].active_tab;
+                self.remove_pane(current, tab, id);
             }
-            PaneKind::Transient => {
-                if let Some(app_id) = client.as_ref().and_then(panes::app_id) {
-                    self.layout_mut().pin(id, app_id);
-                }
-            }
+        } else if let Some(app_id) = client.as_ref().and_then(panes::app_id) {
+            self.layout_mut().pin(id, app_id);
         }
         self.request_redraw();
         self.schedule_save();
@@ -2710,7 +2699,7 @@ impl State {
         if let Some((tab, before)) = before
             && let Some(pane) = shown.tabs[tab].layout.pane(before)
             && pane.clients.is_empty()
-            && matches!(pane.kind, PaneKind::Transient)
+            && !pane.pinned
         {
             self.remove_pane(current, tab, before);
         }
@@ -3639,7 +3628,7 @@ impl XdgShellHandler for State {
             self.request_redraw();
             return;
         }
-        let transient = matches!(pane.kind, PaneKind::Transient);
+        let transient = !pane.pinned;
         let scratched = shown
             .scratch
             .as_ref()

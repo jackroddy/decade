@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::files;
-use crate::panes::{Axis, CellRect, Kind, Layout, Node, Pane};
-use crate::workspace::{self, Workspace};
+use crate::panes::{Axis, CellRect, Layout, Node, Pane};
+use crate::workspace::Workspace;
 
 const VERSION: u32 = 2;
 
@@ -172,10 +172,6 @@ fn saved_tab(layout: &Layout) -> SavedTab {
                 .cwd
                 .as_ref()
                 .map(|cwd| pane.pid.and_then(shell_cwd).unwrap_or_else(|| cwd.clone()));
-            let (pinned, app_id) = match &pane.kind {
-                Kind::Anchor { app_id } => (true, app_id.clone()),
-                Kind::Transient => (false, pane.app_id.clone().unwrap_or_default()),
-            };
             let mut tabs: Vec<PathBuf> = pane
                 .clients
                 .iter()
@@ -190,8 +186,11 @@ fn saved_tab(layout: &Layout) -> SavedTab {
             }
             SavedPane {
                 name: pane.name.clone(),
-                pinned,
-                app_id: (cwd.is_none() && !app_id.is_empty()).then_some(app_id),
+                pinned: pane.pinned,
+                app_id: pane
+                    .app_id
+                    .clone()
+                    .filter(|app_id| cwd.is_none() && !app_id.is_empty()),
                 cwd,
                 tabs,
             }
@@ -257,7 +256,7 @@ impl Saved {
         id: u32,
         area: CellRect,
     ) -> Result<(Workspace, Vec<TerminalTab>), String> {
-        let layouts = self.layouts(area, &workspace::app_id_prefix(id))?;
+        let layouts = self.layouts(area)?;
         let mut restored = Workspace::with_tabs(
             id,
             self.name.clone(),
@@ -282,9 +281,8 @@ impl Saved {
         Ok((restored, tabs))
     }
 
-    /// Rebuild the layout of each tab, with each pinned terminal waiting for
-    /// the app id that starts with `prefix`.
-    fn layouts(&self, area: CellRect, prefix: &str) -> Result<Vec<Layout>, String> {
+    /// Rebuild the layout of each tab.
+    fn layouts(&self, area: CellRect) -> Result<Vec<Layout>, String> {
         if self.tabs.is_empty() {
             return Err(format!("workspace {} has no tab", self.name));
         }
@@ -299,13 +297,13 @@ impl Saved {
         }
         self.tabs
             .iter()
-            .map(|tab| tab.layout(area, prefix, &self.name))
+            .map(|tab| tab.layout(area, &self.name))
             .collect()
     }
 }
 
 impl SavedTab {
-    fn layout(&self, area: CellRect, prefix: &str, workspace: &str) -> Result<Layout, String> {
+    fn layout(&self, area: CellRect, workspace: &str) -> Result<Layout, String> {
         let ids: HashMap<&str, usize> = self
             .panes
             .iter()
@@ -327,16 +325,12 @@ impl SavedTab {
             .iter()
             .enumerate()
             .map(|(id, saved)| {
-                let kind = match (&saved.cwd, &saved.app_id, saved.pinned) {
-                    (Some(_), _, true) => Kind::Anchor {
-                        app_id: format!("{prefix}{}", saved.name),
-                    },
-                    (None, Some(app_id), true) => Kind::Anchor {
-                        app_id: app_id.clone(),
-                    },
-                    _ => Kind::Transient,
-                };
-                let mut pane = Pane::new(id, saved.name.clone(), kind);
+                let mut pane = Pane::new(id, saved.name.clone());
+
+                // a pinned terminal waits for its ghostty by name, and a
+                // pinned pane with neither a cwd nor an app id has
+                // nothing to wait for
+                pane.pinned = saved.pinned && (saved.cwd.is_some() || saved.app_id.is_some());
                 pane.cwd = saved.cwd.clone();
                 pane.app_id = saved.app_id.clone();
                 pane
@@ -398,10 +392,7 @@ mod tests {
     }
 
     fn first_layout(saved: &Saved) -> Layout {
-        saved
-            .layouts(crate::panes::tests::AREA, "decade.w0.")
-            .unwrap()
-            .remove(0)
+        saved.layouts(crate::panes::tests::AREA).unwrap().remove(0)
     }
 
     #[test]
@@ -439,13 +430,17 @@ mod tests {
             .layout_mut()
             .pin(0, "decade.w2.terminal".to_string());
         let layout = first_layout(&saved(&workspace));
-        let app_id = |id: usize| match &layout.pane(id).unwrap().kind {
-            Kind::Anchor { app_id } => Some(app_id.clone()),
-            Kind::Transient => None,
-        };
-        assert_eq!(app_id(0).as_deref(), Some("decade.w0.terminal"));
-        assert_eq!(app_id(2).as_deref(), Some("org.gnome.Nautilus"));
-        assert_eq!(app_id(1), None);
+        let pinned: Vec<bool> = layout.panes.iter().map(|pane| pane.pinned).collect();
+        assert_eq!(pinned, [true, false, true]);
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal"), "decade.w0."),
+            Some((0, false))
+        );
+        assert_eq!(
+            layout.place(Some("org.gnome.Nautilus"), "decade.w0."),
+            Some((2, false))
+        );
+        assert_eq!(layout.place(Some("decade.w2.terminal"), "decade.w0."), None);
     }
 
     #[test]
@@ -465,11 +460,7 @@ mod tests {
     fn a_tree_naming_a_missing_pane_is_refused() {
         let mut saved = saved(&workspace());
         saved.tabs[0].panes.pop();
-        assert!(
-            saved
-                .layouts(crate::panes::tests::AREA, "decade.w0.")
-                .is_err()
-        );
+        assert!(saved.layouts(crate::panes::tests::AREA).is_err());
     }
 
     #[test]
@@ -491,9 +482,7 @@ mod tests {
         let back = &file.workspaces[0];
         assert_eq!(back, &saved(&workspace));
         assert_eq!(back.active_tab, 1);
-        let layouts = back
-            .layouts(crate::panes::tests::AREA, "decade.w0.")
-            .unwrap();
+        let layouts = back.layouts(crate::panes::tests::AREA).unwrap();
         let names: Vec<Vec<&str>> = layouts
             .iter()
             .map(|layout| layout.panes.iter().map(|pane| pane.name.as_str()).collect())
@@ -555,9 +544,7 @@ cwd = "/tmp"
         assert!(file.sidebar_open);
         let back = &file.workspaces[0];
         assert_eq!(back.active_tab, 0);
-        let layouts = back
-            .layouts(crate::panes::tests::AREA, "decade.w0.")
-            .unwrap();
+        let layouts = back.layouts(crate::panes::tests::AREA).unwrap();
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].panes.len(), 2);
         assert_eq!(layouts[0].pane(layouts[0].focused).unwrap().name, "code");
@@ -570,7 +557,7 @@ cwd = "/tmp"
         workspace.tabs[1].layout.panes[0].name = "code".to_string();
         assert!(
             saved(&workspace)
-                .layouts(crate::panes::tests::AREA, "decade.w0.")
+                .layouts(crate::panes::tests::AREA)
                 .is_err()
         );
     }

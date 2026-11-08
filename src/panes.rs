@@ -97,11 +97,6 @@ pub enum Axis {
     Vertical,
 }
 
-pub enum Kind {
-    Anchor { app_id: String },
-    Transient,
-}
-
 /// One window in a pane, shown as one of the pane's tabs.
 pub struct Client {
     pub toplevel: ToplevelSurface,
@@ -141,7 +136,10 @@ fn toplevel_data(
 pub struct Pane {
     pub id: usize,
     pub name: String,
-    pub kind: Kind,
+
+    /// Whether the pane stays, waiting for its program, when its last
+    /// client goes.
+    pub pinned: bool,
     pub rect: CellRect,
 
     /// The pane's tabs, one window each.
@@ -153,7 +151,8 @@ pub struct Pane {
     /// The number in the app id of the next terminal tab decade starts.
     pub next_tab: u32,
 
-    /// The app id of the last client in the pane.
+    /// The app id of the last client in the pane that is not a terminal
+    /// tab, which an empty pane waits for.
     pub app_id: Option<String>,
 
     /// Where decade starts the pane's shell, for a pane that holds a terminal.
@@ -166,7 +165,7 @@ pub struct Pane {
 impl Pane {
     /// Whether the pane is a pinned terminal whose shell has exited.
     pub fn restartable(&self) -> bool {
-        self.clients.is_empty() && self.cwd.is_some() && matches!(self.kind, Kind::Anchor { .. })
+        self.clients.is_empty() && self.cwd.is_some() && self.pinned
     }
 
     /// The window of the tab drawn.
@@ -186,11 +185,11 @@ impl Pane {
         self.shown = shown_after_removal(self.shown, index, self.clients.len());
     }
 
-    pub fn new(id: usize, name: String, kind: Kind) -> Pane {
+    pub fn new(id: usize, name: String) -> Pane {
         Pane {
             id,
             name,
-            kind,
+            pinned: false,
             rect: CellRect::EMPTY,
             clients: Vec::new(),
             shown: 0,
@@ -271,7 +270,7 @@ impl Layout {
     pub fn new(area: CellRect) -> Layout {
         let mut layout = Layout {
             area,
-            panes: vec![Pane::new(0, "terminal".to_string(), Kind::Transient)],
+            panes: vec![Pane::new(0, "terminal".to_string())],
             focused: 0,
             zoom: None,
             root: Node::Leaf(0),
@@ -441,13 +440,7 @@ impl Layout {
         }
         self.panes
             .iter()
-            .find(|pane| {
-                pane.clients.is_empty()
-                    && match &pane.kind {
-                        Kind::Anchor { app_id: wanted } => wanted == app_id,
-                        Kind::Transient => pane.app_id.as_deref() == Some(app_id),
-                    }
-            })
+            .find(|pane| pane.clients.is_empty() && pane.app_id.as_deref() == Some(app_id))
             .map(|pane| (pane.id, false))
     }
 
@@ -459,7 +452,7 @@ impl Layout {
             Some(pane) if pane.rect.columns >= pane.rect.rows * 2 => Axis::Horizontal,
             _ => Axis::Vertical,
         };
-        self.panes.push(Pane::new(id, name, Kind::Transient));
+        self.panes.push(Pane::new(id, name));
         if !split_leaf(&mut self.root, at, axis, id) {
             let old = std::mem::replace(&mut self.root, Node::Leaf(id));
             self.root = Node::Split {
@@ -711,7 +704,7 @@ impl Layout {
         let line_y = y + top;
         let text_y = line_y + line / 2 - cell_height / 2;
         let mut end = x + width - right - cell_width * 2;
-        let pinned = matches!(pane.kind, Kind::Anchor { .. });
+        let pinned = pane.pinned;
         let zoomed = self.zoom == Some(pane.id);
         for (text, face) in [
             (PIN_ICON.to_string(), Face::Icon),
@@ -777,7 +770,7 @@ impl Layout {
         let buttons = bar_buttons(start, width);
         let room = buttons[0].1.saturating_sub(start + 2) as usize;
         scene.text(start + 1, row, &fit(&pane.name, room), fg);
-        let pinned = matches!(pane.kind, Kind::Anchor { .. });
+        let pinned = pane.pinned;
         let zoomed = self.zoom == Some(pane.id);
         for (button, x) in buttons {
             let (icon, color) = match button {
@@ -821,15 +814,17 @@ impl Layout {
         }
     }
 
+    /// Pin the pane to wait for a window with the app id when it is empty.
     pub fn pin(&mut self, id: usize, app_id: String) {
         if let Some(pane) = self.pane_mut(id) {
-            pane.kind = Kind::Anchor { app_id };
+            pane.pinned = true;
+            pane.app_id = Some(app_id);
         }
     }
 
     pub fn unpin(&mut self, id: usize) {
         if let Some(pane) = self.pane_mut(id) {
-            pane.kind = Kind::Transient;
+            pane.pinned = false;
         }
     }
 }
@@ -969,9 +964,9 @@ fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool
         scene.text(centered(hint), middle, hint, UNPINNED);
         return;
     }
-    let text = match &pane.kind {
-        Kind::Anchor { app_id } => format!("waiting for {app_id}"),
-        Kind::Transient => "no client".to_string(),
+    let text = match &pane.app_id {
+        Some(app_id) if pane.pinned => format!("waiting for {app_id}"),
+        _ => "no client".to_string(),
     };
     scene.text(centered(&text), middle, &text, DIM);
 }
@@ -1494,9 +1489,9 @@ pub(crate) mod tests {
         assert_eq!(layout.pane(0).unwrap().rect, code);
         assert_eq!(layout.pane(2).unwrap().rect, chat);
         assert_eq!(layout.pane(0).unwrap().name, "chat");
-        assert!(
-            matches!(&layout.pane(2).unwrap().kind, Kind::Anchor { app_id } if app_id == "decade.code")
-        );
+        let code = layout.pane(2).unwrap();
+        assert!(code.pinned);
+        assert_eq!(code.app_id.as_deref(), Some("decade.code"));
     }
 
     #[test]
@@ -1545,10 +1540,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_unpinned_anchor_is_transient() {
+    fn an_unpinned_pane_no_longer_waits_for_its_window() {
         let mut layout = three_anchors();
         layout.unpin(0);
-        assert!(matches!(layout.pane(0).unwrap().kind, Kind::Transient));
+        let font = crate::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, Chrome::default());
+        let texts = texts(&scene);
+        assert!(!texts.iter().any(|text| text == "waiting for decade.chat"));
+        assert!(texts.iter().any(|text| text == "waiting for decade.code"));
     }
 
     #[test]
