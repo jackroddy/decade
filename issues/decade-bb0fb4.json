@@ -3,7 +3,7 @@
   "title": "run is 280 lines and restore is finished in the compositor",
   "body": "`compositor::run` holds GPU, shader and dmabuf setup; output and seat; the settings load; five event sources; `State` construction; the restored-workspace loop; the main loop and shutdown. `run` and `restore` both compute `columns`, `rows` and `frame::pane_area` before `State` exists, duplicating `State::grid` and `State::pane_area`.\n\n`save::Saved::layouts` returns bare `Layout`s. The compositor then works out the app id prefix again (`format!(\"decade.w{id}.\")`, also written in `workspace.rs`), calls `Workspace::with_tabs`, and re-applies `scratch` through `toggle_scratch`. `Pane.saved_tabs` is a field that exists so startup can `mem::take` it once. Writing goes the other way: `save::save` takes `&[Workspace]`. So the two directions of one format have different owners.\n\n## Proposal\n\nExtract the GPU/dmabuf, output/seat and event-source steps from `run`. Build `State` first and restore through `state.pane_area()`. `Saved::workspace(id, area) -> Result<(Workspace, Vec<(tab, id, PathBuf)>)>` in `save.rs`, with the prefix from a free `workspace::app_id_prefix(id)`, so `save.rs` owns both directions. The restored-workspace loop becomes the `start_workspace` from \"Spawning a child is written four times and the pane variable is set in two places\".",
   "type": "chore",
-  "status": "open",
+  "status": "in_progress",
   "priority": 3,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T20:07:53.983175655Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:39:48.140686239Z",
-  "updated_at": "2026-11-08T07:39:48.140686239Z",
+  "updated_at": "2026-11-08T19:52:53.983175655Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
