@@ -3,7 +3,7 @@
   "title": "The palette opens over the settings panel and both stay open",
   "body": "`State` holds `menu: Option<Menu>`, `panel: Option<Panel>` and `picker: Option<Picker>` as three independent fields. `pointer_button` returns early only when the picker is open. With the panel open, a click on the frame's palette button reaches `frame_hit(Hit::Palette)` and `open_palette`, which sets `menu` without looking at `panel`. Both boxes then paint at `overlay_origin`, and keys go to the panel, since `run_key` checks the picker, then the panel, then the menu.\n\nThe fix is the issue \"Menu, panel and picker become one overlay with one outcome type\", which makes the state unrepresentable.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T20:44:44.060199443Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:38:28.04594194Z",
-  "updated_at": "2026-11-08T20:29:44.060199443Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T20:31:04.605285495Z",
+  "closed_at": "2026-11-08T20:31:04.605285495Z",
+  "close_reason": "open_palette clears the panel before it opens the menu, in ce9144d. A scripted frame comparison checked it; State cannot be built in a cargo test. decade-fbc2df later makes the two-overlay state unrepresentable.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "b8068a1",
+      "branch": "simplify"
+    }
   }
 }
