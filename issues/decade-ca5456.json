@@ -3,7 +3,7 @@
   "title": "A pane holds tabs of any window",
   "body": "A pane holds one client (`Pane.toplevel` in `src/panes.rs`). Jack wants a pane to hold several windows of any kind, such as terminals or several preview programs, and show one at a time.\n\n## Proposal\n\nA pane holds a list of clients and the index of the one shown. A strip on the pane's top row lists them. A new window can be opened as a tab of the focused pane. Hidden clients keep their size and get no frame callbacks.\n\n## Open\n\n- How a window becomes a tab rather than a new pane: a key, a palette action, or a drop target on the Ctrl bar drag.\n- What a pane tab's name is, and how the socket addresses a client in a tab.\n\nThis comes after workspace tabs (decade-1ba809). Jack ranks it the least important feature of this round.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": "decade-492261",
@@ -15,16 +15,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T23:31:39.71819573Z",
-  "updated_at": "2026-11-07T23:31:39.71819573Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T00:44:00.500939777Z",
+  "closed_at": "2026-11-08T00:44:00.500939777Z",
+  "close_reason": "Landed in e2173eb. Super+Shift+T, Super+Shift+[ and ], a strip of window titles on the pane's top row, terminal tab directories saved in workspaces.toml v2. Tab order after a restore follows the order the windows arrive in.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "bc045c7",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    }
   }
 }
