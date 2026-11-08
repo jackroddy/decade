@@ -38,9 +38,13 @@ command line and what the tool writes.
   name, its number of tabs, its directory, its git branch, the agent's
   state with how long the agent has held it, and the agent's message. A
   click on a card shows its workspace, and a click on the state's mark
-  returns done or attention to idle. Super+B collapses the
-  sidebar to a strip of marks, and Super+A shows the next workspace whose
-  agent needs the person.
+  returns done or attention to idle. Super+B collapses the sidebar to a
+  rail of tiles. Each tile shows a workspace's initial. A dot on its corner
+  takes the colour of the agent's state. A last tile marked + starts a new
+  workspace. With the pointer on a tile, the workspace's card shows beside
+  the rail. The pills on the top bar and the cards in the sidebar brighten
+  under the pointer. Super+A shows the next workspace whose agent needs
+  the person.
 - The server saves its workspaces to `~/.local/state/decade/workspaces.toml`
   and restores them when it starts. The file holds each workspace's name,
   directory and split tree, and each pane's name and whether it is pinned.

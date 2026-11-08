@@ -12,7 +12,10 @@ use decade_channel::AgentState;
 /// The rows above the panes that the top bar takes.
 const TOP: u32 = 2;
 const OPEN_WIDTH: u32 = 32;
-const CLOSED_WIDTH: u32 = 3;
+const CLOSED_WIDTH: u32 = 5;
+
+/// The column of the workspace's name on the top bar.
+const NAME_COLUMN: u32 = 3;
 const DIAMOND: char = '◆';
 const MENU: char = '≡';
 const DOT: char = '●';
@@ -30,6 +33,7 @@ const CURRENT: Rgba = palette::SELECTION;
 const TEXT: Rgba = palette::FOREGROUND;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 const MUTED: Rgba = palette::MUTED;
+const SHADOW: Rgba = [0.0, 0.0, 0.0, 0.4];
 
 /// The row height, in pixels, that the card sizes below are given at.
 const MOCKUP_ROW: i32 = 18;
@@ -39,6 +43,20 @@ const CARD_PADDING: i32 = 4;
 const CARD_RADIUS: i32 = 6;
 const STRIPE: i32 = 3;
 const PILL_RADIUS: i32 = 4;
+const TILE: i32 = 28;
+const TILE_GAP: i32 = 9;
+const TILE_RADIUS: i32 = 6;
+const STATE_DOT: i32 = 8;
+const STATE_DOT_RING: i32 = 2;
+const POPOVER_GAP: i32 = 6;
+
+/// How far the popover's top sits above its tile's.
+const POPOVER_RISE: i32 = 5;
+const POPOVER_PADDING: i32 = 6;
+const SHADOW_OFFSET: i32 = 4;
+
+/// The popover's width in columns.
+const POPOVER_WIDTH: u32 = 34;
 
 fn sidebar_width(open: bool) -> u32 {
     if open { OPEN_WIDTH } else { CLOSED_WIDTH }
@@ -115,6 +133,13 @@ impl Pill {
     }
 }
 
+/// A workspace's card shown beside the closed sidebar, in pixels.
+struct Popover {
+    entry: usize,
+    at: (i32, i32),
+    size: (i32, i32),
+}
+
 pub struct Frame {
     pub columns: u32,
     pub rows: u32,
@@ -131,6 +156,9 @@ pub struct Frame {
 
     /// The width and height of a chrome cell in pixels.
     pub cell: (i32, i32),
+
+    /// What is under the pointer, as `Frame::hover` gives it.
+    pub hover: Option<Hit>,
 }
 
 /// The mark for an agent state and its colour.
@@ -172,6 +200,33 @@ fn pill_background(state: AgentState) -> Rgba {
         AgentState::Done => palette::DARK_GREEN,
         AgentState::Working => palette::DARK_YELLOW,
         AgentState::Idle => CURRENT,
+    }
+}
+
+/// The background of a state's pill on the top bar under the pointer.
+fn pill_hover(state: AgentState) -> Rgba {
+    match state {
+        AgentState::Attention => palette::MID_RED,
+        AgentState::Done => palette::MID_GREEN,
+        AgentState::Working => palette::MID_YELLOW,
+        AgentState::Idle => palette::BORDER,
+    }
+}
+
+/// "1 tab" or "N tabs".
+fn tab_count(tabs: usize) -> String {
+    match tabs {
+        1 => "1 tab".to_string(),
+        tabs => format!("{tabs} tabs"),
+    }
+}
+
+/// A workspace's state line in a card: "! needs you · 4m" or "· no agent".
+fn state_line(entry: &Entry) -> String {
+    let (glyph, _) = mark(entry.state);
+    match entry.state {
+        Some(state) => format!("{glyph} {} · {}", label(state), age(entry.age)),
+        None => format!("{glyph} no agent"),
     }
 }
 
@@ -224,17 +279,6 @@ pub fn short_path(cwd: &Path, home: &Path) -> String {
     }
 }
 
-/// The current workspace's fill across a sidebar `width` columns wide.
-fn highlight(scene: &mut Scene, row: u32, width: u32) {
-    let rect = CellRect {
-        column: 0,
-        row,
-        columns: width.saturating_sub(1),
-        rows: 1,
-    };
-    scene.fill(rect, CURRENT);
-}
-
 impl Frame {
     pub fn new(
         (columns, rows): (u32, u32),
@@ -256,6 +300,7 @@ impl Frame {
             title,
             zoom,
             cell,
+            hover: None,
         }
     }
 
@@ -295,7 +340,7 @@ impl Frame {
     /// The top bar's tab pills and the `+` after them, up to the ones
     /// that would reach the state pills.
     fn tab_pills(&self) -> Vec<Pill> {
-        let mut column = CLOSED_WIDTH + self.name().chars().count() as u32 + 2;
+        let mut column = NAME_COLUMN + self.name().chars().count() as u32 + 2;
         let end = self.states_start();
         let tabs = self.tabs.iter().enumerate().map(|(i, tab)| Pill {
             column: 0,
@@ -357,11 +402,62 @@ impl Frame {
             .map_or(self.columns.saturating_sub(MENU_WIDTH), |pill| pill.column)
     }
 
-    /// The workspaces with a glyph in the closed sidebar, each with its row.
-    fn marks(&self) -> impl Iterator<Item = (u32, usize)> {
-        (0..self.entries.len())
-            .map(|i| (TOP + 1 + i as u32, i))
-            .filter(|&(row, _)| row < self.rows)
+    /// The closed sidebar's tiles that fit, each with its workspace, or
+    /// `None` for the `+` tile, and its top in pixels.
+    fn tiles(&self) -> Vec<(Option<usize>, i32)> {
+        let (size, gap) = (self.scaled(TILE), self.scaled(TILE_GAP));
+        let bottom = self.rows as i32 * self.cell.1;
+        let mut top = TOP as i32 * self.cell.1 + gap;
+        let mut tiles = Vec::new();
+        for i in (0..self.entries.len()).map(Some).chain([None]) {
+            if top + size > bottom {
+                break;
+            }
+            tiles.push((i, top));
+            top += size + gap;
+        }
+        tiles
+    }
+
+    /// The left edge of every tile, centred in the closed sidebar.
+    fn tile_left(&self) -> i32 {
+        let rail = CLOSED_WIDTH.min(self.columns) as i32 * self.cell.0;
+        (rail - self.scaled(TILE)) / 2
+    }
+
+    /// The popover for the tile under the pointer, kept inside the window.
+    fn popover(&self) -> Option<Popover> {
+        let Some(Hit::Show(id)) = self.hover.filter(|_| !self.open) else {
+            return None;
+        };
+        let (i, tile) = self
+            .tiles()
+            .into_iter()
+            .find_map(|(i, top)| Some((i?, top)).filter(|&(i, _)| self.entries[i].id == id))?;
+        let (cell_width, cell_height) = self.cell;
+        let lines = if self.entries[i].message.is_some() {
+            5
+        } else {
+            4
+        };
+        let size = (
+            POPOVER_WIDTH as i32 * cell_width,
+            2 * self.scaled(POPOVER_PADDING) + lines * cell_height,
+        );
+        let (right, bottom) = (
+            self.columns as i32 * cell_width,
+            self.rows as i32 * cell_height,
+        );
+        let rail = CLOSED_WIDTH.min(self.columns) as i32 * cell_width;
+        let left = (rail + self.scaled(POPOVER_GAP)).min(right - size.0).max(0);
+        let top = (tile - self.scaled(POPOVER_RISE))
+            .min(bottom - size.1)
+            .max(0);
+        Some(Popover {
+            entry: i,
+            at: (left, top),
+            size,
+        })
     }
 
     /// `px`, a length given at `MOCKUP_ROW` rows, scaled to the chrome's
@@ -408,7 +504,7 @@ impl Frame {
     pub fn hit(&self, x: i32, y: i32) -> Option<Hit> {
         let (column, row) = ((x / self.cell.0) as u32, (y / self.cell.1) as u32);
         if row < TOP {
-            return if column < CLOSED_WIDTH {
+            return if column < NAME_COLUMN {
                 Some(Hit::Sidebar)
             } else if column + MENU_WIDTH >= self.columns {
                 Some(Hit::Palette)
@@ -423,8 +519,10 @@ impl Frame {
             return None;
         }
         if !self.open {
-            let (_, i) = self.marks().find(|&(at, _)| at == row)?;
-            return Some(Hit::Show(self.entries[i].id));
+            let size = self.scaled(TILE);
+            let (i, _) =
+                (self.tiles().into_iter()).find(|&(_, top)| (top..top + size).contains(&y))?;
+            return Some(i.map_or(Hit::New, |i| Hit::Show(self.entries[i].id)));
         }
         let (cards, new) = self.cards();
         if let Some(&(i, top, _)) = cards
@@ -443,6 +541,15 @@ impl Frame {
         }
         let new = new?;
         (new..new + self.cell.1).contains(&y).then_some(Hit::New)
+    }
+
+    /// What is under the pointer at pixel `x`, `y`: what a click there
+    /// does, with a card's state glyph taken as the whole card.
+    pub fn hover(&self, x: i32, y: i32) -> Option<Hit> {
+        self.hit(x, y).map(|hit| match hit {
+            Hit::Clear(id) => Hit::Show(id),
+            hit => hit,
+        })
     }
 
     pub fn draw(&self, scene: &mut Scene) {
@@ -464,7 +571,7 @@ impl Frame {
         let x = |column: u32| column as i32 * cell_width;
         let diamond = DIAMOND.to_string();
         scene.text_px(x(1), y, &diamond, Face::ChromeBold, palette::ACCENT);
-        scene.text_px(x(CLOSED_WIDTH), y, &self.name(), Face::ChromeBold, TEXT);
+        scene.text_px(x(NAME_COLUMN), y, &self.name(), Face::ChromeBold, TEXT);
 
         let tabs = self.tab_pills();
         for pill in &tabs {
@@ -472,6 +579,9 @@ impl Frame {
                 self.draw_pill(scene, pill.column, pill.width(), CURRENT);
                 TEXT
             } else {
+                if self.hover == Some(pill.hit) {
+                    self.draw_pill(scene, pill.column, pill.width(), palette::SELECTION);
+                }
                 DIM
             };
             scene.text_px(x(pill.column), y, &pill.text, Face::Chrome, color);
@@ -501,7 +611,12 @@ impl Frame {
             let Hit::Next(state) = pill.hit else {
                 continue;
             };
-            self.draw_pill(scene, pill.column, pill.width(), pill_background(state));
+            let background = if self.hover == Some(pill.hit) {
+                pill_hover(state)
+            } else {
+                pill_background(state)
+            };
+            self.draw_pill(scene, pill.column, pill.width(), background);
             scene.text_px(
                 x(pill.column),
                 y,
@@ -511,7 +626,12 @@ impl Frame {
             );
         }
         let menu = self.columns.saturating_sub(3);
-        scene.text_px(x(menu), y, &MENU.to_string(), Face::Chrome, DIM);
+        let color = if self.hover == Some(Hit::Palette) {
+            TEXT
+        } else {
+            DIM
+        };
+        scene.text_px(x(menu), y, &MENU.to_string(), Face::Chrome, color);
     }
 
     /// The rounded background of a pill `width` columns wide from `column`.
@@ -534,13 +654,8 @@ impl Frame {
         scene.fill(side, SIDEBAR);
         scene.right_edge(side, EDGE);
         if !self.open {
-            for (row, i) in self.marks() {
-                let entry = &self.entries[i];
-                if entry.current {
-                    highlight(scene, row, width);
-                }
-                let (glyph, color) = mark(entry.state);
-                scene.text(1, row, &glyph.to_string(), color);
+            for (i, top) in self.tiles() {
+                self.draw_tile(scene, i.map(|i| &self.entries[i]), top);
             }
             return;
         }
@@ -566,9 +681,14 @@ impl Frame {
         let (cell_width, cell_height) = self.cell;
         let (left, width) = self.card_span();
         let radius = self.scaled(CARD_RADIUS);
-        let background = if entry.current { CURRENT } else { SIDEBAR };
-        if entry.current {
-            scene.rounded(left, top, (width, height), radius, CURRENT, CURRENT);
+        let hovered = self.hover == Some(Hit::Show(entry.id));
+        let background = match (entry.current, hovered) {
+            (true, _) => CURRENT,
+            (false, true) => palette::LIGHTER_BACKGROUND,
+            (false, false) => SIDEBAR,
+        };
+        if background != SIDEBAR {
+            scene.rounded(left, top, (width, height), radius, background, background);
         }
         if let Some(color) = stripe(entry.state) {
             // a rounded rect in the stripe's colour, covered but for its
@@ -585,10 +705,7 @@ impl Frame {
         let room = ((right - x) / cell_width).max(0) as usize;
         let line = |n: i32| top + self.scaled(CARD_PADDING) + n * cell_height;
 
-        let tabs = match entry.tabs {
-            1 => "1 tab".to_string(),
-            tabs => format!("{tabs} tabs"),
-        };
+        let tabs = tab_count(entry.tabs);
         let tabs_width = tabs.chars().count();
         let name = fit(&entry.name, room.saturating_sub(tabs_width + 1));
         let name_color = if entry.current {
@@ -609,18 +726,111 @@ impl Frame {
             scene.text_px(branch_x, line(1), &branch, Face::Chrome, palette::CYAN);
         }
 
-        let (glyph, _) = mark(entry.state);
-        let state = match entry.state {
-            Some(state) => format!("{glyph} {} · {}", label(state), age(entry.age)),
-            None => format!("{glyph} no agent"),
-        };
-        let state = fit(&state, room);
+        let state = fit(&state_line(entry), room);
         scene.text_px(x, line(2), &state, Face::Chrome, tint(entry.state));
 
         if let Some(message) = &entry.message {
             let message = fit(message, room.saturating_sub(2));
             scene.text_px(x + 2 * cell_width, line(3), &message, Face::Chrome, DIM);
         }
+    }
+
+    /// A workspace's tile in the closed sidebar, or the `+` tile for `None`.
+    fn draw_tile(&self, scene: &mut Scene, entry: Option<&Entry>, top: i32) {
+        let (left, size) = (self.tile_left(), self.scaled(TILE));
+        let hit = entry.map_or(Hit::New, |entry| Hit::Show(entry.id));
+        let current = entry.is_some_and(|entry| entry.current);
+        let hovered = self.hover == Some(hit);
+        let (fill, ring, color) = match (entry, current, hovered) {
+            (_, true, _) => (CURRENT, palette::ACCENT, TEXT),
+            (Some(_), false, true) => (palette::LIGHTER_BACKGROUND, DIM, palette::FADED_FOREGROUND),
+            (None, false, true) => (palette::LIGHTER_BACKGROUND, DIM, DIM),
+            (Some(_), false, false) => (
+                palette::RAISED_BACKGROUND,
+                palette::LIGHTER_BACKGROUND,
+                palette::FADED_FOREGROUND,
+            ),
+            (None, false, false) => (SIDEBAR, palette::BORDER, DIM),
+        };
+        let radius = self.scaled(TILE_RADIUS);
+        scene.rounded(left, top, (size, size), radius, fill, ring);
+
+        let (cell_width, cell_height) = self.cell;
+        let (text, face) = match entry {
+            Some(entry) => {
+                let initial = entry.name.chars().next().unwrap_or(' ');
+                (initial.to_uppercase().collect(), Face::ChromeBold)
+            }
+            None => ("+".to_string(), Face::Chrome),
+        };
+        let (x, y) = (
+            left + (size - cell_width) / 2,
+            top + (size - cell_height) / 2,
+        );
+        scene.text_px(x, y, &text, face, color);
+
+        let Some(dot) = entry.and_then(|entry| entry.state) else {
+            return;
+        };
+        // the mockup sets the ringed dot 3 px past the inside of the
+        // tile's 1 px border, so 2 px past its outside
+        let ring = self.scaled(STATE_DOT_RING);
+        let inner = self.scaled(STATE_DOT);
+        let outer = inner + 2 * ring;
+        let (x, y) = (left + size + self.scaled(2) - outer, top - self.scaled(2));
+        scene.rounded(x, y, (outer, outer), outer / 2, SIDEBAR, SIDEBAR);
+        let (_, color) = mark(Some(dot));
+        scene.rounded(x + ring, y + ring, (inner, inner), inner / 2, color, color);
+    }
+
+    /// What the frame draws over the panes: the popover beside the closed
+    /// sidebar for the tile under the pointer.
+    pub fn draw_above(&self, scene: &mut Scene) {
+        let Some(Popover {
+            entry,
+            at: (left, top),
+            size: (width, height),
+        }) = self.popover()
+        else {
+            return;
+        };
+        let entry = &self.entries[entry];
+        let (cell_width, cell_height) = self.cell;
+        let radius = self.scaled(CARD_RADIUS);
+        let offset = self.scaled(SHADOW_OFFSET);
+        let size = (width, height);
+        scene.rounded(left + offset, top + offset, size, radius, SHADOW, SHADOW);
+        scene.rounded(left, top, size, radius, BAR, palette::BORDER);
+
+        let x = left + cell_width;
+        let right = left + width - cell_width;
+        let room = ((right - x) / cell_width).max(0) as usize;
+        let line = |n: i32| top + self.scaled(POPOVER_PADDING) + n * cell_height;
+
+        let branch = entry.branch.as_deref().map(|branch| fit(branch, room / 2));
+        let branch_width = branch.as_ref().map_or(0, |b| b.chars().count());
+        let name = fit(&entry.name, room.saturating_sub(branch_width + 1));
+        scene.text_px(x, line(0), &name, Face::ChromeBold, TEXT);
+        if let Some(branch) = branch {
+            let branch_x = right - branch_width as i32 * cell_width;
+            scene.text_px(branch_x, line(0), &branch, Face::Chrome, palette::CYAN);
+        }
+
+        let tabs = format!(" · {}", tab_count(entry.tabs));
+        let path = tail(&entry.path, room.saturating_sub(tabs.chars().count()));
+        scene.text_px(x, line(1), &format!("{path}{tabs}"), Face::Chrome, DIM);
+
+        let state = fit(&state_line(entry), room);
+        scene.text_px(x, line(2), &state, Face::Chrome, tint(entry.state));
+
+        let mut hint = 3;
+        if let Some(message) = &entry.message {
+            let message = fit(message, room.saturating_sub(2));
+            let color = palette::FADED_FOREGROUND;
+            scene.text_px(x + 2 * cell_width, line(3), &message, Face::Chrome, color);
+            hint = 4;
+        }
+        scene.text_px(x, line(hint), "click to show", Face::Chrome, DIM);
     }
 }
 
@@ -755,13 +965,102 @@ mod tests {
     }
 
     #[test]
-    fn the_closed_sidebar_has_a_row_per_workspace() {
+    fn the_closed_sidebar_is_a_rail_of_tiles_most_urgent_first_with_a_plus_last() {
+        // at 18 px rows the mockup's sizes are unchanged: 28 px tiles 9 px
+        // apart, the first 9 px below the top bar, centred in 5 columns
         let frame = frame(false);
-        assert_eq!(hit_cell(&frame, 1, TOP + 1), Some(Hit::Show(2)));
-        assert_eq!(hit_cell(&frame, 1, TOP + 2), Some(Hit::Show(3)));
-        assert_eq!(hit_cell(&frame, 1, TOP + 5), Some(Hit::Show(0)));
-        assert_eq!(hit_cell(&frame, 1, TOP + 6), None);
-        assert_eq!(hit_cell(&frame, 5, TOP + 1), None);
+        assert_eq!(
+            frame.tiles(),
+            [
+                (Some(0), 45),
+                (Some(1), 82),
+                (Some(2), 119),
+                (Some(3), 156),
+                (Some(4), 193),
+                (None, 230)
+            ]
+        );
+        assert_eq!(frame.entries[0].name, "foam");
+        assert_eq!(frame.tile_left(), 6);
+    }
+
+    #[test]
+    fn tile_sizes_scale_with_the_cell_height() {
+        let mut frame = frame(false);
+        frame.cell = (12, 27);
+        let tops: Vec<_> = frame.tiles().iter().map(|&(_, top)| top).take(2).collect();
+        assert_eq!(tops, [2 * 27 + 14, 2 * 27 + 14 + 42 + 14]);
+        assert_eq!(frame.tile_left(), (5 * 12 - 42) / 2);
+    }
+
+    #[test]
+    fn tiles_that_reach_past_the_bottom_are_left_out_with_the_plus() {
+        let mut frame = frame(false);
+        frame.rows = 8;
+        assert_eq!(frame.tiles(), [(Some(0), 45), (Some(1), 82)]);
+    }
+
+    #[test]
+    fn a_click_on_a_tile_shows_its_workspace_and_the_plus_starts_a_new_one() {
+        let frame = frame(false);
+        assert_eq!(frame.hit(20, 45), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(2, 72), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(20, 73), None);
+        assert_eq!(frame.hit(20, 82), Some(Hit::Show(3)));
+        assert_eq!(frame.hit(20, 193), Some(Hit::Show(0)));
+        assert_eq!(frame.hit(20, 230), Some(Hit::New));
+        assert_eq!(frame.hit(20, 258), None);
+        assert_eq!(frame.hit(5 * 8, 45), None);
+        assert_eq!(frame.hit(8, 0), Some(Hit::Sidebar));
+    }
+
+    #[test]
+    fn the_hovered_item_is_what_a_click_does_with_a_state_glyph_taken_as_its_card() {
+        let frame = frame(true);
+        let (glyph, state) = (6 + 3 + 8, 90 + 4 + 2 * 18);
+        assert_eq!(frame.hit(glyph, state), Some(Hit::Clear(2)));
+        assert_eq!(frame.hover(glyph, state), Some(Hit::Show(2)));
+        assert_eq!(frame.hover(100, 176), Some(Hit::Show(3)));
+        assert_eq!(frame.hover(115 * 8, 18), Some(Hit::Palette));
+        assert_eq!(frame.hover(20 * 8, 18), Some(Hit::Tab(1)));
+        assert_eq!(frame.hover(60 * 8, 200), None);
+    }
+
+    #[test]
+    fn hovering_a_tile_puts_its_popover_beside_the_rail_level_with_the_tile() {
+        let mut frame = frame(false);
+        assert!(frame.popover().is_none());
+        frame.hover = Some(Hit::Show(2));
+        let popover = frame.popover().unwrap();
+        assert_eq!(frame.entries[popover.entry].id, 2);
+        assert_eq!(popover.at, (5 * 8 + 6, 45 - 5));
+        assert_eq!(popover.size, (34 * 8, 2 * 6 + 5 * 18));
+
+        // jack has no message, so its popover is a line shorter
+        frame.hover = Some(Hit::Show(0));
+        let popover = frame.popover().unwrap();
+        assert_eq!(popover.at, (46, 193 - 5));
+        assert_eq!(popover.size.1, 2 * 6 + 4 * 18);
+
+        frame.hover = Some(Hit::New);
+        assert!(frame.popover().is_none());
+        frame.hover = Some(Hit::Show(2));
+        frame.open = true;
+        assert!(frame.popover().is_none());
+    }
+
+    #[test]
+    fn a_popover_that_would_leave_the_window_is_moved_back_inside() {
+        let mut frame = frame(false);
+        frame.rows = 12;
+        frame.hover = Some(Hit::Show(1));
+        let popover = frame.popover().unwrap();
+        assert_eq!(popover.at.1 + popover.size.1, 12 * 18);
+        assert_eq!(popover.at.1, 12 * 18 - (2 * 6 + 4 * 18));
+
+        frame.columns = 30;
+        let popover = frame.popover().unwrap();
+        assert_eq!(popover.at.0, 0);
     }
 
     #[test]

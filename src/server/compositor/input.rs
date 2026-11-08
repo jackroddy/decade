@@ -82,6 +82,17 @@ impl State {
             }
             None => {}
         }
+        let area = self.pane_area();
+        let hover = if column < area.column || row < area.row {
+            let (x, y) = self.pointer_px();
+            self.frame(current).hover(x, y)
+        } else {
+            None
+        };
+        if hover != self.frame_hover {
+            self.frame_hover = hover;
+            self.request_redraw();
+        }
         if self.bar {
             let hover = self
                 .layout()
@@ -129,8 +140,7 @@ impl State {
             return;
         }
         if button == BTN_LEFT && pressed {
-            let point = self.pointer.to_physical(self.scale);
-            let (x, y) = (point.x.max(0.0) as i32, point.y.max(0.0) as i32);
+            let (x, y) = self.pointer_px();
             if let Some(hit) = self.frame(self.current()).hit(x, y) {
                 self.frame_hit(hit);
                 return;
@@ -491,6 +501,11 @@ impl State {
             return Point::default();
         };
         self.text.chrome.px_rect(pane.rect).loc
+    }
+
+    fn pointer_px(&self) -> (i32, i32) {
+        let physical = self.pointer.to_physical(self.scale);
+        (physical.x.max(0.0) as i32, physical.y.max(0.0) as i32)
     }
 
     fn pointer_cell(&self) -> (u32, u32) {

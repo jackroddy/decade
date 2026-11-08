@@ -148,6 +148,9 @@ impl State {
 
         let mut above = Scene::new(&paint.text.chrome);
         layout.draw_bars(&mut above, chrome);
+        if let Some(frame) = &frame {
+            frame.draw_above(&mut above);
+        }
         if let Some(Drag::Pane {
             id,
             cell: Some(cell),
@@ -193,6 +196,7 @@ impl State {
 
     /// The top bar and sidebar drawn around the workspace's panes.
     pub(super) fn frame(&self, shown: usize) -> frame::Frame {
+        let hover = self.frame_hover.filter(|_| shown == self.current());
         let home = workspace::home();
         let entries = (self.workspaces.iter().enumerate())
             .map(|(i, workspace)| {
@@ -236,7 +240,7 @@ impl State {
         let title = focused
             .map(|pane| pane.title().unwrap_or_else(|| pane.name.clone()))
             .unwrap_or_default();
-        frame::Frame::new(
+        let mut frame = frame::Frame::new(
             self.grid(),
             self.sidebar_open,
             entries,
@@ -247,7 +251,9 @@ impl State {
                 self.text.chrome.cell_width as i32,
                 self.text.chrome.cell_height as i32,
             ),
-        )
+        );
+        frame.hover = hover;
+        frame
     }
 }
 

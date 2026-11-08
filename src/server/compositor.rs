@@ -147,6 +147,9 @@ pub struct State {
     /// Whether the Ctrl bar is shown on the workspace on screen.
     bar: bool,
     hover: Option<(usize, BarButton)>,
+
+    /// The top bar or sidebar item under the pointer.
+    frame_hover: Option<Hit>,
     ctrl_timer: Option<RegistrationToken>,
     scale: f64,
     start: Instant,
@@ -232,6 +235,7 @@ pub fn run() {
         drag: None,
         bar: false,
         hover: None,
+        frame_hover: None,
         ctrl_timer: None,
         scale,
         start: Instant::now(),
@@ -880,6 +884,7 @@ impl State {
 
     fn toggle_sidebar(&mut self) {
         self.sidebar_open = !self.sidebar_open;
+        self.frame_hover = None;
         self.resize_layouts();
         self.relayout_all();
         self.schedule_save();
