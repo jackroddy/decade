@@ -3,7 +3,7 @@
   "title": "State holds the state of nine subsystems in fifty fields",
   "body": "`State` in `compositor.rs` has about fifty fields. Beside the smithay `*_state` fields, which the delegate macros need on the handler type, they group like this:\n\n| group | fields |\n|---|---|\n| viewers | `viewers`, `next_viewer`, `active` |\n| selection mirror | `offered` |\n| channel clients | `sockets`, `next_client` |\n| children | `env`, `children` |\n| rendering | `gpu`, `rounded`, `font`, `menu_font`, `texts`, `size`, `scale`, `wants_redraw`, `render_failing` |\n| overlays | `menu`, `panel`, `picker`, `picker_tick` |\n| input | `pointer`, `drag`, `repeat`, `repeating`, `ctrl_timer`, `cursor` |\n| persistence | `settings`, `settings_path`, `save_path`, `save_due` |\n| workspaces | `workspaces`, `next_workspace`, `unplaced`, `sidebar_open` |\n\nAbout seventy methods each touch one or two groups, and nothing in a signature says which. Clippy's `struct_excessive_bools` fires on `State` and on `Viewer`.\n\n## Proposal\n\nSplit out the groups that already have their own methods, one at a time, starting where other issues already want a home: the overlay enum, the text and font home, the viewer frame pool, the child spawner. The smithay fields stay on `State`.\n\n## Open\n\nWhich groups earn a struct and which are two fields that happen to sit together. The input group may stay flat.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,13 +12,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T20:19:20.259548697Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:39:08.672924477Z",
-  "updated_at": "2026-11-08T20:12:50.028479273Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T20:12:50.039401823Z",
+  "closed_at": "2026-11-08T20:12:50.039401823Z",
+  "close_reason": "Split as far as this phase goes; the note lists what moved (ec48420, e093411, fe90d27), which groups wait on decade-fbc2df, decade-e5e569, decade-701a8d and decade-2f1c63, and which stay as plain fields.",
+  "resolution": "done",
   "notes": [
     {
       "id": "1b05c4fe",
@@ -34,6 +34,9 @@
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "141646e",
+      "branch": "simplify"
+    }
   }
 }
