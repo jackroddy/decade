@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T19:51:56.371968183Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.099425337Z",
-  "updated_at": "2026-11-08T19:36:56.371968183Z",
+  "updated_at": "2026-11-08T19:38:46.677244913Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "9b917ce8",
+      "at": "2026-11-08T19:38:46.677243923Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "Two departures from the proposal, in the commit that closes this issue.\n\nThe helpers live in a new `files.rs` and not in `control.rs`, because `settings.rs`, `save.rs` and `apps.rs` use them and none of those is about controlling a server. `control::dir` names `<runtime>/decade` but does not create it. Both `connect_or_start`, for the log, and `compositor::run`, for the lock and socket, still call `create_dir_all`. They run in different processes, and either may run first.\n\n`hypr.rs` keeps its own `XDG_RUNTIME_DIR` read. Hyprland's sockets are never under the temp directory, so the temp fallback in `files::runtime_dir` would be wrong there. `workspace::home` keeps its `HOME` read, since its fallback is `/` and not an XDG path.",
+      "commit": "de48915",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
