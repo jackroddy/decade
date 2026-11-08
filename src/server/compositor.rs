@@ -1102,8 +1102,19 @@ impl State {
             return;
         };
         let name = pane.name.clone();
+        let removed = pane.pid;
         layout.remove(id);
         shown.forget_pane(&name);
+        let children = &mut self.children;
+
+        // the removed pane's program can outlive its window
+        // for a moment, and a tab's last pane stays in the
+        // layout with its pid, so that pid never holds the
+        // tab open
+        let running = |pid| Some(pid) != removed && children.running(pid);
+        if shown.tab_is_spent(tab, running) {
+            shown.tabs[tab].closing = true;
+        }
         if shown.tabs[tab].closing {
             self.finish_closing(workspace);
             return;

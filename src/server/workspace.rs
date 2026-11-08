@@ -214,6 +214,18 @@ impl Workspace {
         pane.pinned || self.is_scratch(pane)
     }
 
+    /// Whether tab `tab` has nothing left in it and closes: no pane has a
+    /// client or a running program, and none is kept empty. The
+    /// workspace's only tab never does.
+    pub fn tab_is_spent(&self, tab: usize, mut running: impl FnMut(u32) -> bool) -> bool {
+        self.tabs.len() > 1
+            && self.tabs[tab].layout.panes.iter().all(|pane| {
+                pane.clients.is_empty()
+                    && !self.keeps_empty(pane)
+                    && !pane.pid.is_some_and(&mut running)
+            })
+    }
+
     pub fn is_scratch(&self, pane: &Pane) -> bool {
         self.scratch_pane() == Some(pane.name.as_str())
     }
@@ -326,6 +338,26 @@ mod tests {
         workspace.toggle_scratch("terminal");
         workspace.layout_mut().pin(0, "decade.terminal".to_string());
         assert!(workspace.keeps_empty(&workspace.layout().panes[0]));
+    }
+
+    #[test]
+    fn a_tab_with_no_client_running_program_or_kept_pane_is_spent_unless_it_is_the_only_tab() {
+        let mut workspace = at_home();
+        assert!(!workspace.tab_is_spent(0, |_| false));
+        workspace.add_tab(crate::server::panes::tests::AREA);
+        assert!(workspace.tab_is_spent(1, |_| false));
+        workspace.tabs[1].layout.panes[0].pid = Some(7);
+        assert!(!workspace.tab_is_spent(1, |pid| pid == 7));
+        assert!(workspace.tab_is_spent(1, |_| false));
+        let name = workspace.tabs[1].layout.panes[0].name.clone();
+        workspace.toggle_scratch(&name);
+        assert!(!workspace.tab_is_spent(1, |_| false));
+        workspace.toggle_scratch(&name);
+        let id = workspace.tabs[1].layout.panes[0].id;
+        workspace.tabs[1]
+            .layout
+            .pin(id, "decade.terminal".to_string());
+        assert!(!workspace.tab_is_spent(1, |_| false));
     }
 
     #[test]

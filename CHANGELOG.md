@@ -68,6 +68,9 @@ command line and what the tool writes.
 - Close tab in the palette asks for a second Enter, then closes every pane
   in the shown tab. The tab goes once its last client has. Closing the last
   tab closes the workspace.
+- A tab closes by itself once no pane in it holds a client or a running
+  program, and none is pinned or the scratch pane. A workspace's only tab
+  stays, with an empty pane.
 - `workspaces.toml` is now version 2. It holds each workspace's tabs, the
   tab each workspace shows, and whether the sidebar is open. decade still
   reads a version 1 file, as one tab per workspace with the sidebar open.
