@@ -3,7 +3,7 @@
   "title": "The wire protocol's constants live in the clients instead of wire.rs",
   "body": "| knob | homes |\n|---|---|\n| protocol version 1 | `PROTOCOL_VERSION` in `viewer.rs`, `version: 1` in `script.rs`, `version < 1` and `Welcome { version: 1 }` in `compositor.rs` |\n| transport 0 | `LOCAL` in `viewer.rs`, literals in `script.rs` and `compositor.rs` |\n| lock bits | packed in `viewer.rs`, unpacked as `locked & 1` and `locked & 2` in `compositor.rs` |\n| scale denominator 120 | `SCALE` in `script.rs`, `MAX_SCALE = 120 * 8` in `compositor.rs`, literals at four sites in `viewer.rs` |\n| outbox retry 5 ms | `OUTBOX_RETRY` in `compositor.rs`, a literal in `viewer.rs` |\n| `BTN_LEFT`, `KEY_LEFTCTRL`, `KEY_LEFTSHIFT`, `KEY_LEFTMETA` | `script.rs` and `compositor.rs` |\n\nThe server's handshake check amounts to `version == 0`, and nobody reads `Welcome.version`, so the lower-of-the-two negotiation in `docs/viewer.md` is not implemented. A protocol bump today can leave `decade script` behind.\n\n## Proposal\n\n`wire.rs` owns `VERSION`, `LOCAL`, the lock bits, the scale denominator and the evdev codes; the three clients import them. Either implement the negotiation or drop that sentence from the doc.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T19:46:18.246302128Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.026159913Z",
-  "updated_at": "2026-11-08T19:31:18.246302128Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T19:32:26.547918476Z",
+  "closed_at": "2026-11-08T19:32:26.547918476Z",
+  "close_reason": "Landed in 4f2cbde. wire.rs defines VERSION, LOCAL, SCALE, CAPS_LOCK, NUM_LOCK, OUTBOX_RETRY and the shared evdev codes. The server implements the negotiation in docs/viewer.md: welcome carries the lower of the two versions. Keycodes only the server uses, such as KEY_C, stay in compositor.rs.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "4f2cbde",
+      "branch": "simplify"
+    }
   }
 }
