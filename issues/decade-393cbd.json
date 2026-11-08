@@ -3,7 +3,7 @@
   "title": "The formats timer guards against a client that does not exist",
   "body": "When a local viewer's `Hello` arrives without formats, the server sets `Viewer.formats_due = now + FORMATS_WAIT` and registers a 1 s `Timer` whose callback only wakes the loop; `render_viewers` then compares the `Instant`. Both clients send `Hello` and `Formats` back to back in one outbox: `hello()` in `viewer.rs` returns until it has formats, and `script.rs` does the same. The two messages arrive in one read and the decode loop handles both before `render_viewers` runs.\n\n## Proposal\n\nMark a local viewer `ready` on `Formats` instead of `Hello`, or drop the wait and let an empty `formats` fall back to linear as it already does. The field, the constant, the timer and the render filter clause go.",
   "type": "chore",
-  "status": "open",
+  "status": "in_progress",
   "priority": 3,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T19:47:26.557825568Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.068191222Z",
-  "updated_at": "2026-11-08T07:40:26.068191222Z",
+  "updated_at": "2026-11-08T19:32:26.557825568Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
