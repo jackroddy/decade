@@ -3,7 +3,7 @@
   "title": "One non-blocking line reader for Hyprland events and channel clients",
   "body": "`viewer.rs` has a 40-line calloop closure that reads the Hyprland event socket in `[0u8; 4096]` chunks, handles `Ok(0)` and `WouldBlock`, and drains lines at `position(b'\\n')` before calling `hypr::wants_recount`. The channel client reader in `compositor.rs` is the same loop over socket lines. `read_lines` in `decade-channel` is a blocking cousin. `hypr.rs` owns the event format and `events()` but not the reading.\n\n## Proposal\n\nOne line reader shared by both, with `hypr.rs` owning the Hyprland read and `viewer.rs` keeping only `recount_alone`.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,13 +12,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T19:57:07.28684007Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.089051252Z",
-  "updated_at": "2026-11-08T19:43:16.888965179Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T19:43:16.899465508Z",
+  "closed_at": "2026-11-08T19:43:16.899465508Z",
+  "close_reason": "Landed in b993aaf. src/lines.rs holds Lines, used by the channel client reader and the Hyprland event reader. The note explains why the Hyprland registration stays in viewer.rs. read_lines in decade-channel stays blocking on its own thread.",
+  "resolution": "done",
   "notes": [
     {
       "id": "44533a39",
@@ -34,6 +34,9 @@
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "b993aaf",
+      "branch": "simplify"
+    }
   }
 }
