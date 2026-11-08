@@ -173,8 +173,7 @@ impl State {
             layout.draw_ghost(pane.id, &mut ghost, chrome);
             paint.scene(&mut elements, &ghost, origin + cell, Some(shrink));
             if let Some(toplevel) = pane.toplevel() {
-                let offset =
-                    font.px_rect(layout.client_rect(pane)).loc - font.px_rect(pane.rect).loc;
+                let offset = font.px_rect(pane.client_rect()).loc - font.px_rect(pane.rect).loc;
                 let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                     render_elements_from_surface_tree(
                         paint.renderer,
@@ -213,7 +212,7 @@ impl State {
             if chrome.dragging == Some(pane.id) {
                 continue;
             }
-            let rect = layout.client_rect(pane);
+            let rect = pane.client_rect();
             if rect.columns == 0 || rect.rows == 0 {
                 continue;
             }
@@ -414,7 +413,7 @@ fn paint_picker(
             let Some(toplevel) = pane.toplevel() else {
                 continue;
             };
-            let client = paint.font.px_rect(layout.client_rect(pane));
+            let client = paint.font.px_rect(pane.client_rect());
             let origin = anchor - area.loc + client.loc;
             let tree: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                 render_elements_from_surface_tree(

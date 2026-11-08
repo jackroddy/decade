@@ -1198,7 +1198,7 @@ impl State {
     }
 
     fn client_geometry(&self, pane: &Pane) -> (Point<i32, Logical>, Size<i32, Logical>) {
-        let rect = self.font.px_rect(self.layout().client_rect(pane));
+        let rect = self.font.px_rect(pane.client_rect());
         (
             rect.loc.to_f64().to_logical(self.scale).to_i32_round(),
             rect.size.to_f64().to_logical(self.scale).to_i32_round(),

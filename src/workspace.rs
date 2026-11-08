@@ -67,7 +67,7 @@ impl Workspace {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| cwd.display().to_string());
-        let mut layout = Layout::new(area);
+        let mut layout = Layout::new(area, "terminal".to_string());
         layout.panes[0].cwd = Some(cwd.clone());
         Workspace::with_tabs(id, name, cwd, vec![layout], 0)
     }
@@ -144,9 +144,8 @@ impl Workspace {
     /// Add a tab holding one terminal in the workspace's cwd, and return
     /// its index and the terminal's name.
     pub fn add_tab(&mut self, area: CellRect) -> (usize, String) {
-        let mut layout = Layout::new(area);
         let name = self.unique_pane_name("terminal");
-        layout.panes[0].name = name.clone();
+        let mut layout = Layout::new(area, name.clone());
         layout.panes[0].cwd = Some(self.cwd.clone());
         self.tabs.push(Tab {
             layout,

@@ -66,7 +66,7 @@ impl CellRect {
         )
     }
 
-    pub fn inner(&self) -> CellRect {
+    fn inner(&self) -> CellRect {
         if self.columns < 3 || self.rows < 3 {
             return CellRect::EMPTY;
         }
@@ -168,6 +168,11 @@ impl Pane {
         self.clients.is_empty() && self.cwd.is_some() && self.pinned
     }
 
+    /// The cells the pane's client fills.
+    pub fn client_rect(&self) -> CellRect {
+        client_area(self.rect, self.clients.len())
+    }
+
     /// The window of the tab drawn.
     pub fn toplevel(&self) -> Option<&ToplevelSurface> {
         self.clients.get(self.shown).map(|client| &client.toplevel)
@@ -267,17 +272,9 @@ pub struct Layout {
 }
 
 impl Layout {
-    pub fn new(area: CellRect) -> Layout {
-        let mut layout = Layout {
-            area,
-            panes: vec![Pane::new(0, "terminal".to_string())],
-            focused: 0,
-            zoom: None,
-            root: Node::Leaf(0),
-            next_id: 1,
-        };
-        layout.arrange();
-        layout
+    /// A layout holding one empty pane with this name.
+    pub fn new(area: CellRect, name: String) -> Layout {
+        Layout::restore(area, vec![Pane::new(0, name)], Node::Leaf(0), 0, None)
     }
 
     pub fn restore(
@@ -309,7 +306,7 @@ impl Layout {
         self.arrange();
     }
 
-    pub fn arrange(&mut self) {
+    fn arrange(&mut self) {
         for pane in &mut self.panes {
             pane.rect = CellRect::EMPTY;
         }
@@ -346,10 +343,6 @@ impl Layout {
 
     pub fn visible(&self) -> impl Iterator<Item = &Pane> {
         self.panes.iter().filter(|pane| !pane.rect.is_empty())
-    }
-
-    pub fn client_rect(&self, pane: &Pane) -> CellRect {
-        client_area(pane.rect, pane.clients.len())
     }
 
     pub fn pane_at(&self, column: u32, row: u32) -> Option<usize> {
@@ -397,8 +390,7 @@ impl Layout {
         let Some(path) = found else {
             return;
         };
-        let area = node_area(&self.root, self.area, &path);
-        let Some(Node::Split { ratio, .. }) = node_at(&mut self.root, &path) else {
+        let Some((ratio, area)) = split_at(&mut self.root, self.area, &path) else {
             return;
         };
         let (start, length) = match axis {
@@ -443,20 +435,12 @@ impl Layout {
         let id = self.next_id;
         self.next_id += 1;
         let at = self.focused;
-        let axis = match self.pane(at) {
-            Some(pane) if pane.rect.columns >= pane.rect.rows * 2 => Axis::Horizontal,
-            _ => Axis::Vertical,
+        let side = match self.pane(at) {
+            Some(pane) if pane.rect.columns >= pane.rect.rows * 2 => Side::Right,
+            _ => Side::Below,
         };
         self.panes.push(Pane::new(id, name));
-        if !split_leaf(&mut self.root, at, axis, id) {
-            let old = std::mem::replace(&mut self.root, Node::Leaf(id));
-            self.root = Node::Split {
-                axis,
-                ratio: 0.5,
-                first: Box::new(old),
-                second: Box::new(Node::Leaf(id)),
-            };
-        }
+        split_beside(&mut self.root, at, side, id);
         self.zoom = None;
         self.focused = id;
         self.arrange();
@@ -473,9 +457,9 @@ impl Layout {
             return;
         }
         self.panes.remove(index);
-        let heir = sibling_leaf(&self.root, id);
         let root = std::mem::replace(&mut self.root, Node::Leaf(usize::MAX));
-        self.root = remove_leaf(root, id);
+        let (root, heir) = remove_leaf(root, id);
+        self.root = root;
         if self.zoom == Some(id) {
             self.zoom = None;
         }
@@ -546,11 +530,7 @@ impl Layout {
     }
 
     pub fn drag_boundary(&mut self, boundary: &Boundary, column: u32, row: u32) {
-        let area = node_area(&self.root, self.area, &boundary.path);
-        let Some(node) = node_at(&mut self.root, &boundary.path) else {
-            return;
-        };
-        let Node::Split { ratio, .. } = node else {
+        let Some((ratio, area)) = split_at(&mut self.root, self.area, &boundary.path) else {
             return;
         };
         let (position, start, length) = match boundary.axis {
@@ -567,21 +547,12 @@ impl Layout {
         self.arrange();
     }
 
-    fn bar_row(&self, pane: &Pane) -> Option<(u32, u32, u32)> {
-        let inner = pane.rect.inner();
-        if inner.is_empty() {
-            return None;
-        }
-        Some((inner.column, inner.row, inner.columns))
-    }
-
     /// The pane and Ctrl bar button under the cell, were the bar shown.
     pub fn bar_hit(&self, column: u32, row: u32) -> Option<(usize, BarButton)> {
         for pane in self.visible() {
-            let Some((start, bar_row, width)) = self.bar_row(pane) else {
-                continue;
-            };
-            if row != bar_row || column < start || column >= start + width {
+            let inner = pane.rect.inner();
+            let (start, width) = (inner.column, inner.columns);
+            if inner.is_empty() || row != inner.row || column < start || column >= start + width {
                 continue;
             }
             let button = bar_buttons(start, width)
@@ -988,24 +959,6 @@ fn arrange_node(node: &Node, area: CellRect, out: &mut Vec<(usize, CellRect)>) {
     }
 }
 
-fn split_leaf(node: &mut Node, at: usize, axis: Axis, new: usize) -> bool {
-    match node {
-        Node::Leaf(id) if *id == at => {
-            *node = Node::Split {
-                axis,
-                ratio: 0.5,
-                first: Box::new(Node::Leaf(at)),
-                second: Box::new(Node::Leaf(new)),
-            };
-            true
-        }
-        Node::Leaf(_) => false,
-        Node::Split { first, second, .. } => {
-            split_leaf(first, at, axis, new) || split_leaf(second, at, axis, new)
-        }
-    }
-}
-
 fn split_path(
     node: &Node,
     id: usize,
@@ -1145,12 +1098,12 @@ fn dropped(root: Node, dragged: usize, drop: Drop) -> Node {
             root
         }
         Drop::Split { target, side } => {
-            let mut root = remove_leaf(root, dragged);
+            let (mut root, _) = remove_leaf(root, dragged);
             split_beside(&mut root, target, side, dragged);
             root
         }
         Drop::Edge(side) => {
-            let rest = Box::new(remove_leaf(root, dragged));
+            let rest = Box::new(remove_leaf(root, dragged).0);
             let new = Box::new(Node::Leaf(dragged));
             let (axis, before) = side_axis(side);
             let (ratio, first, second) = if before {
@@ -1197,29 +1150,35 @@ fn split_beside(node: &mut Node, target: usize, side: Side, new: usize) -> bool 
     }
 }
 
-fn remove_leaf(node: Node, id: usize) -> Node {
-    match node {
-        Node::Leaf(_) => node,
-        Node::Split {
-            axis,
-            ratio,
-            first,
-            second,
-        } => {
-            if matches!(*first, Node::Leaf(leaf) if leaf == id) {
-                return *second;
-            }
-            if matches!(*second, Node::Leaf(leaf) if leaf == id) {
-                return *first;
-            }
-            Node::Split {
-                axis,
-                ratio,
-                first: Box::new(remove_leaf(*first, id)),
-                second: Box::new(remove_leaf(*second, id)),
-            }
-        }
+/// The tree without the leaf, and the first leaf of the sibling that took
+/// its place.
+fn remove_leaf(node: Node, id: usize) -> (Node, Option<usize>) {
+    let Node::Split {
+        axis,
+        ratio,
+        first,
+        second,
+    } = node
+    else {
+        return (node, None);
+    };
+    if matches!(*first, Node::Leaf(leaf) if leaf == id) {
+        let heir = first_leaf(&second);
+        return (*second, Some(heir));
     }
+    if matches!(*second, Node::Leaf(leaf) if leaf == id) {
+        let heir = first_leaf(&first);
+        return (*first, Some(heir));
+    }
+    let (first, in_first) = remove_leaf(*first, id);
+    let (second, in_second) = remove_leaf(*second, id);
+    let split = Node::Split {
+        axis,
+        ratio,
+        first: Box::new(first),
+        second: Box::new(second),
+    };
+    (split, in_first.or(in_second))
 }
 
 fn first_leaf(node: &Node) -> usize {
@@ -1227,19 +1186,6 @@ fn first_leaf(node: &Node) -> usize {
         Node::Leaf(id) => *id,
         Node::Split { first, .. } => first_leaf(first),
     }
-}
-
-fn sibling_leaf(node: &Node, id: usize) -> Option<usize> {
-    let Node::Split { first, second, .. } = node else {
-        return None;
-    };
-    if matches!(**first, Node::Leaf(leaf) if leaf == id) {
-        return Some(first_leaf(second));
-    }
-    if matches!(**second, Node::Leaf(leaf) if leaf == id) {
-        return Some(first_leaf(first));
-    }
-    sibling_leaf(first, id).or_else(|| sibling_leaf(second, id))
 }
 
 fn find_boundary(
@@ -1294,45 +1240,29 @@ fn find_boundary(
     found
 }
 
-fn node_area(node: &Node, area: CellRect, path: &[bool]) -> CellRect {
-    let Some((&second, rest)) = path.split_first() else {
-        return area;
+/// The ratio of the split at the end of the path, and the cells it divides.
+fn split_at<'a>(
+    node: &'a mut Node,
+    area: CellRect,
+    path: &[bool],
+) -> Option<(&'a mut f32, CellRect)> {
+    let Node::Split {
+        axis,
+        ratio,
+        first,
+        second,
+    } = node
+    else {
+        return None;
     };
-    match node {
-        Node::Leaf(_) => area,
-        Node::Split {
-            axis,
-            ratio,
-            first,
-            second: second_node,
-        } => {
-            let (a, b) = split_area(area, *axis, *ratio);
-            if second {
-                node_area(second_node, b, rest)
-            } else {
-                node_area(first, a, rest)
-            }
-        }
-    }
-}
-
-fn node_at<'a>(node: &'a mut Node, path: &[bool]) -> Option<&'a mut Node> {
-    let Some((&second, rest)) = path.split_first() else {
-        return Some(node);
+    let Some((&in_second, rest)) = path.split_first() else {
+        return Some((ratio, area));
     };
-    match node {
-        Node::Leaf(_) => None,
-        Node::Split {
-            first,
-            second: second_node,
-            ..
-        } => {
-            if second {
-                node_at(second_node, rest)
-            } else {
-                node_at(first, rest)
-            }
-        }
+    let (a, b) = split_area(area, *axis, *ratio);
+    if in_second {
+        split_at(second, b, rest)
+    } else {
+        split_at(first, a, rest)
     }
 }
 
@@ -1348,8 +1278,7 @@ pub(crate) mod tests {
     };
 
     fn three_anchors() -> Layout {
-        let mut layout = Layout::new(AREA);
-        layout.panes[0].name = "chat".to_string();
+        let mut layout = Layout::new(AREA, "chat".to_string());
         layout.add_transient("terminal".to_string());
         layout.add_transient("code".to_string());
         for (id, name) in [(0, "chat"), (1, "terminal"), (2, "code")] {
@@ -1412,6 +1341,43 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn removing_the_focused_pane_focuses_the_first_pane_of_its_sibling() {
+        let mut layout = three_anchors();
+        layout.focused = 0;
+        layout.remove(0);
+        assert_eq!(layout.focused, 1);
+        let mut layout = three_anchors();
+        layout.focused = 1;
+        layout.remove(1);
+        assert_eq!(layout.focused, 2);
+        let mut layout = three_anchors();
+        layout.focused = 2;
+        layout.remove(1);
+        assert_eq!(layout.focused, 2);
+    }
+
+    #[test]
+    fn a_new_pane_beside_a_wide_pane_goes_right_and_beside_a_tall_one_below() {
+        let mut layout = three_anchors();
+        layout.focused = 1;
+        let wide = layout.pane(1).unwrap().rect;
+        let right = layout.add_transient("right".to_string());
+        let rect = layout.pane(right).unwrap().rect;
+        assert_eq!(
+            (rect.column, rect.row),
+            (wide.column + wide.columns / 2, wide.row)
+        );
+        layout.focused = 0;
+        let tall = layout.pane(0).unwrap().rect;
+        let below = layout.add_transient("below".to_string());
+        let rect = layout.pane(below).unwrap().rect;
+        assert_eq!(
+            (rect.column, rect.row),
+            (tall.column, tall.row + tall.rows / 2)
+        );
+    }
+
+    #[test]
     fn zoom_gives_one_pane_the_body_and_hides_the_rest() {
         let mut layout = three_anchors();
         layout.toggle_zoom(2);
@@ -1438,7 +1404,7 @@ pub(crate) mod tests {
     fn the_ctrl_bar_buttons_are_hit_on_the_top_row_of_the_client() {
         let layout = three_anchors();
         let pane = layout.pane(0).unwrap();
-        let before = layout.client_rect(pane);
+        let before = pane.client_rect();
         assert_eq!(layout.bar_hit(48, before.row), Some((0, BarButton::Close)));
         assert_eq!(layout.bar_hit(38, before.row), Some((0, BarButton::Pin)));
         assert_eq!(layout.bar_hit(48, 1), Some((0, BarButton::Close)));
@@ -1563,7 +1529,7 @@ pub(crate) mod tests {
             columns: 96,
             rows: 40,
         };
-        let mut layout = Layout::new(area);
+        let mut layout = Layout::new(area, "terminal".to_string());
         layout.add_transient("code".to_string());
         assert_eq!(layout.drop_at(1, 24, 20), Some(Drop::Edge(Side::Left)));
         assert_eq!(layout.drop_at(1, 0, 20), None);
@@ -1635,7 +1601,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_pinned_terminal_whose_shell_exited_shows_a_restart_button() {
-        let mut layout = Layout::new(AREA);
+        let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.panes[0].cwd = Some(PathBuf::from("/home/jack"));
         layout.pin(0, "decade.w0.terminal".to_string());
         let font = crate::text::Font::load(14.0);
@@ -1648,7 +1614,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_long_name_on_the_ctrl_bar_is_cut_before_the_icons() {
-        let mut layout = Layout::new(AREA);
+        let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.panes[0].name = "x".repeat(200);
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
@@ -1669,7 +1635,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_pinned_gui_pane_without_its_window_waits_and_offers_no_restart() {
-        let mut layout = Layout::new(AREA);
+        let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.pin(0, "org.gnome.Nautilus".to_string());
         assert!(!layout.panes[0].restartable());
         let font = crate::text::Font::load(14.0);
@@ -1686,7 +1652,7 @@ pub(crate) mod tests {
 
     #[test]
     fn an_empty_scratch_pane_says_it_is_the_scratch_pane() {
-        let layout = Layout::new(AREA);
+        let layout = Layout::new(AREA, "terminal".to_string());
         let font = crate::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
         let chrome = Chrome {
