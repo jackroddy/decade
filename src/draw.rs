@@ -7,12 +7,16 @@ use smithay::utils::{Physical, Point, Size};
 use swash::scale::ScaleContext;
 
 use crate::panes::CellRect;
-use crate::text::{Font, Rgba, raster_run};
+use crate::text::{Font, Rgba, raster_icon, raster_run};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Face {
     Chrome,
     Menu,
+
+    /// A single chrome glyph, sized to the height every icon shares and
+    /// centred in one chrome cell.
+    Icon,
 }
 
 pub enum Shape {
@@ -49,6 +53,10 @@ impl Scene {
             cell_height: font.cell_height as i32,
             shapes: Vec::new(),
         }
+    }
+
+    pub fn cell(&self) -> (i32, i32) {
+        (self.cell_width, self.cell_height)
     }
 
     pub fn line_width(&self) -> i32 {
@@ -105,25 +113,41 @@ impl Scene {
         self.text_px(x, y, text, Face::Chrome, color);
     }
 
-    pub fn outline(&mut self, rect: CellRect, color: Rgba) {
+    pub fn icon(&mut self, column: u32, row: u32, icon: char, color: Rgba) {
+        let (x, y) = self.px(column, row);
+        self.text_px(x, y, &icon.to_string(), Face::Icon, color);
+    }
+
+    /// A box one stroke wide inside `rect`, `inset` pixels in from its
+    /// left, top, right and bottom sides.
+    pub fn outline(&mut self, rect: CellRect, inset: [i32; 4], color: Rgba) {
         if rect.columns < 2 || rect.rows < 2 {
             return;
         }
-        let line = self.line_width();
+        let [left, top, right, bottom] = inset;
         let (x, y) = self.px(rect.column, rect.row);
         let (width, height) = self.px(rect.columns, rect.rows);
-        let (left, top) = (x + self.cell_width / 2, y + self.cell_height / 2);
-        let (right, bottom) = (
-            x + width - self.cell_width / 2,
-            y + height - self.cell_height / 2,
+        self.box_lines(
+            x + left,
+            y + top,
+            width - left - right,
+            height - top - bottom,
+            color,
         );
-        self.box_lines(left, top, right - left + line, bottom - top + line, color);
     }
 
     pub fn frame(&mut self, rect: CellRect, color: Rgba) {
         let (x, y) = self.px(rect.column, rect.row);
         let (width, height) = self.px(rect.columns, rect.rows);
         self.box_lines(x, y, width, height, color);
+    }
+
+    /// A line one stroke wide down the right edge of `rect`.
+    pub fn right_edge(&mut self, rect: CellRect, color: Rgba) {
+        let (x, y) = self.px(rect.column + rect.columns, rect.row);
+        let (_, height) = self.px(0, rect.rows);
+        let line = self.line_width();
+        self.rect(x - line, y, line, height, color);
     }
 
     pub fn box_lines(&mut self, x: i32, y: i32, width: i32, height: i32, color: Rgba) {
@@ -134,7 +158,7 @@ impl Scene {
         self.rect(x + width - line, y, line, height, color);
     }
 
-    fn px(&self, column: u32, row: u32) -> (i32, i32) {
+    pub fn px(&self, column: u32, row: u32) -> (i32, i32) {
         (
             column as i32 * self.cell_width,
             row as i32 * self.cell_height,
@@ -186,7 +210,10 @@ impl TextCache {
     ) -> Option<&TextTexture> {
         let key = (text.to_string(), face, color.map(f32::to_bits));
         if !self.entries.contains_key(&key) {
-            let run = raster_run(&mut self.context, font, text, color);
+            let run = match (face, text.chars().next()) {
+                (Face::Icon, Some(icon)) => raster_icon(&mut self.context, font, icon, color),
+                _ => raster_run(&mut self.context, font, text, color),
+            };
             let (width, height) = (round_trip(run.width, scale), round_trip(run.height, scale));
             let pixels = pad(&run.pixels, run.width, run.height, width, height);
             let texture = renderer

@@ -47,6 +47,9 @@ is the command line, the socket protocol and what the tool writes; for
 breaking axis, a change that breaks one of those moves that crate's minor.
 Anything else moves the patch. A protocol change moves both.
 
+**One server.** One decade server runs per user, and it holds every
+workspace. There are no named sessions and no multi-user modes.
+
 **Closing panes.** No keybind closes a pane. A pane closes only through the
 x on its bar or when the program in it exits.
 
@@ -58,9 +61,13 @@ scaled, such as the drag ghost, leaves its text out.
 The reader keeps an arm for the old layout by default. A breaking release may
 drop that arm, listed under `### Removed`.
 
-**Running decade.** Claude never starts decade, on Jack's screen or on
-`headless-dev`. Claude builds it, asks Jack to run it, and waits for his
-report. `decade-dev` runs the debug build and `decade` the release build.
+**Running decade.** Claude never starts decade expecting Jack to test it.
+When Jack has to look at something or press keys, Claude builds decade, asks
+him to run it, and waits for his report. For its own checks, Claude may run
+decade on `headless-dev`. To look at the UI, Claude runs `decade script` against a
+server with its own `XDG_RUNTIME_DIR` and `XDG_STATE_HOME`. The command
+sends scripted input and saves the frames it gets back as PNG files, with
+no window and no seat focus. `decade-dev` runs the debug build and `decade` the release build.
 Both are links to `scripts/launch`, which rebuilds first. Claude never asks
 Jack for a screenshot. When Claude needs to know how something looks, Claude
 asks him to describe it.

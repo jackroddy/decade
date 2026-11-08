@@ -12,16 +12,89 @@ command line and what the tool writes.
 
 ### Added
 
+- A server holds workspaces. Each has a name, a working directory and its
+  own panes. A new server starts one workspace in the home directory, named
+  after that directory, with one terminal. Programs decade starts run in
+  their workspace's directory, with its name in `DECADE_WORKSPACE`. Each
+  workspace has its own socket in `DECADE_SOCKET` and its own MCP address
+  in `DECADE_MCP`. A client or an agent reaches only the panes of its own
+  workspace, and a pane name means a pane in that workspace.
+- New workspace in the palette takes a path, starting at `~/`, and lists
+  the directories that complete it. Tab or Enter on a directory completes
+  it, and Open creates a workspace there and shows it. The workspace takes
+  the directory's name, with a count after it when that name is taken.
+- A top bar replaces the status line. It shows the workspace and focused
+  pane on the left, the number of workspaces whose agents need attention,
+  are done or are working on the right, and a button that opens the
+  palette. A sidebar on the left lists every workspace, those whose agents
+  most need the person first, with the agent's message under one that
+  needs attention or is done. A click on a workspace shows it, and a click
+  on its mark returns done or attention to idle. Super+B collapses the
+  sidebar to a strip of marks, and Super+A shows the next workspace whose
+  agent needs the person.
+- The server saves its workspaces to `~/.local/state/decade/workspaces.toml`
+  and restores them when it starts. The file holds each workspace's name,
+  directory and split tree, and each pane's name and whether it is pinned.
+  A terminal pane comes back as a shell in the directory its shell was in.
+  A pane that held another app comes back empty, and a window of that app
+  fills it again. decade saves a second after a change, every minute, and
+  when it stops.
+- A client on the socket reports the state of the agent in its pane with a
+  `status` message: attention, done, working or idle, with an optional
+  message. A state holds until its client or the person at the screen
+  replaces it, and goes when the client disconnects. A pane entering
+  attention raises a desktop notification unless a focused viewer shows
+  its workspace. `decade-channel` gains `AgentState` and `Channel::status`.
+- Super+Tab opens a picker with a cell for each workspace, showing its
+  panes scaled down, and a last cell for a new workspace. Super+Tab, Tab,
+  the arrow keys or Ctrl+H/J/K/L move between cells. Enter or a click
+  shows the workspace, and Esc closes the picker. Dragging a cell moves it
+  in the order. The x on a cell closes its workspace after a second press.
+  While the picker is open, programs in workspaces no viewer shows draw
+  twice a second, so their cells stay current.
+- Close workspace in the palette asks for a second Enter, then closes every
+  pane in the workspace. The workspace goes once its last client has, and
+  viewers showing it move to the first one left. Closing the last workspace
+  starts a new one in the home directory.
+- A workspace holds tabs, each its own split tree of panes. Super+T opens a
+  tab with one terminal in the workspace's directory and shows it. Super+[
+  and Super+] show the previous and next tab. They wrap at the ends. The
+  top bar shows a numbered button for each tab after the workspace name,
+  with the shown tab highlighted, and a `+` button that opens a tab. A
+  click on a number shows that tab. Programs in hidden tabs keep running at
+  the size of the pane area. decade sends them no frame callbacks until
+  their tab is shown. A pane name stays unique across a workspace's tabs.
+  Focusing a pane over the socket or MCP shows its tab.
+- Close tab in the palette asks for a second Enter, then closes every pane
+  in the shown tab. The tab goes once its last client has. Closing the last
+  tab closes the workspace.
+- `workspaces.toml` is now version 2. It holds each workspace's tabs, the
+  tab each workspace shows, and whether the sidebar is open. decade still
+  reads a version 1 file, as one tab per workspace with the sidebar open.
 - Panes are a split tree. A new window with no anchor of its own, or
   Super+Shift+Return, splits the focused pane along its longer side; a pane
-  made that way closes when its client exits. The three original panes are
-  anchors: they stay as empty slots, saying what they wait for, when their
-  client goes, and take it back when it returns.
+  made that way closes when its client exits.
 - Holding Ctrl alone for 50 ms shows a bar over the top row of each pane
   with its name and buttons to pin, zoom and close it. Dragging the outline
   between two panes resizes them.
-- Pinning a pane makes it an anchor for its program's app id. Unpinning an
-  anchor makes it a pane that closes with its program.
+- Pinning a pane makes it an anchor for its program's app id. An anchor
+  stays as an empty slot, saying what it waits for, when its client goes,
+  and takes it back when it returns. A pinned terminal whose shell exits
+  shows a restart button instead, and a click on the slot or Enter starts
+  a new shell in the pane's directory. Unpinning an anchor makes it a pane
+  that closes with its program.
+- A button on the Ctrl bar marks a pane as its workspace's scratch pane.
+  Agents show things there. A workspace has one scratch pane at most.
+  Marking a pane unmarks the one before it. The scratch pane carries a
+  scratch tag on its outline. It stays as an empty slot when its client
+  exits. The x on an empty scratch pane removes it. `workspaces.toml`
+  records which pane is the scratch pane.
+- When an agent calls the MCP tool `scratch.open`, decade starts a program
+  in the scratch pane. The program runs in a terminal or as its own window.
+  decade starts only a program on its `PATH` whose name starts with
+  `decade-`. decade asks a program already in the scratch pane to close
+  first. The MCP tool `scratch.send` sends a message to the program in the
+  scratch pane.
 - Ctrl+dragging a pane, or dragging it by the name on its bar, carries a
   small copy of it under the pointer. Dropping it on a target drawn over
   another pane swaps the two or splits that pane on one side. Dropping it
@@ -42,11 +115,20 @@ command line and what the tool writes.
   a hello that claims a pane, messages addressed to a pane and forwarded to
   its occupant, `focus` and `panes` for decade itself, and an error line for
   anything else. `docs/protocol.md` has the details.
+- `decade start`, `decade stop`, `decade restart` and `decade status`
+  control the server. `start` runs a server in the background and opens no
+  window. `stop` ends the server and every program in its panes. `status`
+  prints the server's pid, and exits with 1 when no server is running.
+  `decade list` prints each workspace's id, name, number of panes and
+  directory.
+- `decade script FILE` drives a running server from a script and saves the
+  frames it draws as PNG files, for checking the UI without a window. It
+  connects as a viewer and runs one command per line: `key super+tab`,
+  `type text`, `press ctrl` and `release ctrl`, `hold ctrl 400`,
+  `move x y`, `click x y`, `drag x1 y1 x2 y2`, `size width height`,
+  `wait ms` and `shot file.png`. Lines starting with `#` are comments.
 - `--class <app id>` sets the window's app id, for window rules. The default
   is `decade`.
-- `--chat "<command>"` and `--code "<command>"` run a command in a terminal
-  inside the chat pane or the code pane, in addition to the shell in the
-  terminal pane.
 - Super with h, j, k or l moves focus between panes by direction,
   Super+Shift swaps the focused pane with its neighbour, Super with an arrow
   key moves the nearest divider, and Super+M zooms the focused pane. A click
@@ -56,9 +138,26 @@ command line and what the tool writes.
 - Under Hyprland, while decade's window is the only one on its workspace,
   Hyprland passes decade the keys it would otherwise take. Binds marked
   `dont_inhibit` keep working in Hyprland.
+- A pane holds tabs, and each tab holds one program. Super+Shift+T starts
+  a terminal as a new tab of the focused pane. The terminal starts in the
+  pane's directory, or in the workspace's when the pane has none.
+  Super+Shift+[ and Super+Shift+] show the previous and next tab. A pane
+  with more than one tab shows a row of labels at its top. A click on a
+  label shows that tab. When a tab's program exits, decade shows the tab
+  beside it. The x on the Ctrl bar closes the tab shown. decade saves the
+  directory of each terminal tab and starts those terminals again.
 
 ### Changed
 
+- decade runs as two parts. `decade server` owns the panes and their
+  programs and has no window. `decade` opens a window that shows the server
+  and sends it input, and starts a server first if none is running. Closing
+  the window leaves the server and its programs running, and running
+  `decade` again shows them again. The two talk over the protocol in
+  `docs/viewer.md`.
+- Copy and paste work between panes, and between panes and the host, for
+  both the clipboard and the primary selection. Super+C, Super+V and
+  Super+X copy, paste and cut in the focused pane.
 - A pane is drawn as a box-drawing outline, one stroke wide, in the accent
   colour on the focused pane and a muted one elsewhere; the title strips are
   gone. Colours come from a palette copied from the Omarchy theme.
@@ -68,6 +167,28 @@ command line and what the tool writes.
 - The window opens on a headless Hyprland output during development; see
   `scripts/devscreen`.
 - Clients in panes render on the same GPU as decade.
+- The palette, the New workspace browser and the settings panel share one
+  width and one top edge. The palette is as tall as its rows. A dim scrim
+  covers the window behind the palette, the settings panel and the picker.
+  Each of them has a footer of key hints.
+- The picker outlines the selected workspace two strokes thick. A dot marks
+  the current workspace. Labels are cut to their cell. After one press on a
+  workspace's x its label is "close? x again" in red. The x is larger.
+- An open palette, settings panel or picker closes when the active viewer
+  disconnects.
+- Long names are cut with an ellipsis on the Ctrl bar, in the top bar and
+  in the palette. decade draws no tab button in the top bar where it would
+  reach the agent counts.
+- The New workspace browser shows "no folders" when nothing matches.
+- Settings values line up in one column. "Bar hold" is now "Ctrl bar
+  delay" and "Grab animation" is now "Drag pickup time".
+- A pane whose shell exited keeps its normal background and shows a larger
+  restart button.
+- The Ctrl bar's icons share one size and stay dark on the focused bar. The
+  pin is filled when pinned and outlined when not.
+- The gaps between panes match the margin at the edge of the pane area.
+  Unfocused outlines are brighter. A pinned pane shows a pin on its top
+  edge, and a zoomed pane shows a zoom tag there.
 
 ## [0.1.0] - 2026-11-05
 

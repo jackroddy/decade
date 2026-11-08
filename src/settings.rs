@@ -53,10 +53,10 @@ impl Knob {
         match self {
             Knob::FontSize => "Font size",
             Knob::PaletteSize => "Palette font size",
-            Knob::BarHold => "Bar hold",
+            Knob::BarHold => "Ctrl bar delay",
             Knob::GhostScale => "Drag size",
             Knob::GhostOpacity => "Drag opacity",
-            Knob::Grab => "Grab animation",
+            Knob::Grab => "Drag pickup time",
         }
     }
 
