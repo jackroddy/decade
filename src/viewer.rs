@@ -1,12 +1,10 @@
 mod clipboard;
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 
-use rustix::fs::MemfdFlags;
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
 use smithay_client_toolkit::dmabuf::{DmabufFeedback, DmabufHandler, DmabufState};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
@@ -29,8 +27,7 @@ use smithay_client_toolkit::{
 use wayland_client::globals::{GlobalList, registry_queue_init};
 use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_data_device_manager::WlDataDeviceManager, wl_keyboard, wl_keyboard::WlKeyboard, wl_output, wl_pointer,
-    wl_pointer::WlPointer, wl_region::WlRegion, wl_seat, wl_seat::WlSeat, wl_shm, wl_shm::WlShm,
-    wl_shm_pool::WlShmPool, wl_subsurface::WlSubsurface, wl_surface::WlSurface,
+    wl_pointer::WlPointer, wl_region::WlRegion, wl_seat, wl_seat::WlSeat, wl_subsurface::WlSubsurface, wl_surface::WlSurface,
 };
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::cursor_shape::v1::client::{
@@ -180,26 +177,12 @@ fn missing(name: &str) -> ! {
 
 /// A 1×1 buffer of the background colour, for the window behind the frame.
 fn background(globals: &GlobalList, qh: &QueueHandle<Viewer>) -> WlBuffer {
-    if let Ok(manager) = globals.bind::<WpSinglePixelBufferManagerV1, _, _>(qh, 1..=1, ()) {
-        let [red, green, blue, alpha] = BACKGROUND.map(|c| (c as f64 * u32::MAX as f64) as u32);
-        let buffer = manager.create_u32_rgba_buffer(red, green, blue, alpha, qh, ());
-        manager.destroy();
-        return buffer;
-    }
-    let shm: WlShm = globals
+    let manager: WpSinglePixelBufferManagerV1 = globals
         .bind(qh, 1..=1, ())
-        .unwrap_or_else(|_| missing("wl_shm"));
-    let [red, green, blue, _] = BACKGROUND.map(|c| (c * 255.0).round() as u8);
-    let mut file = rustix::fs::memfd_create("decade-background", MemfdFlags::CLOEXEC)
-        .map(File::from)
-        .unwrap_or_else(|error| fail(&format!("no memfd for the background: {error}")));
-    // xrgb8888 is a little-endian u32, so blue comes first
-    if let Err(error) = file.write_all(&[blue, green, red, 0xff]) {
-        fail(&format!("the background did not write: {error}"));
-    }
-    let pool = shm.create_pool(file.as_fd(), 4, qh, ());
-    let buffer = pool.create_buffer(0, 1, 1, 4, wl_shm::Format::Xrgb8888, qh, ());
-    pool.destroy();
+        .unwrap_or_else(|_| missing("wp_single_pixel_buffer_manager_v1"));
+    let [red, green, blue, alpha] = BACKGROUND.map(|c| (c as f64 * u32::MAX as f64) as u32);
+    let buffer = manager.create_u32_rgba_buffer(red, green, blue, alpha, qh, ());
+    manager.destroy();
     buffer
 }
 
@@ -1279,8 +1262,6 @@ macro_rules! no_events {
 no_events!(
     WlBuffer,
     WlRegion,
-    WlShm,
-    WlShmPool,
     WpSinglePixelBufferManagerV1,
     WpViewporter,
     WpViewport,
