@@ -3,7 +3,7 @@
   "title": "Workspace owns adding, removing and pruning panes",
   "body": "Adding a named pane is written at three sites: `Workspace::add_tab`, `new_terminal_pane` and the fallback arm of `commit` in `compositor.rs`. Each runs `unique_pane_name`, then `add_transient` or `Layout::new`, sets `cwd`, and calls `router.add_pane`. Removing one is written at `remove_pane` and `finish_closing_tab`; each calls `router.remove_pane` and `agents.remove`, and only `remove_pane` clears `scratch` (the bug \"Closing a tab that holds the scratch pane leaves the workspace naming a pane that is gone\").\n\nThe rule \"an empty pane stays only while it is pinned or is the scratch pane\" is written at four sites, `close_pane`, `toggle_pin`, `toggle_scratch` and `toplevel_destroyed`, each with its own mix of `matches!(kind, Transient)`, `clients.is_empty()` and `scratch_pane() == Some(name)`. That name comparison appears at about nine sites across `compositor.rs` and `panes.rs`. Inside `close_pane`, the arms `(None, Transient)` and `(None, Anchor { .. }) if scratched` have identical bodies.\n\n`commit` and `show_tab` also write `pane.clients` and `pane.shown` from outside `panes.rs`, while `step_tab` and `remove_client` keep the invariant that `shown` points at a client.\n\n## Proposal\n\n- `Workspace::add_pane(tab, base, cwd) -> (id, name)` and `Workspace::forget_pane(name)` that clears router, agents and scratch.\n- `Workspace::is_scratch(&Pane)`, `Pane::pinned()` and one `Workspace::prune_if_empty(tab, id)` that every site calls after its own change.\n- `Pane::add_client(client)`, which knows where a terminal tab goes, and `Pane::show(index)`, so `clients` and `shown` are written only in `panes.rs`.",
   "type": "chore",
-  "status": "open",
+  "status": "in_progress",
   "priority": 3,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T20:34:37.401678067Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:39:08.724853627Z",
-  "updated_at": "2026-11-08T07:39:08.724853627Z",
+  "updated_at": "2026-11-08T20:19:37.401678067Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
