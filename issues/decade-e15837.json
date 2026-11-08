@@ -15,7 +15,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.078629927Z",
-  "updated_at": "2026-11-08T19:45:27.072604776Z",
+  "updated_at": "2026-11-08T19:45:35.908726002Z",
   "closed_at": "2026-11-08T19:45:27.072604776Z",
   "close_reason": "Landed in 275e382. Viewer has Pointer (with scroll_event and take_scroll) and Frames. inhibit.rs is folded into inhibit_shortcuts on Viewer. dmabuf_feedback is an if on sent. The note says why the handshake fields stay loose.",
   "resolution": "done",
@@ -24,9 +24,10 @@
       "id": "04ec2dc3",
       "at": "2026-11-08T19:45:27.060576512Z",
       "author": "Jack Roddy/913b1d2c",
-      "text": "The handshake fields `configured`, `formats`, `sent` and `welcomed` stay loose on `Viewer`. `hello`, `sync_size` and `input` each read two or three of them alongside `size` and `scale`, and a struct around the four would only rename the reads. rustfmt does not format the `use wayland_client::protocol` block at the top of `viewer.rs`, since one line there is too long for it.",
+      "text": "The handshake fields `configured`, `formats`, `sent` and `welcomed` stay loose on `Viewer`. `hello`, `sync_size` and `input` each read two or three of them alongside `size` and `scale`, and a struct around the four would only rename the reads.",
       "commit": "275e382",
-      "branch": "simplify"
+      "branch": "simplify",
+      "edited_at": "2026-11-08T19:45:35.908725722Z"
     }
   ],
   "stamps": {
