@@ -1,7 +1,10 @@
 use swash::scale::{Render, ScaleContext, Source};
 use swash::{CacheKey, FontRef};
 
+use smithay::utils::{Physical, Rectangle};
+
 use crate::palette::Rgba;
+use crate::panes::CellRect;
 
 pub const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 
@@ -16,6 +19,22 @@ pub struct Font {
 }
 
 impl Font {
+    /// The pixels the cells cover.
+    pub fn px_rect(&self, rect: CellRect) -> Rectangle<i32, Physical> {
+        Rectangle::new(
+            (
+                (rect.column * self.cell_width) as i32,
+                (rect.row * self.cell_height) as i32,
+            )
+                .into(),
+            (
+                (rect.columns * self.cell_width) as i32,
+                (rect.rows * self.cell_height) as i32,
+            )
+                .into(),
+        )
+    }
+
     pub fn load(px: f32) -> Font {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();

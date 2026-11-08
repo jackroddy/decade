@@ -519,12 +519,7 @@ impl State {
         let Some(pane) = self.layout().pane(id) else {
             return Point::default();
         };
-        let rect = pane.rect;
-        (
-            (rect.column * self.font.cell_width) as i32,
-            (rect.row * self.font.cell_height) as i32,
-        )
-            .into()
+        self.font.px_rect(pane.rect).loc
     }
 
     fn pointer_cell(&self) -> (u32, u32) {

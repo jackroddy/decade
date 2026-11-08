@@ -156,11 +156,7 @@ impl State {
             let origin = shrink.about - grab;
             let cell: Point<i32, Physical> =
                 (font.cell_width as i32, font.cell_height as i32).into();
-            let outer: Point<i32, Physical> = (
-                (pane.rect.columns * font.cell_width) as i32,
-                (pane.rect.rows * font.cell_height) as i32,
-            )
-                .into();
+            let outer = font.px_rect(pane.rect).size;
             let start = shrink.point(origin + cell.downscale(2));
             let end = shrink.point(origin + outer - cell.downscale(2));
             let mut outline = Scene::new(font);
@@ -177,12 +173,8 @@ impl State {
             layout.draw_ghost(pane.id, &mut ghost, chrome);
             paint.scene(&mut elements, &ghost, origin + cell, Some(shrink));
             if let Some(toplevel) = pane.toplevel() {
-                let client = layout.client_rect(pane);
-                let offset: Point<i32, Physical> = (
-                    ((client.column - pane.rect.column) * font.cell_width) as i32,
-                    ((client.row - pane.rect.row) * font.cell_height) as i32,
-                )
-                    .into();
+                let offset =
+                    font.px_rect(layout.client_rect(pane)).loc - font.px_rect(pane.rect).loc;
                 let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                     render_elements_from_surface_tree(
                         paint.renderer,
@@ -225,24 +217,16 @@ impl State {
             if rect.columns == 0 || rect.rows == 0 {
                 continue;
             }
-            let origin = (
-                (rect.column * font.cell_width) as i32,
-                (rect.row * font.cell_height) as i32,
-            );
+            let crop = font.px_rect(rect);
             let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                 render_elements_from_surface_tree(
                     paint.renderer,
                     toplevel.wl_surface(),
-                    origin,
+                    crop.loc,
                     scale,
                     1.0,
                     Kind::Unspecified,
                 );
-            let size = (
-                (rect.columns * font.cell_width) as i32,
-                (rect.rows * font.cell_height) as i32,
-            );
-            let crop = Rectangle::new(origin.into(), size.into());
             elements.extend(
                 surfaces
                     .into_iter()
@@ -334,7 +318,7 @@ fn paint_picker(
     size: Size<i32, Physical>,
     pointer: Point<i32, Physical>,
 ) {
-    let (cell_width, cell_height) = (paint.font.cell_width, paint.font.cell_height);
+    let cell_height = paint.font.cell_height;
     let (menu_width, menu_height) = (
         paint.menu_font.cell_width as i32,
         paint.menu_font.cell_height as i32,
@@ -417,12 +401,8 @@ fn paint_picker(
 
         // the cell shows the pane area, not the top bar and sidebar, so
         // positions are taken from the area's corner and scaled to fit it
-        let area = layout.area;
-        let corner = Point::from((
-            (area.column * cell_width) as i32,
-            (area.row * cell_height) as i32,
-        ));
-        let (width, height) = (area.columns * cell_width, area.rows * cell_height);
+        let area = paint.font.px_rect(layout.area);
+        let (width, height) = (area.size.w, area.size.h);
         let scale = (cell.size.w as f64 / width.max(1) as f64)
             .min(cell.size.h as f64 / height.max(1) as f64);
         let anchor = cell.loc
@@ -434,12 +414,8 @@ fn paint_picker(
             let Some(toplevel) = pane.toplevel() else {
                 continue;
             };
-            let client = layout.client_rect(pane);
-            let origin = anchor - corner
-                + Point::from((
-                    (client.column * cell_width) as i32,
-                    (client.row * cell_height) as i32,
-                ));
+            let client = paint.font.px_rect(layout.client_rect(pane));
+            let origin = anchor - area.loc + client.loc;
             let tree: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                 render_elements_from_surface_tree(
                     paint.renderer,
