@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T19:57:07.28684007Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.089051252Z",
-  "updated_at": "2026-11-08T19:42:07.28684007Z",
+  "updated_at": "2026-11-08T19:43:16.888965179Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "44533a39",
+      "at": "2026-11-08T19:43:16.888964459Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "The Hyprland source stays registered in `viewer.rs`, not `hypr.rs`. Moving the registration into `hypr.rs` would need it to take a `LoopHandle` over the viewer's private `Viewer` type, or a type parameter with one instantiation. `hypr.rs` keeps the event format (`wants_recount`) and `events()`. The closure in `watch_hyprland` is now eight lines over `Lines::read`.",
+      "commit": "b993aaf",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
