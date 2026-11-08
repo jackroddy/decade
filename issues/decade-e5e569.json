@@ -1,0 +1,30 @@
+{
+  "id": "decade-e5e569",
+  "title": "Fonts and the text cache get one home",
+  "body": "`State` holds `font`, `menu_font` and `texts: TextCache`. `Font::load(settings.font_size * scale)` and its `palette_size` twin are written at three sites in `compositor.rs`: setup in `run`, `resized` and `settings_changed`. The `TextCache` key is `(String, Face, color)` with no font in it, so two of those sites must also remember `self.texts.clear()`. `Face` is matched twice: `Paint::scene` maps `Chrome` and `Icon` to `font` and `Menu` to `menu_font`, and `TextCache::get` maps `Icon` to `raster_icon`. Each `Font::load` runs `fontdb::Database::load_system_fonts()` and reads the same font file, so a reload does that twice. `Paint` carries `font` and `menu_font` again for its match.\n\n## Proposal\n\n`struct Text { chrome: Font, menu: Font, cache: TextCache }` with `Text::new(&Settings, scale)`, built once at setup and rebuilt at resize and settings change. Rebuilding clears the cache by construction. `Text::get(renderer, face, text, color)` picks font and raster mode in one match. The font data loads once and both sizes come from it.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:39:48.088208774Z",
+  "updated_at": "2026-11-08T07:39:48.088208774Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
