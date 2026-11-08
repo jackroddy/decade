@@ -3,7 +3,7 @@
   "title": "One non-blocking line reader for Hyprland events and channel clients",
   "body": "`viewer.rs` has a 40-line calloop closure that reads the Hyprland event socket in `[0u8; 4096]` chunks, handles `Ok(0)` and `WouldBlock`, and drains lines at `position(b'\\n')` before calling `hypr::wants_recount`. The channel client reader in `compositor.rs` is the same loop over socket lines. `read_lines` in `decade-channel` is a blocking cousin. `hypr.rs` owns the event format and `events()` but not the reading.\n\n## Proposal\n\nOne line reader shared by both, with `hypr.rs` owning the Hyprland read and `viewer.rs` keeping only `recount_alone`.",
   "type": "chore",
-  "status": "open",
+  "status": "in_progress",
   "priority": 3,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T19:57:07.28684007Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.089051252Z",
-  "updated_at": "2026-11-08T07:40:26.089051252Z",
+  "updated_at": "2026-11-08T19:42:07.28684007Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
