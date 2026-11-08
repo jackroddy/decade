@@ -116,7 +116,7 @@ impl State {
                 let point = self.pointer.to_physical(self.scale).to_i32_round();
                 let ids: Vec<u32> = self.workspaces.iter().map(|known| known.id).collect();
                 let grid = self.picker_grid();
-                let cell_height = self.font.cell_height as i32;
+                let cell_height = self.text.chrome.cell_height as i32;
                 let picker = self.picker.as_mut().unwrap();
                 let outcome = if pressed {
                     picker.press(point, &ids, &grid, cell_height)
@@ -519,14 +519,14 @@ impl State {
         let Some(pane) = self.layout().pane(id) else {
             return Point::default();
         };
-        self.font.px_rect(pane.rect).loc
+        self.text.chrome.px_rect(pane.rect).loc
     }
 
     fn pointer_cell(&self) -> (u32, u32) {
         let physical = self.pointer.to_physical(self.scale);
         (
-            (physical.x.max(0.0) / self.font.cell_width as f64) as u32,
-            (physical.y.max(0.0) / self.font.cell_height as f64) as u32,
+            (physical.x.max(0.0) / self.text.chrome.cell_width as f64) as u32,
+            (physical.y.max(0.0) / self.text.chrome.cell_height as f64) as u32,
         )
     }
 

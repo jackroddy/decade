@@ -42,9 +42,7 @@ impl State {
             gpu,
             size,
             workspaces,
-            font,
-            menu_font,
-            texts,
+            text,
             start,
             scale,
             drag,
@@ -96,9 +94,7 @@ impl State {
             .map_err(|error| error.to_string())?;
         let mut paint = Paint {
             renderer: &mut gpu.renderer,
-            texts,
-            font,
-            menu_font,
+            text,
             rounded,
             scale,
         };
@@ -109,13 +105,13 @@ impl State {
             ((size.w - box_size.w) / 2, top).into()
         };
         if let Some(menu) = menu {
-            let mut scene = Scene::new(paint.menu_font);
-            let box_size = menu.draw(&mut scene, paint.menu_font);
+            let mut scene = Scene::new(&paint.text.menu);
+            let box_size = menu.draw(&mut scene, &paint.text.menu);
             paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
         }
         if let Some(panel) = panel {
-            let mut scene = Scene::new(paint.menu_font);
-            let box_size = panel.draw(&mut scene, paint.menu_font, settings);
+            let mut scene = Scene::new(&paint.text.menu);
+            let box_size = panel.draw(&mut scene, &paint.text.menu, settings);
             paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
         }
         if let (Some(picker), Some(grid)) = (picker, &picker_grid) {
@@ -129,7 +125,7 @@ impl State {
             );
         }
         if menu.is_some() || panel.is_some() || picker.is_some() {
-            let mut scrim = Scene::new(font);
+            let mut scrim = Scene::new(&paint.text.chrome);
             scrim.rect(0, 0, size.w, size.h, SCRIM);
             paint.scene(&mut elements, &scrim, Point::default(), None);
         }
@@ -145,7 +141,7 @@ impl State {
             paint_ghost(&mut paint, &mut elements, layout, chrome, shrink, *grab);
         }
 
-        let mut above = Scene::new(font);
+        let mut above = Scene::new(&paint.text.chrome);
         layout.draw_bars(&mut above, chrome);
         if let Some(Drag::Pane {
             id,
@@ -159,7 +155,7 @@ impl State {
 
         if let Some(frame) = frame {
             paint_clients(&mut paint, &mut elements, layout, chrome);
-            let mut below = Scene::new(font);
+            let mut below = Scene::new(&paint.text.chrome);
             layout.draw(&mut below, chrome);
             frame.draw(&mut below);
             paint.scene(&mut elements, &below, Point::default(), None);
@@ -179,7 +175,7 @@ impl State {
             .map_err(|error| error.to_string())?;
         let sync = frame.finish().map_err(|error| error.to_string())?;
         drop(framebuffer);
-        texts.end_frame();
+        paint.text.end_frame();
 
         let time = start.elapsed().as_millis() as u32;
         for pane in layout.visible() {
@@ -258,13 +254,14 @@ fn paint_ghost(
     let Some(pane) = chrome.dragging.and_then(|id| layout.pane(id)) else {
         return;
     };
-    let font = paint.font;
+    let font = &paint.text.chrome;
     let origin = shrink.about - grab;
     let cell: Point<i32, Physical> = (font.cell_width as i32, font.cell_height as i32).into();
     let outer = font.px_rect(pane.rect).size;
+    let offset = font.px_rect(pane.client_rect()).loc - font.px_rect(pane.rect).loc;
     let start = shrink.point(origin + cell.downscale(2));
     let end = shrink.point(origin + outer - cell.downscale(2));
-    let mut outline = Scene::new(font);
+    let mut outline = Scene::new(&paint.text.chrome);
     let line = outline.line_width();
     outline.box_lines(
         start.x,
@@ -274,13 +271,12 @@ fn paint_ghost(
         ACCENT,
     );
     paint.scene(elements, &outline, Point::default(), None);
-    let mut ghost = Scene::new(font);
+    let mut ghost = Scene::new(&paint.text.chrome);
     layout.draw_ghost(pane.id, &mut ghost, chrome);
     paint.scene(elements, &ghost, origin + cell, Some(shrink));
     let Some(toplevel) = pane.toplevel() else {
         return;
     };
-    let offset = font.px_rect(pane.client_rect()).loc - font.px_rect(pane.rect).loc;
     let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
         render_elements_from_surface_tree(
             paint.renderer,
@@ -313,7 +309,7 @@ fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, layout: &Layout
         if rect.columns == 0 || rect.rows == 0 {
             continue;
         }
-        let crop = paint.font.px_rect(rect);
+        let crop = paint.text.chrome.px_rect(rect);
         let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
             render_elements_from_surface_tree(
                 paint.renderer,
@@ -340,13 +336,13 @@ fn paint_picker(
     size: Size<i32, Physical>,
     pointer: Point<i32, Physical>,
 ) {
-    let cell_height = paint.font.cell_height;
+    let cell_height = paint.text.chrome.cell_height;
     let (menu_width, menu_height) = (
-        paint.menu_font.cell_width as i32,
-        paint.menu_font.cell_height as i32,
+        paint.text.menu.cell_width as i32,
+        paint.text.menu.cell_height as i32,
     );
-    let mut over = Scene::new(paint.font);
-    let mut under = Scene::new(paint.font);
+    let mut over = Scene::new(&paint.text.chrome);
+    let mut under = Scene::new(&paint.text.chrome);
     let line = over.line_width();
     let label_width = |text: &str| text.chars().count() as i32 * menu_width;
     let drop_target = picker.dragging.and_then(|_| grid.cell_at(pointer));
@@ -422,7 +418,7 @@ fn paint_picker(
 
         // the cell shows the pane area, not the top bar and sidebar, so
         // positions are taken from the area's corner and scaled to fit it
-        let area = paint.font.px_rect(layout.area);
+        let area = paint.text.chrome.px_rect(layout.area);
         let (width, height) = (area.size.w, area.size.h);
         let scale = (cell.size.w as f64 / width.max(1) as f64)
             .min(cell.size.h as f64 / height.max(1) as f64);
@@ -435,7 +431,7 @@ fn paint_picker(
             let Some(toplevel) = pane.toplevel() else {
                 continue;
             };
-            let client = paint.font.px_rect(pane.client_rect());
+            let client = paint.text.chrome.px_rect(pane.client_rect());
             let origin = anchor - area.loc + client.loc;
             let tree: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                 render_elements_from_surface_tree(

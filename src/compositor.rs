@@ -61,7 +61,6 @@ use smithay::{
 use crate::apps;
 use crate::children::Children;
 use crate::control::{self, viewer_socket_path};
-use crate::draw::TextCache;
 use crate::files;
 use crate::frame::{self, Hit};
 use crate::gpu::Gpu;
@@ -72,7 +71,7 @@ use crate::panes::{self as panes, BarButton, CellRect, Layout, Pane};
 use crate::picker::{self, Grid, Picker};
 use crate::save::{self, TerminalTab};
 use crate::settings::{self, Settings};
-use crate::text::Font;
+use crate::text::Text;
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
 use crate::workspace::{self, Workspace};
 
@@ -115,12 +114,10 @@ pub struct State {
     sockets: HashMap<usize, (u32, UnixStream)>,
     next_client: usize,
     children: Children,
-    font: Font,
-    texts: TextCache,
+    text: Text,
     workspaces: Vec<Workspace>,
     next_workspace: u32,
     unplaced: Vec<ToplevelSurface>,
-    menu_font: Font,
     rounded: GlesPixelProgram,
     menu: Option<Menu>,
     picker: Option<Picker>,
@@ -211,9 +208,7 @@ pub fn run() {
         sockets: HashMap::new(),
         next_client: 0,
         children: Children::new(socket_name, runtime, mcp),
-        font: Font::load(settings.font_size * scale as f32),
-        texts: TextCache::new(),
-        menu_font: Font::load(settings.palette_size * scale as f32),
+        text: Text::new(&settings, scale),
         rounded,
         next_workspace: 0,
         workspaces: Vec::new(),
@@ -710,7 +705,7 @@ impl State {
         Grid::new(
             self.workspaces.len() + 1,
             self.size,
-            self.font.cell_height as i32,
+            self.text.chrome.cell_height as i32,
         )
     }
 
@@ -805,9 +800,7 @@ impl State {
         let rescaled = scale != self.scale;
         if rescaled {
             self.scale = scale;
-            self.font = Font::load(self.settings.font_size * scale as f32);
-            self.menu_font = Font::load(self.settings.palette_size * scale as f32);
-            self.texts.clear();
+            self.text = Text::new(&self.settings, scale);
             for client in self
                 .workspaces
                 .iter()
@@ -832,8 +825,8 @@ impl State {
 
     fn grid(&self) -> (u32, u32) {
         (
-            self.size.w as u32 / self.font.cell_width,
-            self.size.h as u32 / self.font.cell_height,
+            self.size.w as u32 / self.text.chrome.cell_width,
+            self.size.h as u32 / self.text.chrome.cell_height,
         )
     }
 
@@ -1138,9 +1131,7 @@ impl State {
         }
         let fonts = (self.settings.font_size, self.settings.palette_size);
         if fonts != (before.font_size, before.palette_size) {
-            self.font = Font::load(self.settings.font_size * self.scale as f32);
-            self.menu_font = Font::load(self.settings.palette_size * self.scale as f32);
-            self.texts.clear();
+            self.text = Text::new(&self.settings, self.scale);
             self.resize_layouts();
             self.relayout_all();
         }
@@ -1186,7 +1177,7 @@ impl State {
     }
 
     fn client_geometry(&self, pane: &Pane) -> (Point<i32, Logical>, Size<i32, Logical>) {
-        let rect = self.font.px_rect(pane.client_rect());
+        let rect = self.text.chrome.px_rect(pane.client_rect());
         (
             rect.loc.to_f64().to_logical(self.scale).to_i32_round(),
             rect.size.to_f64().to_logical(self.scale).to_i32_round(),

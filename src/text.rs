@@ -1,15 +1,22 @@
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use smithay::backend::allocator::Fourcc;
+use smithay::backend::renderer::ImportMem;
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+use smithay::utils::{Physical, Point, Rectangle, Size};
 use swash::scale::{Render, ScaleContext, Source};
 use swash::{CacheKey, FontRef};
 
-use smithay::utils::{Physical, Rectangle};
-
+use crate::draw::Face;
 use crate::palette::Rgba;
 use crate::panes::CellRect;
+use crate::settings::Settings;
 
 pub const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 
 pub struct Font {
-    data: Vec<u8>,
+    data: Rc<[u8]>,
     offset: u32,
     key: CacheKey,
     pub px: f32,
@@ -35,20 +42,14 @@ impl Font {
         )
     }
 
+    #[cfg(test)]
     pub fn load(px: f32) -> Font {
-        let mut db = fontdb::Database::new();
-        db.load_system_fonts();
-        let query = fontdb::Query {
-            families: &[fontdb::Family::Name(FONT_FAMILY), fontdb::Family::Monospace],
-            ..Default::default()
-        };
-        let id = db.query(&query).expect("no monospace font installed");
-        let face = db.face(id).unwrap();
-        let data = match &face.source {
-            fontdb::Source::File(path) => std::fs::read(path).unwrap(),
-            _ => panic!("font {} is not a file on disk", FONT_FAMILY),
-        };
-        let font = FontRef::from_index(&data, face.index as usize).unwrap();
+        let (data, index) = font_file();
+        Font::new(data, index, px)
+    }
+
+    fn new(data: Rc<[u8]>, index: usize, px: f32) -> Font {
+        let font = FontRef::from_index(&data, index).unwrap();
         let metrics = font.metrics(&[]).scale(px);
         let advance = font
             .glyph_metrics(&[])
@@ -77,6 +78,115 @@ impl Font {
     }
 }
 
+/// The bytes of the font file and the index of the face in it.
+fn font_file() -> (Rc<[u8]>, usize) {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    let query = fontdb::Query {
+        families: &[fontdb::Family::Name(FONT_FAMILY), fontdb::Family::Monospace],
+        ..Default::default()
+    };
+    let id = db.query(&query).expect("no monospace font installed");
+    let face = db.face(id).unwrap();
+    let data = match &face.source {
+        fontdb::Source::File(path) => std::fs::read(path).unwrap(),
+        _ => panic!("font {} is not a file on disk", FONT_FAMILY),
+    };
+    (data.into(), face.index as usize)
+}
+
+/// The chrome and palette fonts at one scale, and the textures of the
+/// text drawn with them.
+pub struct Text {
+    pub chrome: Font,
+    pub menu: Font,
+    scale: f64,
+    context: ScaleContext,
+    entries: HashMap<Key, (TextTexture, u64)>,
+    frame: u64,
+}
+
+pub struct TextTexture {
+    pub texture: GlesTexture,
+    pub offset: Point<i32, Physical>,
+    pub size: Size<i32, Physical>,
+}
+
+type Key = (String, Face, [u32; 4]);
+
+impl Text {
+    pub fn new(settings: &Settings, scale: f64) -> Text {
+        let (data, index) = font_file();
+        Text {
+            chrome: Font::new(data.clone(), index, settings.font_size * scale as f32),
+            menu: Font::new(data, index, settings.palette_size * scale as f32),
+            scale,
+            context: ScaleContext::new(),
+            entries: HashMap::new(),
+            frame: 0,
+        }
+    }
+
+    pub fn end_frame(&mut self) {
+        let frame = self.frame;
+        self.entries.retain(|_, (_, used)| frame - *used < 120);
+        self.frame += 1;
+    }
+
+    pub fn get(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        face: Face,
+        text: &str,
+        color: Rgba,
+    ) -> Option<&TextTexture> {
+        let key = (text.to_string(), face, color.map(f32::to_bits));
+        if !self.entries.contains_key(&key) {
+            let context = &mut self.context;
+            let run = match (face, text.chars().next()) {
+                (Face::Icon, Some(icon)) => raster_icon(context, &self.chrome, icon, color),
+                (Face::Menu, _) => raster_run(context, &self.menu, text, color),
+                (Face::Chrome | Face::Icon, _) => raster_run(context, &self.chrome, text, color),
+            };
+            let width = round_trip(run.width, self.scale);
+            let height = round_trip(run.height, self.scale);
+            let pixels = pad(&run.pixels, run.width, run.height, width, height);
+            let texture = renderer
+                .import_memory(&pixels, Fourcc::Abgr8888, (width, height).into(), false)
+                .ok()?;
+            let entry = TextTexture {
+                texture,
+                offset: (run.left, run.top).into(),
+                size: (width, height).into(),
+            };
+            self.entries.insert(key.clone(), (entry, self.frame));
+        }
+        let (entry, used) = self.entries.get_mut(&key)?;
+        *used = self.frame;
+        Some(entry)
+    }
+}
+
+fn round_trip(pixels: i32, scale: f64) -> i32 {
+    (pixels..pixels + 8)
+        .find(|&candidate| {
+            let logical = (candidate as f64 / scale).round();
+            (logical * scale).round() as i32 == candidate
+        })
+        .unwrap_or(pixels)
+}
+
+fn pad(pixels: &[u8], width: i32, height: i32, to_width: i32, to_height: i32) -> Vec<u8> {
+    let mut out = vec![0u8; (to_width * to_height * 4) as usize];
+    for row in 0..height {
+        let from = (row * width * 4) as usize;
+        let to = (row * to_width * 4) as usize;
+        out[to..to + (width * 4) as usize]
+            .copy_from_slice(&pixels[from..from + (width * 4) as usize]);
+    }
+    out
+}
+
 pub struct Run {
     pub pixels: Vec<u8>,
     pub width: i32,
@@ -85,7 +195,7 @@ pub struct Run {
     pub top: i32,
 }
 
-pub fn raster_run(context: &mut ScaleContext, font: &Font, text: &str, color: Rgba) -> Run {
+fn raster_run(context: &mut ScaleContext, font: &Font, text: &str, color: Rgba) -> Run {
     let cell_width = font.cell_width as i32;
     let font_ref = font.as_ref();
     let mut scaler = context.builder(font_ref).size(font.px).hint(true).build();
@@ -135,7 +245,7 @@ const ICON_HEIGHT: f32 = 0.68;
 
 /// One glyph rasterized so its ink is no taller than `ICON_HEIGHT` and
 /// centred in a cell.
-pub fn raster_icon(context: &mut ScaleContext, font: &Font, icon: char, color: Rgba) -> Run {
+fn raster_icon(context: &mut ScaleContext, font: &Font, icon: char, color: Rgba) -> Run {
     let font_ref = font.as_ref();
     let glyph = font_ref.charmap().map(icon);
     let render = |context: &mut ScaleContext, px: f32| {
@@ -187,6 +297,16 @@ fn tint(coverage: &[u8], color: Rgba) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_padded_size_survives_the_trip_through_logical_pixels() {
+        for pixels in 1..200 {
+            let padded = round_trip(pixels, 1.25);
+            assert!(padded >= pixels);
+            let logical = (padded as f64 / 1.25).round();
+            assert_eq!((logical * 1.25).round() as i32, padded);
+        }
+    }
 
     #[test]
     fn a_run_covers_its_cells_and_any_glyph_that_overflows_them() {

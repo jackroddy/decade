@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-
-use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::solid::SolidColorRenderElement;
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::texture::TextureRenderElement;
@@ -9,14 +6,13 @@ use smithay::backend::renderer::element::{Id, Kind};
 use smithay::backend::renderer::gles::element::PixelShaderElement;
 use smithay::backend::renderer::gles::{GlesPixelProgram, GlesRenderer, GlesTexture, Uniform};
 use smithay::backend::renderer::utils::CommitCounter;
-use smithay::backend::renderer::{Color32F, ImportMem, Renderer};
+use smithay::backend::renderer::{Color32F, Renderer};
 use smithay::render_elements;
 use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
-use swash::scale::ScaleContext;
 
 use crate::palette::Rgba;
 use crate::panes::CellRect;
-use crate::text::{Font, raster_icon, raster_run};
+use crate::text::{Font, Text};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Face {
@@ -175,92 +171,6 @@ impl Scene {
     }
 }
 
-pub struct TextTexture {
-    texture: GlesTexture,
-    offset: Point<i32, Physical>,
-    size: Size<i32, Physical>,
-}
-
-type Key = (String, Face, [u32; 4]);
-
-pub struct TextCache {
-    context: ScaleContext,
-    entries: HashMap<Key, (TextTexture, u64)>,
-    frame: u64,
-}
-
-impl TextCache {
-    pub fn new() -> TextCache {
-        TextCache {
-            context: ScaleContext::new(),
-            entries: HashMap::new(),
-            frame: 0,
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-
-    pub fn end_frame(&mut self) {
-        let frame = self.frame;
-        self.entries.retain(|_, (_, used)| frame - *used < 120);
-        self.frame += 1;
-    }
-
-    pub fn get(
-        &mut self,
-        renderer: &mut GlesRenderer,
-        font: &Font,
-        face: Face,
-        text: &str,
-        color: Rgba,
-        scale: f64,
-    ) -> Option<&TextTexture> {
-        let key = (text.to_string(), face, color.map(f32::to_bits));
-        if !self.entries.contains_key(&key) {
-            let run = match (face, text.chars().next()) {
-                (Face::Icon, Some(icon)) => raster_icon(&mut self.context, font, icon, color),
-                _ => raster_run(&mut self.context, font, text, color),
-            };
-            let (width, height) = (round_trip(run.width, scale), round_trip(run.height, scale));
-            let pixels = pad(&run.pixels, run.width, run.height, width, height);
-            let texture = renderer
-                .import_memory(&pixels, Fourcc::Abgr8888, (width, height).into(), false)
-                .ok()?;
-            let entry = TextTexture {
-                texture,
-                offset: (run.left, run.top).into(),
-                size: (width, height).into(),
-            };
-            self.entries.insert(key.clone(), (entry, self.frame));
-        }
-        let (entry, used) = self.entries.get_mut(&key)?;
-        *used = self.frame;
-        Some(entry)
-    }
-}
-
-fn round_trip(pixels: i32, scale: f64) -> i32 {
-    (pixels..pixels + 8)
-        .find(|&candidate| {
-            let logical = (candidate as f64 / scale).round();
-            (logical * scale).round() as i32 == candidate
-        })
-        .unwrap_or(pixels)
-}
-
-fn pad(pixels: &[u8], width: i32, height: i32, to_width: i32, to_height: i32) -> Vec<u8> {
-    let mut out = vec![0u8; (to_width * to_height * 4) as usize];
-    for row in 0..height {
-        let from = (row * width * 4) as usize;
-        let to = (row * to_width * 4) as usize;
-        out[to..to + (width * 4) as usize]
-            .copy_from_slice(&pixels[from..from + (width * 4) as usize]);
-    }
-    out
-}
-
 render_elements! {
     pub Element<=GlesRenderer>;
     Surface = CropRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
@@ -288,9 +198,7 @@ impl Shrink {
 
 pub struct Paint<'a> {
     pub renderer: &'a mut GlesRenderer,
-    pub texts: &'a mut TextCache,
-    pub font: &'a Font,
-    pub menu_font: &'a Font,
+    pub text: &'a mut Text,
     pub rounded: &'a GlesPixelProgram,
     pub scale: f64,
 }
@@ -348,7 +256,7 @@ impl Paint<'_> {
                             Uniform::new("fill", premultiply(*fill)),
                             Uniform::new("border", premultiply(*border)),
                             Uniform::new("radius", *radius as f32),
-                            Uniform::new("border_width", self.font.cell_width as f32 / 8.0),
+                            Uniform::new("border_width", self.text.chrome.cell_width as f32 / 8.0),
                         ],
                         Kind::Unspecified,
                     )));
@@ -362,14 +270,7 @@ impl Paint<'_> {
                     if shrink.is_some() {
                         continue;
                     }
-                    let font = match face {
-                        Face::Menu => self.menu_font,
-                        Face::Chrome | Face::Icon => self.font,
-                    };
-                    let Some(entry) =
-                        self.texts
-                            .get(self.renderer, font, *face, text, *color, self.scale)
-                    else {
+                    let Some(entry) = self.text.get(self.renderer, *face, text, *color) else {
                         continue;
                     };
                     let location = origin + *at + entry.offset;
@@ -389,21 +290,6 @@ impl Paint<'_> {
                     elements.push(Element::Text(texture));
                 }
             }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_padded_size_survives_the_trip_through_logical_pixels() {
-        for pixels in 1..200 {
-            let padded = round_trip(pixels, 1.25);
-            assert!(padded >= pixels);
-            let logical = (padded as f64 / 1.25).round();
-            assert_eq!((logical * 1.25).round() as i32, padded);
         }
     }
 }
