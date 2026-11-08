@@ -3,7 +3,7 @@
   "title": "The scene-to-elements half of drawing lives in the compositor",
   "body": "`draw.rs` builds `Scene` and `Shape` and owns `TextCache`. `Paint::scene` and `Shrink` in `compositor.rs`, about 115 lines, turn the shapes into smithay render elements. `Scene.shapes`, `Shape` and the fields of `TextTexture` are `pub` only for that, and `round_trip` is `pub` with no outside caller. Inside `Paint::scene`, the `Rect` arm premultiplies inline while the `Rounded` arm defines a `premultiply` closure for the same arithmetic.\n\n## Proposal\n\nMove `Paint`, `Shrink` and the shape-to-element match into `draw.rs` so one module owns drawing end to end, with `Element` passed in or moved along. Do \"Fonts and the text cache get one home\" and the border width bug first. Mostly moved lines, few deleted.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T20:25:46.00642344Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:39:48.119678799Z",
-  "updated_at": "2026-11-08T20:10:46.00642344Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T20:12:07.150728199Z",
+  "closed_at": "2026-11-08T20:12:07.150728199Z",
+  "close_reason": "Landed in 141646e, before the fonts issue decade-e5e569, which will now change Paint in draw.rs rather than in the compositor. Scene.shapes and Shape stay public for the drawing tests in panes.rs.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "141646e",
+      "branch": "simplify"
+    }
   }
 }
