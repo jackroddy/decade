@@ -1,7 +1,7 @@
 use std::io;
 use std::net::TcpListener;
 
-use decade_channel::code;
+use decade_channel::{Focus, code};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
@@ -10,6 +10,8 @@ use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData, RoleServer, ServerHandler};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use smithay::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
@@ -180,7 +182,14 @@ fn workspace_in(query: &str) -> Option<u32> {
         .and_then(|id| id.parse().ok())
 }
 
-fn call_for(name: &str, mut arguments: Map<String, Value>) -> Result<Call, String> {
+/// The arguments of `scratch.send`.
+#[derive(Deserialize)]
+struct ScratchSend {
+    verb: String,
+    payload: Map<String, Value>,
+}
+
+fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
     let code = |verb: &str, payload: Map<String, Value>| Call::Send {
         to: "code".to_string(),
         verb: verb.to_string(),
@@ -191,49 +200,24 @@ fn call_for(name: &str, mut arguments: Map<String, Value>) -> Result<Call, Strin
         "code.mark" => Ok(code(code::MARK, arguments)),
         "code.clear" => Ok(code(code::CLEAR, Map::new())),
         "focus" => {
-            let Some(Value::String(pane)) = arguments.remove("pane") else {
-                return Err("focus needs a pane, a string".to_string());
-            };
+            let Focus { pane } = parse(name, arguments)?;
             Ok(Call::Focus(pane))
         }
         "panes" => Ok(Call::Panes),
-        "scratch.open" => scratch_open(arguments).map(Call::ScratchOpen),
+        "scratch.open" => parse(name, arguments).map(Call::ScratchOpen),
         "scratch.send" => {
-            let Some(Value::String(verb)) = arguments.remove("verb") else {
-                return Err("scratch.send needs a verb, a string".to_string());
-            };
-            let Some(payload @ Value::Object(_)) = arguments.remove("payload") else {
-                return Err("scratch.send needs a payload, an object".to_string());
-            };
-            Ok(Call::ScratchSend { verb, payload })
+            let ScratchSend { verb, payload } = parse(name, arguments)?;
+            Ok(Call::ScratchSend {
+                verb,
+                payload: Value::Object(payload),
+            })
         }
         _ => Err(format!("no tool named {name}")),
     }
 }
 
-fn scratch_open(arguments: Map<String, Value>) -> Result<Launch, String> {
-    let Some(Value::String(program)) = arguments.get("program") else {
-        return Err("scratch.open needs a program, a string".to_string());
-    };
-    let args = match arguments.get("args") {
-        None => Vec::new(),
-        Some(Value::Array(args)) => args
-            .iter()
-            .map(|arg| arg.as_str().map(str::to_string))
-            .collect::<Option<Vec<_>>>()
-            .ok_or("scratch.open's args must be strings")?,
-        Some(_) => return Err("scratch.open's args must be an array".to_string()),
-    };
-    let terminal = match arguments.get("terminal") {
-        None => true,
-        Some(Value::Bool(terminal)) => *terminal,
-        Some(_) => return Err("scratch.open's terminal must be true or false".to_string()),
-    };
-    Ok(Launch {
-        program: program.clone(),
-        args,
-        terminal,
-    })
+fn parse<T: DeserializeOwned>(tool: &str, arguments: Map<String, Value>) -> Result<T, String> {
+    serde_json::from_value(Value::Object(arguments)).map_err(|error| format!("{tool}: {error}"))
 }
 
 impl ServerHandler for Decade {
@@ -431,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn scratch_open_defaults_to_a_terminal_and_refuses_arguments_that_are_not_strings() {
+    fn tool_arguments_take_their_defaults_and_wrong_types_are_refused() {
         let Ok(Call::ScratchOpen(launch)) =
             call_for("scratch.open", schema(json!({"program": "decade-code"})))
         else {
@@ -441,8 +425,22 @@ mod tests {
         assert!(launch.args.is_empty());
         assert!(launch.terminal);
         let args = schema(json!({"program": "decade-code", "args": [1]}));
-        assert!(call_for("scratch.open", args).is_err());
+        let Err(reason) = call_for("scratch.open", args) else {
+            panic!("a number is not an argument");
+        };
+        assert!(reason.starts_with("scratch.open: invalid type: integer"));
+        let windowed = json!({"program": "decade-code", "args": ["a"], "terminal": false});
+        let Ok(Call::ScratchOpen(launch)) = call_for("scratch.open", schema(windowed)) else {
+            panic!("scratch.open with a program is a launch");
+        };
+        assert_eq!(launch.args, ["a"]);
+        assert!(!launch.terminal);
         let payload = schema(json!({"verb": "show", "payload": "x"}));
-        assert!(call_for("scratch.send", payload).is_err());
+        let Err(reason) = call_for("scratch.send", payload) else {
+            panic!("a string is not a payload");
+        };
+        assert!(reason.starts_with("scratch.send: invalid type: string"));
+        let missing = call_for("focus", Map::new());
+        assert_eq!(missing.err().unwrap(), "focus: missing field `pane`");
     }
 }

@@ -2,6 +2,8 @@ use std::ffi::OsStr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use serde::Deserialize;
+
 /// How many parents up from a window's client to look for the program
 /// `scratch.open` started.
 const ANCESTRY_DEPTH: usize = 8;
@@ -18,10 +20,18 @@ pub struct Scratch {
     pub next: Option<Launch>,
 }
 
+/// The arguments of `scratch.open`.
+#[derive(Deserialize)]
 pub struct Launch {
     pub program: String,
+    #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default = "in_terminal")]
     pub terminal: bool,
+}
+
+fn in_terminal() -> bool {
+    true
 }
 
 impl Scratch {
