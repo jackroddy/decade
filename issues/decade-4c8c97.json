@@ -1,0 +1,30 @@
+{
+  "id": "decade-4c8c97",
+  "title": "Router keeps its own copy of the workspace's pane names",
+  "body": "`Router.panes: Vec<String>` in `channel.rs` duplicates the names in `Workspace.tabs[..].layout.panes`. Every pane add or remove calls `router.add_pane` or `router.remove_pane` beside the real change, at five sites across `workspace.rs` and `compositor.rs`, and the `panes` reply comes back in insertion order rather than layout order.\n\n## Proposal\n\n`Router` holds only clients. `handle`, or the typed methods from \"The MCP door reaches the router through wire text under a fake client\", take the workspace's pane names as an argument. `remove_pane` keeps only the part that clears clients' claims. A borrow split between `workspace.router` and `workspace.tabs` is needed.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:41:01.510953838Z",
+  "updated_at": "2026-11-08T07:41:01.510953838Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
