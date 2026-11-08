@@ -974,20 +974,55 @@ impl State {
         let Some(index) = self.workspace_index(id) else {
             return;
         };
-        let workspace = &mut self.workspaces[index];
-        workspace.closing = true;
-        for client in workspace.panes().flat_map(|pane| &pane.clients) {
-            client.toplevel.send_close();
+        for tab in 0..self.workspaces[index].tabs.len() {
+            self.mark_closing(index, tab);
         }
         self.finish_closing(index);
     }
 
-    fn finish_closing(&mut self, index: usize) {
-        let workspace = &self.workspaces[index];
-        let clients = workspace.panes().any(|pane| !pane.clients.is_empty());
-        if !workspace.closing || clients {
+    fn close_tab(&mut self, workspace: u32, tab: usize) {
+        let Some(index) = self.workspace_index(workspace) else {
+            return;
+        };
+        if tab >= self.workspaces[index].tabs.len() {
             return;
         }
+        self.mark_closing(index, tab);
+        self.finish_closing(index);
+    }
+
+    /// Mark the tab closing and ask every client in it to close.
+    fn mark_closing(&mut self, workspace: usize, tab: usize) {
+        let closed = &mut self.workspaces[workspace].tabs[tab];
+        closed.closing = true;
+        for client in closed.layout.panes.iter().flat_map(|pane| &pane.clients) {
+            client.toplevel.send_close();
+        }
+    }
+
+    /// Remove the workspace's closing tabs that no client is left in, and
+    /// the workspace once its last tab has gone.
+    fn finish_closing(&mut self, workspace: usize) {
+        let closed: Vec<usize> = self.workspaces[workspace].closed_tabs().collect();
+        if closed.is_empty() {
+            return;
+        }
+        if closed.len() == self.workspaces[workspace].tabs.len() {
+            self.remove_workspace(workspace);
+            return;
+        }
+        let mut active_removed = false;
+        for &tab in closed.iter().rev() {
+            active_removed |= self.workspaces[workspace].remove_tab(tab);
+        }
+        if active_removed && workspace == self.current() {
+            self.workspace_shown();
+        } else {
+            self.relayout_workspace(workspace);
+        }
+    }
+
+    fn remove_workspace(&mut self, index: usize) {
         let removed = self.workspaces.remove(index);
         if let Some(token) = removed.listener {
             self.loop_handle.remove(token);
@@ -2095,58 +2130,6 @@ impl State {
         self.workspace_shown();
     }
 
-    fn close_tab(&mut self, workspace: u32, tab: usize) {
-        let Some(index) = self.workspace_index(workspace) else {
-            return;
-        };
-        let shown = &mut self.workspaces[index];
-        if tab >= shown.tabs.len() {
-            return;
-        }
-        let others_closing = shown
-            .tabs
-            .iter()
-            .enumerate()
-            .all(|(other, entry)| other == tab || entry.closing);
-        if others_closing {
-            self.close_workspace(workspace);
-            return;
-        }
-        let closed = &mut shown.tabs[tab];
-        closed.closing = true;
-        for client in closed.layout.panes.iter().flat_map(|pane| &pane.clients) {
-            client.toplevel.send_close();
-        }
-        self.finish_closing_tab(index, tab);
-    }
-
-    fn finish_closing_tab(&mut self, workspace: usize, tab: usize) {
-        let shown = &mut self.workspaces[workspace];
-        let closed = &shown.tabs[tab];
-        let clients = closed
-            .layout
-            .panes
-            .iter()
-            .any(|pane| !pane.clients.is_empty());
-        if !closed.closing || clients {
-            return;
-        }
-        let removed = shown.tabs.remove(tab);
-        for pane in &removed.layout.panes {
-            shown.router.remove_pane(&pane.name);
-            shown.agents.remove(&pane.name);
-        }
-        let was_active = shown.active_tab == tab;
-        if shown.active_tab > tab || shown.active_tab == shown.tabs.len() {
-            shown.active_tab -= 1;
-        }
-        if was_active && workspace == self.current() {
-            self.workspace_shown();
-        } else {
-            self.relayout_workspace(workspace);
-        }
-    }
-
     fn restart_pane(&mut self, workspace: usize, id: usize) {
         let Some(pane) = self.workspaces[workspace].layout().pane(id) else {
             return;
@@ -2174,12 +2157,8 @@ impl State {
         if shown.scratch_pane() == Some(name.as_str()) {
             shown.scratch = None;
         }
-        if shown.closing {
-            self.finish_closing(workspace);
-            return;
-        }
         if shown.tabs[tab].closing {
-            self.finish_closing_tab(workspace, tab);
+            self.finish_closing(workspace);
             return;
         }
         self.relayout_workspace(workspace);
@@ -3153,7 +3132,7 @@ fn paint_picker(
         let confirming = picker.confirming == Some(workspace.id);
         let label = if confirming {
             "close? x again".to_string()
-        } else if workspace.closing {
+        } else if workspace.closing() {
             format!("{} closing", workspace.name)
         } else if i == current {
             format!("● {}", workspace.name)
@@ -3623,7 +3602,7 @@ impl XdgShellHandler for State {
             return;
         };
         let shown = &mut self.workspaces[workspace];
-        let closing = shown.closing || shown.tabs[tab].closing;
+        let closing = shown.tabs[tab].closing;
         let Some(pane) = shown.tabs[tab].layout.pane_mut(id) else {
             return;
         };
@@ -3661,10 +3640,8 @@ impl XdgShellHandler for State {
         let shown = &self.workspaces[workspace];
         if transient && !scratched {
             self.remove_pane(workspace, tab, id);
-        } else if shown.closing {
-            self.finish_closing(workspace);
         } else if shown.tabs[tab].closing {
-            self.finish_closing_tab(workspace, tab);
+            self.finish_closing(workspace);
         } else {
             self.refocus(workspace, tab);
         }

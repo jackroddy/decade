@@ -19,9 +19,6 @@ pub struct Workspace {
     /// The event source accepting connections on this workspace's socket.
     pub listener: Option<RegistrationToken>,
 
-    /// Whether the workspace goes once its last client has.
-    pub closing: bool,
-
     /// The agent state each pane last reported, by pane name.
     pub agents: HashMap<String, Agent>,
     pub scratch: Option<Scratch>,
@@ -105,7 +102,6 @@ impl Workspace {
             tabs,
             router,
             listener: None,
-            closing: false,
             agents: HashMap::new(),
             scratch: None,
         }
@@ -158,6 +154,36 @@ impl Workspace {
         });
         self.router.add_pane(name.clone());
         (self.tabs.len() - 1, name)
+    }
+
+    /// Whether every tab goes once its last client has.
+    pub fn closing(&self) -> bool {
+        self.tabs.iter().all(|tab| tab.closing)
+    }
+
+    /// The closing tabs that no client is left in.
+    pub fn closed_tabs(&self) -> impl Iterator<Item = usize> + '_ {
+        self.tabs.iter().enumerate().filter_map(|(index, tab)| {
+            let clients = tab.layout.panes.iter().any(|pane| !pane.clients.is_empty());
+            (tab.closing && !clients).then_some(index)
+        })
+    }
+
+    /// Remove a tab and its panes, keeping the active tab where it was
+    /// unless it was the one removed. Return whether it was.
+    pub fn remove_tab(&mut self, tab: usize) -> bool {
+        let removed = self.tabs.remove(tab);
+
+        // TODO: the scratch pane is left named when its tab goes
+        for pane in &removed.layout.panes {
+            self.router.remove_pane(&pane.name);
+            self.agents.remove(&pane.name);
+        }
+        let was_active = self.active_tab == tab;
+        if self.active_tab > tab || self.active_tab == self.tabs.len() {
+            self.active_tab = self.active_tab.saturating_sub(1);
+        }
+        was_active
     }
 
     /// The most urgent state of the workspace's agents, or `None` when no
@@ -234,6 +260,34 @@ mod tests {
         assert_eq!(workspace.by_name("terminal2"), Some((1, 0)));
         let cwd = workspace.tabs[1].layout.panes[0].cwd.as_deref();
         assert_eq!(cwd, Some(std::path::Path::new("/home/jack")));
+    }
+
+    #[test]
+    fn a_closing_tab_with_no_client_is_closed_and_the_workspace_closes_with_its_last_tab() {
+        let mut workspace =
+            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        workspace.add_tab(crate::panes::tests::AREA);
+        assert_eq!(workspace.closed_tabs().count(), 0);
+        workspace.tabs[1].closing = true;
+        assert_eq!(workspace.closed_tabs().collect::<Vec<_>>(), [1]);
+        assert!(!workspace.closing());
+        workspace.tabs[0].closing = true;
+        assert!(workspace.closing());
+    }
+
+    #[test]
+    fn removing_the_active_last_tab_makes_the_one_before_it_active() {
+        let mut workspace =
+            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.active_tab = 2;
+        assert!(workspace.remove_tab(2));
+        assert_eq!(workspace.active_tab, 1);
+        assert!(!workspace.remove_tab(0));
+        assert_eq!(workspace.active_tab, 0);
+        assert_eq!(workspace.by_name("terminal3"), None);
+        assert_eq!(workspace.by_name("terminal2"), Some((0, 0)));
     }
 
     #[test]
