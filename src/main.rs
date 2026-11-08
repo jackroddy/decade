@@ -17,8 +17,6 @@ mod gpu;
 #[cfg(target_os = "linux")]
 mod hypr;
 #[cfg(target_os = "linux")]
-mod inhibit;
-#[cfg(target_os = "linux")]
 mod lines;
 #[cfg(target_os = "linux")]
 mod mcp;
