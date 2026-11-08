@@ -21,3 +21,7 @@ pub const RED: Rgba = hex(0xC26A7A);
 pub const YELLOW: Rgba = hex(0xDA915C);
 pub const GREEN: Rgba = hex(0x69A676);
 pub const CYAN: Rgba = hex(0x57ABAD);
+pub const FADED_FOREGROUND: Rgba = hex(0xC9C0B0);
+pub const LIGHT_RED: Rgba = hex(0xE39AA6);
+pub const LIGHT_YELLOW: Rgba = hex(0xE8AC80);
+pub const LIGHT_GREEN: Rgba = hex(0x8CC497);

@@ -17,6 +17,7 @@ use crate::server::panes::CellRect;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Face {
     Chrome,
+    ChromeBold,
     Menu,
 
     /// A single chrome glyph, sized to the height every icon shares and

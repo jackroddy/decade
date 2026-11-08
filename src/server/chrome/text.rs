@@ -34,10 +34,34 @@ pub fn tail(text: &str, max: usize) -> String {
     format!("…{kept}")
 }
 
-pub struct Font {
+/// One face of the font file, in the form swash reads.
+struct FaceFile {
     data: Rc<[u8]>,
     offset: u32,
     key: CacheKey,
+}
+
+impl FaceFile {
+    fn new((data, index): (Rc<[u8]>, usize)) -> FaceFile {
+        let font = FontRef::from_index(&data, index).unwrap();
+        let (offset, key) = (font.offset, font.key);
+        FaceFile { data, offset, key }
+    }
+
+    fn as_ref(&self) -> FontRef<'_> {
+        FontRef {
+            data: &self.data,
+            offset: self.offset,
+            key: self.key,
+        }
+    }
+}
+
+/// The regular and bold faces at one size, laid out on the regular
+/// face's cells.
+pub struct Font {
+    regular: FaceFile,
+    bold: FaceFile,
     pub px: f32,
     pub cell_width: u32,
     pub cell_height: u32,
@@ -63,55 +87,50 @@ impl Font {
 
     #[cfg(test)]
     pub fn load(px: f32) -> Font {
-        let (data, index) = font_file();
-        Font::new(data, index, px)
+        let [regular, bold] = font_files();
+        Font::new(regular, bold, px)
     }
 
-    fn new(data: Rc<[u8]>, index: usize, px: f32) -> Font {
-        let font = FontRef::from_index(&data, index).unwrap();
+    fn new(regular: (Rc<[u8]>, usize), bold: (Rc<[u8]>, usize), px: f32) -> Font {
+        let regular = FaceFile::new(regular);
+        let font = regular.as_ref();
         let metrics = font.metrics(&[]).scale(px);
         let advance = font
             .glyph_metrics(&[])
             .scale(px)
             .advance_width(font.charmap().map('M'));
-        let (offset, key) = (font.offset, font.key);
         Font {
             cell_width: advance.round().max(1.0) as u32,
             cell_height: (metrics.ascent + metrics.descent + metrics.leading)
                 .round()
                 .max(1.0) as u32,
             baseline: metrics.ascent.round() as i32,
-            data,
-            offset,
-            key,
+            regular,
+            bold: FaceFile::new(bold),
             px,
-        }
-    }
-
-    fn as_ref(&self) -> FontRef<'_> {
-        FontRef {
-            data: &self.data,
-            offset: self.offset,
-            key: self.key,
         }
     }
 }
 
-/// The bytes of the font file and the index of the face in it.
-fn font_file() -> (Rc<[u8]>, usize) {
+/// The bytes of the font files holding the regular and bold faces, and
+/// the index of each face in its file.
+fn font_files() -> [(Rc<[u8]>, usize); 2] {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
-    let query = fontdb::Query {
-        families: &[fontdb::Family::Name(FONT_FAMILY), fontdb::Family::Monospace],
-        ..Default::default()
-    };
-    let id = db.query(&query).expect("no monospace font installed");
-    let face = db.face(id).unwrap();
-    let data = match &face.source {
-        fontdb::Source::File(path) => std::fs::read(path).unwrap(),
-        _ => panic!("font {} is not a file on disk", FONT_FAMILY),
-    };
-    (data.into(), face.index as usize)
+    [fontdb::Weight::NORMAL, fontdb::Weight::BOLD].map(|weight| {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(FONT_FAMILY), fontdb::Family::Monospace],
+            weight,
+            ..Default::default()
+        };
+        let id = db.query(&query).expect("no monospace font installed");
+        let face = db.face(id).unwrap();
+        let data = match &face.source {
+            fontdb::Source::File(path) => std::fs::read(path).unwrap(),
+            _ => panic!("font {} is not a file on disk", FONT_FAMILY),
+        };
+        (data.into(), face.index as usize)
+    })
 }
 
 /// The chrome and palette fonts at one scale, and the textures of the
@@ -135,10 +154,11 @@ type Key = (String, Face, [u32; 4]);
 
 impl Text {
     pub fn new(settings: &Settings, scale: f64) -> Text {
-        let (data, index) = font_file();
+        let [regular, bold] = font_files();
+        let font = |px: f32| Font::new(regular.clone(), bold.clone(), px * scale as f32);
         Text {
-            chrome: Font::new(data.clone(), index, settings.font_size * scale as f32),
-            menu: Font::new(data, index, settings.palette_size * scale as f32),
+            chrome: font(settings.font_size),
+            menu: font(settings.palette_size),
             scale,
             context: ScaleContext::new(),
             entries: HashMap::new(),
@@ -164,8 +184,11 @@ impl Text {
             let context = &mut self.context;
             let run = match (face, text.chars().next()) {
                 (Face::Icon, Some(icon)) => raster_icon(context, &self.chrome, icon, color),
-                (Face::Menu, _) => raster_run(context, &self.menu, text, color),
-                (Face::Chrome | Face::Icon, _) => raster_run(context, &self.chrome, text, color),
+                (Face::Chrome | Face::Icon, _) => {
+                    raster_run(context, &self.chrome, false, text, color)
+                }
+                (Face::ChromeBold, _) => raster_run(context, &self.chrome, true, text, color),
+                (Face::Menu, _) => raster_run(context, &self.menu, false, text, color),
             };
             let width = round_trip(run.width, self.scale);
             let height = round_trip(run.height, self.scale);
@@ -214,9 +237,9 @@ pub struct Run {
     pub top: i32,
 }
 
-fn raster_run(context: &mut ScaleContext, font: &Font, text: &str, color: Rgba) -> Run {
+fn raster_run(context: &mut ScaleContext, font: &Font, bold: bool, text: &str, color: Rgba) -> Run {
     let cell_width = font.cell_width as i32;
-    let font_ref = font.as_ref();
+    let font_ref = if bold { &font.bold } else { &font.regular }.as_ref();
     let mut scaler = context.builder(font_ref).size(font.px).hint(true).build();
     let mut images = Vec::new();
     let (mut left, mut top) = (0, 0);
@@ -265,7 +288,7 @@ const ICON_HEIGHT: f32 = 0.68;
 /// One glyph rasterized so its ink is no taller than `ICON_HEIGHT` and
 /// centred in a cell.
 fn raster_icon(context: &mut ScaleContext, font: &Font, icon: char, color: Rgba) -> Run {
-    let font_ref = font.as_ref();
+    let font_ref = font.regular.as_ref();
     let glyph = font_ref.charmap().map(icon);
     let render = |context: &mut ScaleContext, px: f32| {
         let mut scaler = context.builder(font_ref).size(px).hint(true).build();
@@ -343,13 +366,24 @@ mod tests {
     fn a_run_covers_its_cells_and_any_glyph_that_overflows_them() {
         let font = Font::load(14.0);
         let mut context = ScaleContext::new();
-        let run = raster_run(&mut context, &font, "ab", [1.0; 4]);
+        let run = raster_run(&mut context, &font, false, "ab", [1.0; 4]);
         assert!(run.width >= 2 * font.cell_width as i32);
         assert!(run.height >= font.cell_height as i32);
         assert_eq!(run.pixels.len(), (run.width * run.height * 4) as usize);
         assert!(run.pixels.iter().any(|&byte| byte > 0));
-        let icon = raster_run(&mut context, &font, "\u{f0156}", [1.0; 4]);
+        let icon = raster_run(&mut context, &font, false, "\u{f0156}", [1.0; 4]);
         assert!(icon.width > font.cell_width as i32);
+    }
+
+    #[test]
+    fn a_bold_run_has_more_ink_than_a_regular_one_on_the_same_cells() {
+        let font = Font::load(14.0);
+        let mut context = ScaleContext::new();
+        let regular = raster_run(&mut context, &font, false, "decade", [1.0; 4]);
+        let bold = raster_run(&mut context, &font, true, "decade", [1.0; 4]);
+        let ink = |run: &Run| run.pixels.iter().map(|&byte| byte as u32).sum::<u32>();
+        assert!(ink(&bold) > ink(&regular));
+        assert_eq!(bold.width, regular.width);
     }
 
     #[test]

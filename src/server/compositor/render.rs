@@ -209,7 +209,6 @@ impl State {
                 }
             })
             .collect();
-        let (columns, rows) = self.grid();
         let shown = &self.workspaces[shown];
         let layout = shown.layout();
         let pane = layout
@@ -217,13 +216,16 @@ impl State {
             .map(|pane| pane.name.clone())
             .unwrap_or_default();
         frame::Frame::new(
-            columns,
-            rows,
+            self.grid(),
             self.sidebar_open,
             entries,
             (shown.tabs.len(), shown.active_tab),
             pane,
             layout.zoom.is_some(),
+            (
+                self.text.chrome.cell_width as i32,
+                self.text.chrome.cell_height as i32,
+            ),
         )
     }
 }

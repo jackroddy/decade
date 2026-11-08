@@ -129,8 +129,9 @@ impl State {
             return;
         }
         if button == BTN_LEFT && pressed {
-            let (column, row) = self.pointer_cell();
-            if let Some(hit) = self.frame(self.current()).hit(column, row) {
+            let point = self.pointer.to_physical(self.scale);
+            let (x, y) = (point.x.max(0.0) as i32, point.y.max(0.0) as i32);
+            if let Some(hit) = self.frame(self.current()).hit(x, y) {
                 self.frame_hit(hit);
                 return;
             }
