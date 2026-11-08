@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T20:19:20.259548697Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:39:08.672924477Z",
-  "updated_at": "2026-11-08T20:04:20.259548697Z",
+  "updated_at": "2026-11-08T20:12:50.028479273Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "1b05c4fe",
+      "at": "2026-11-08T20:12:50.028478423Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "What this phase took off `State`:\n\n- `env` and `children` became `Children` in `children.rs` (ec48420).\n- `bar` and `hover` moved from every `Layout` onto `State`, and the drag cell into `Drag::Pane` (e093411).\n- The methods moved into modules under `src/compositor/` by job (fe90d27): `viewers.rs`, `input.rs`, `channels.rs`, `selection.rs` and `render.rs`. The fields stayed on `State`, and each module reaches them as a child of `compositor`.\n\nLeft for the issues that already own them:\n\n| group | issue |\n|---|---|\n| `menu`, `panel`, `picker`, `picker_tick` | decade-fbc2df |\n| `font`, `menu_font`, `texts` | decade-e5e569 |\n| `workspaces`, `next_workspace`, `unplaced`, `sidebar_open` | decade-701a8d, decade-2f1c63 |\n\nKept as plain fields: the viewers (`viewers`, `next_viewer`, `active`), the channel clients (`sockets`, `next_client`), persistence (`settings`, `settings_path`, `save_path`, `save_due`) and input (`repeat`, `repeating`, `pointer`, `drag`, `ctrl_timer`). The methods that read each group also read other groups, so a struct around one would lengthen every access without taking a method off `State`. `size` and `scale` stay too; see decade-e8e0f0.",
+      "commit": "141646e",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
