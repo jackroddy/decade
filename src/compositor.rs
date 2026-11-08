@@ -149,6 +149,7 @@ render_elements! {
     Solid = SolidColorRenderElement,
     Ghost = RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
     GhostSolid = RescaleRenderElement<SolidColorRenderElement>,
+    Thumbnail = CropRenderElement<RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -3162,12 +3163,28 @@ fn paint_picker(
         );
 
         let layout = workspace.layout();
+
+        // the cell shows the pane area, not the top bar and sidebar, so
+        // positions are taken from the area's corner and scaled to fit it
+        let area = layout.area;
+        let corner = Point::from((
+            (area.column * cell_width) as i32,
+            (area.row * cell_height) as i32,
+        ));
+        let (width, height) = (area.columns * cell_width, area.rows * cell_height);
+        let scale = (cell.size.w as f64 / width.max(1) as f64)
+            .min(cell.size.h as f64 / height.max(1) as f64);
+        let anchor = cell.loc
+            + Point::from((
+                (cell.size.w - (width as f64 * scale) as i32) / 2,
+                (cell.size.h - (height as f64 * scale) as i32) / 2,
+            ));
         for pane in layout.visible() {
             let Some(toplevel) = &pane.toplevel else {
                 continue;
             };
             let client = layout.client_rect(pane);
-            let origin = cell.loc
+            let origin = anchor - corner
                 + Point::from((
                     (client.column * cell_width) as i32,
                     (client.row * cell_height) as i32,
@@ -3181,10 +3198,9 @@ fn paint_picker(
                     1.0,
                     Kind::Unspecified,
                 );
-            surfaces.extend(tree.into_iter().map(|surface| {
-                Element::Ghost(RescaleRenderElement::from_element(
-                    surface, cell.loc, grid.scale,
-                ))
+            surfaces.extend(tree.into_iter().filter_map(|surface| {
+                let scaled = RescaleRenderElement::from_element(surface, anchor, scale);
+                CropRenderElement::from_element(scaled, paint.scale, *cell).map(Element::Thumbnail)
             }));
         }
     }

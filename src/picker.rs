@@ -35,8 +35,6 @@ pub struct Grid {
     /// The thumbnail of each cell, workspaces first, then the new-workspace cell.
     pub cells: Vec<Rectangle<i32, Physical>>,
 
-    /// The scale from the output to a thumbnail.
-    pub scale: f64,
     pub columns: usize,
 
     /// The height of the label row under each thumbnail.
@@ -70,7 +68,6 @@ impl Grid {
             .collect();
         Grid {
             cells,
-            scale,
             columns,
             label,
         }
