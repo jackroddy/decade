@@ -3,7 +3,7 @@
   "title": "The viewer keeps an shm fallback for a background buffer",
   "body": "`viewer.rs` draws its 1 by 1 background with `wp_single_pixel_buffer_manager_v1` and falls back to an 18-line memfd and `wl_shm` path on hosts without it, which is why `WlShm` and `WlShmPool` appear in the `no_events!` list. The viewer already requires viewporter and linux-dmabuf v4 through `missing()`.\n\n## Proposal\n\nRequire single-pixel-buffer the same way and drop the fallback and the two shm types. A host-compatibility choice: every compositor decade is likely to run under has the protocol, but I have not checked which hosts lack it.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T19:48:29.451528889Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T18:44:01.286789778Z",
-  "updated_at": "2026-11-08T19:33:29.451528889Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T19:34:06.912742743Z",
+  "closed_at": "2026-11-08T19:34:06.912742743Z",
+  "close_reason": "Landed in 0811d98. background() exits through missing() when the host lacks wp_single_pixel_buffer_manager_v1. Not checked here: which hosts lack it. Recent Hyprland, sway, mutter and KWin releases offer it as far as I know, but no host was tested.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "0811d98",
+      "branch": "simplify"
+    }
   }
 }
