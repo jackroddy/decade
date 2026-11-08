@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T21:29:27.749239062Z",
   "defer_until": null,
   "created_at": "2026-11-08T21:14:23.066056658Z",
-  "updated_at": "2026-11-08T21:14:27.749239062Z",
+  "updated_at": "2026-11-08T21:17:08.788216076Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "f77281b7",
+      "at": "2026-11-08T21:17:08.788215426Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "Landed as proposed. `main.rs` went from 33 `#[cfg]` lines to 14: seven on `mod` lines and seven on `main`, `USAGE` and the command functions.\n\nImports that cross between the root, `server` and `viewer`:\n\n| from | to |\n|---|---|\n| `viewer.rs` | `server::chrome::palette::BACKGROUND` |\n| `server` | `control`, `files`, `lines`, `gpu`, `wire` |\n| `viewer` | `control`, `lines`, `wire` |\n| `script.rs` | `control`, `gpu`, `wire` |\n\nInside `server`, `panes` and `chrome` still import each other. `panes` draws pane bars with `chrome::draw`, and `chrome::draw`, `text` and `frame` take `panes::CellRect`.\n\n`proc::tests::under_shell` stays `pub(crate)`. `pub(super)` there would reach only `proc`, and `scratch`'s tests call it.\n\nOpen issue bodies that named moved files now carry the new paths. Closed issues keep the old ones.",
+      "commit": "5c51ed4",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "80f88cd",
