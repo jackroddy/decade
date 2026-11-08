@@ -110,17 +110,17 @@ pub enum ViewerMessage {
         inverted: bool,
     },
     Offer {
-        selection: u32,
+        selection: Selection,
         serial: u32,
         seen: u32,
         mimes: Vec<String>,
     },
     Cleared {
-        selection: u32,
+        selection: Selection,
         serial: u32,
     },
     Request {
-        selection: u32,
+        selection: Selection,
         serial: u32,
         mime: String,
         fd: OwnedFd,
@@ -162,16 +162,16 @@ pub enum ServerMessage {
     },
     CursorHidden,
     Offer {
-        selection: u32,
+        selection: Selection,
         serial: u32,
         mimes: Vec<String>,
     },
     Cleared {
-        selection: u32,
+        selection: Selection,
         serial: u32,
     },
     Request {
-        selection: u32,
+        selection: Selection,
         serial: u32,
         mime: String,
         fd: OwnedFd,
@@ -195,6 +195,13 @@ pub enum ServerMessage {
 pub struct Format {
     pub format: u32,
     pub modifier: u64,
+}
+
+/// A selection that crosses between server and viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Selection {
+    Clipboard,
+    Primary,
 }
 
 /// One plane of a dmabuf.
@@ -366,14 +373,14 @@ impl ViewerMessage {
                 seen,
                 mimes,
             } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
                 w.u32(seen);
                 w.strings(&mimes);
                 13
             }
             ViewerMessage::Cleared { selection, serial } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
                 14
             }
@@ -383,7 +390,7 @@ impl ViewerMessage {
                 mime,
                 fd,
             } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
                 w.string(&mime);
                 w.fd(fd);
@@ -462,13 +469,13 @@ impl ServerMessage {
                 serial,
                 mimes,
             } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
                 w.strings(&mimes);
                 8
             }
             ServerMessage::Cleared { selection, serial } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
                 9
             }
@@ -478,7 +485,7 @@ impl ServerMessage {
                 mime,
                 fd,
             } => {
-                w.u32(selection);
+                w.selection(selection);
                 w.u32(serial);
                 w.string(&mime);
                 w.fd(fd);
@@ -558,6 +565,10 @@ impl<'a> Writer<'a> {
 
     fn count(&mut self, count: usize) {
         self.u32(count as u32);
+    }
+
+    fn selection(&mut self, selection: Selection) {
+        self.u32(selection as u32);
     }
 
     fn string(&mut self, s: &str) {
@@ -852,17 +863,17 @@ impl Decoder {
                 inverted: a.bool()?,
             },
             13 => ViewerMessage::Offer {
-                selection: a.u32()?,
+                selection: a.selection()?,
                 serial: a.u32()?,
                 seen: a.u32()?,
                 mimes: a.strings()?,
             },
             14 => ViewerMessage::Cleared {
-                selection: a.u32()?,
+                selection: a.selection()?,
                 serial: a.u32()?,
             },
             15 => ViewerMessage::Request {
-                selection: a.u32()?,
+                selection: a.selection()?,
                 serial: a.u32()?,
                 mime: a.string()?,
                 fd: a.fd()?,
@@ -921,16 +932,16 @@ impl Decoder {
             6 => ServerMessage::CursorShape { shape: a.string()? },
             7 => ServerMessage::CursorHidden,
             8 => ServerMessage::Offer {
-                selection: a.u32()?,
+                selection: a.selection()?,
                 serial: a.u32()?,
                 mimes: a.strings()?,
             },
             9 => ServerMessage::Cleared {
-                selection: a.u32()?,
+                selection: a.selection()?,
                 serial: a.u32()?,
             },
             10 => ServerMessage::Request {
-                selection: a.u32()?,
+                selection: a.selection()?,
                 serial: a.u32()?,
                 mime: a.string()?,
                 fd: a.fd()?,
@@ -1008,6 +1019,14 @@ impl<'a> Args<'a> {
         match self.u32()? {
             0 => Ok(false),
             1 => Ok(true),
+            _ => Err(Error::Malformed),
+        }
+    }
+
+    fn selection(&mut self) -> Result<Selection, Error> {
+        match self.u32()? {
+            0 => Ok(Selection::Clipboard),
+            1 => Ok(Selection::Primary),
             _ => Err(Error::Malformed),
         }
     }
@@ -1155,17 +1174,17 @@ mod tests {
                 inverted: true,
             },
             ViewerMessage::Offer {
-                selection: 0,
+                selection: Selection::Clipboard,
                 serial: 4,
                 seen: 2,
                 mimes: vec!["text/plain".into(), "UTF8_STRING".into(), "".into()],
             },
             ViewerMessage::Cleared {
-                selection: 1,
+                selection: Selection::Primary,
                 serial: 5,
             },
             ViewerMessage::Request {
-                selection: 0,
+                selection: Selection::Clipboard,
                 serial: 9,
                 mime: "text/plain;charset=utf-8".into(),
                 fd: fd(),
@@ -1215,16 +1234,16 @@ mod tests {
             },
             ServerMessage::CursorHidden,
             ServerMessage::Offer {
-                selection: 1,
+                selection: Selection::Primary,
                 serial: 8,
                 mimes: vec!["image/png".into()],
             },
             ServerMessage::Cleared {
-                selection: 0,
+                selection: Selection::Clipboard,
                 serial: 9,
             },
             ServerMessage::Request {
-                selection: 1,
+                selection: Selection::Primary,
                 serial: 4,
                 mime: "text/uri-list".into(),
                 fd: fd(),
@@ -1411,7 +1430,7 @@ mod tests {
     #[test]
     fn a_complete_message_whose_fds_have_not_arrived_is_an_error() {
         let (bytes, _) = encode_viewer(vec![ViewerMessage::Request {
-            selection: 0,
+            selection: Selection::Clipboard,
             serial: 1,
             mime: "text/plain".into(),
             fd: fd(),
@@ -1516,6 +1535,18 @@ mod tests {
         .encode(&mut bytes, &mut fds);
         assert!(matches!(result, Err(Error::TooLong(_))));
         assert_eq!(bytes, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_selection_past_the_primary_selection_is_malformed() {
+        let mut bytes = header(16, 14, 0, 0);
+        bytes.extend_from_slice(&[2, 0, 0, 0, 1, 0, 0, 0]);
+        let mut decoder = Decoder::new();
+        decoder.push_bytes(&bytes);
+        assert!(matches!(
+            decoder.next_viewer_message(),
+            Err(Error::Malformed)
+        ));
     }
 
     #[test]

@@ -105,7 +105,7 @@ use crate::save;
 use crate::scratch::{self, Launch};
 use crate::settings::{self, Settings};
 use crate::text::Font;
-use crate::wire::{self, Decoder, Outbox, Plane, ServerMessage, ViewerMessage};
+use crate::wire::{self, Decoder, Outbox, Plane, Selection, ServerMessage, ViewerMessage};
 use crate::workspace::{self, Workspace};
 use decade_channel::AgentState;
 
@@ -133,8 +133,6 @@ const SAVE_DELAY: Duration = Duration::from_secs(1);
 const SAVE_EVERY: Duration = Duration::from_secs(60);
 const CLOSE_ICON: char = '\u{f0156}';
 const SCRIM: Rgba = [0.0, 0.0, 0.0, 0.35];
-const CLIPBOARD: u32 = 0;
-const PRIMARY: u32 = 1;
 
 enum Drag {
     Boundary(Boundary),
@@ -836,7 +834,7 @@ impl State {
         for keycode in viewer.keys {
             self.keyboard(keycode, false, now);
         }
-        for selection in [CLIPBOARD, PRIMARY] {
+        for selection in [Selection::Clipboard, Selection::Primary] {
             if self.viewer_owns(selection, id) {
                 self.clear_selection(selection);
             }
@@ -1209,7 +1207,7 @@ impl State {
                 self.send(id, ServerMessage::Showing { id: shown });
                 self.make_active(id);
                 self.send_cursor(id);
-                for selection in [CLIPBOARD, PRIMARY] {
+                for selection in [Selection::Clipboard, Selection::Primary] {
                     if self.offered[selection as usize].mimes.is_some() {
                         self.tell_selection(id, selection);
                     }
@@ -1399,10 +1397,13 @@ impl State {
                 }
                 // an Err drops the fd, which closes the pipe
                 // and tells the viewer there is no data
-                if selection == CLIPBOARD {
-                    let _ = request_data_device_client_selection(&self.seat, mime, fd);
-                } else {
-                    let _ = request_primary_client_selection(&self.seat, mime, fd);
+                match selection {
+                    Selection::Clipboard => {
+                        let _ = request_data_device_client_selection(&self.seat, mime, fd);
+                    }
+                    Selection::Primary => {
+                        let _ = request_primary_client_selection(&self.seat, mime, fd);
+                    }
                 }
             }
             ViewerMessage::List => {
@@ -1430,7 +1431,7 @@ impl State {
     fn viewer_offer(
         &mut self,
         id: usize,
-        selection: u32,
+        selection: Selection,
         serial: u32,
         seen: u32,
         mimes: Vec<String>,
@@ -1443,29 +1444,29 @@ impl State {
         let owner = ViewerOffer { viewer: id, serial };
         let dh = &self.display_handle;
         match selection {
-            CLIPBOARD => set_data_device_selection(dh, &self.seat, mimes, owner),
-            _ => set_primary_selection(dh, &self.seat, mimes, owner),
+            Selection::Clipboard => set_data_device_selection(dh, &self.seat, mimes, owner),
+            Selection::Primary => set_primary_selection(dh, &self.seat, mimes, owner),
         }
     }
 
-    fn viewer_owns(&self, selection: u32, id: usize) -> bool {
+    fn viewer_owns(&self, selection: Selection, id: usize) -> bool {
         match selection {
-            CLIPBOARD => current_data_device_selection_userdata(&self.seat)
+            Selection::Clipboard => current_data_device_selection_userdata(&self.seat)
                 .is_some_and(|owner| owner.viewer == id),
-            _ => current_primary_selection_userdata(&self.seat)
+            Selection::Primary => current_primary_selection_userdata(&self.seat)
                 .is_some_and(|owner| owner.viewer == id),
         }
     }
 
-    fn clear_selection(&mut self, selection: u32) {
+    fn clear_selection(&mut self, selection: Selection) {
         match selection {
-            CLIPBOARD => clear_data_device_selection(&self.display_handle, &self.seat),
-            _ => clear_primary_selection(&self.display_handle, &self.seat),
+            Selection::Clipboard => clear_data_device_selection(&self.display_handle, &self.seat),
+            Selection::Primary => clear_primary_selection(&self.display_handle, &self.seat),
         }
     }
 
     fn client_selection(&mut self, target: SelectionTarget, mimes: Option<Vec<String>>) {
-        let selection = selection_number(target);
+        let selection = selection_of(target);
         let offered = &mut self.offered[selection as usize];
         offered.serial += 1;
         offered.mimes = mimes;
@@ -1475,7 +1476,7 @@ impl State {
         }
     }
 
-    fn tell_selection(&mut self, id: usize, selection: u32) {
+    fn tell_selection(&mut self, id: usize, selection: Selection) {
         let offered = &self.offered[selection as usize];
         let serial = offered.serial;
         let message = match &offered.mimes {
@@ -3567,12 +3568,9 @@ fn out_of_range(message: &ViewerMessage) -> Option<&'static str> {
         ViewerMessage::Keys { keycodes, .. } => {
             keycodes.iter().all(|&keycode| keycode <= MAX_KEYCODE)
         }
-        ViewerMessage::Offer { selection, .. }
-        | ViewerMessage::Cleared { selection, .. }
-        | ViewerMessage::Request { selection, .. } => *selection <= PRIMARY,
         _ => true,
     };
-    (!fits).then_some("a size, scale, keycode or selection is out of range")
+    (!fits).then_some("a size, scale or keycode is out of range")
 }
 
 /// Whether a viewer offer crossed a server offer: the viewer
@@ -3581,10 +3579,10 @@ fn crossed(seen: u32, newest: u32) -> bool {
     seen < newest
 }
 
-fn selection_number(target: SelectionTarget) -> u32 {
+fn selection_of(target: SelectionTarget) -> Selection {
     match target {
-        SelectionTarget::Clipboard => CLIPBOARD,
-        SelectionTarget::Primary => PRIMARY,
+        SelectionTarget::Clipboard => Selection::Clipboard,
+        SelectionTarget::Primary => Selection::Primary,
     }
 }
 
@@ -3958,7 +3956,7 @@ impl SelectionHandler for State {
         self.send(
             owner.viewer,
             ServerMessage::Request {
-                selection: selection_number(target),
+                selection: selection_of(target),
                 serial: owner.serial,
                 mime,
                 fd,
@@ -4033,17 +4031,6 @@ mod tests {
             keycodes: vec![30, u32::MAX],
         };
         assert!(out_of_range(&keys).is_some());
-    }
-
-    #[test]
-    fn a_selection_past_the_primary_selection_is_out_of_range() {
-        let cleared = |selection| ViewerMessage::Cleared {
-            selection,
-            serial: 1,
-        };
-        assert!(out_of_range(&cleared(CLIPBOARD)).is_none());
-        assert!(out_of_range(&cleared(PRIMARY)).is_none());
-        assert!(out_of_range(&cleared(2)).is_some());
     }
 
     #[test]
