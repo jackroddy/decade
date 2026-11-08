@@ -46,7 +46,6 @@ number of 4-byte words.
 | `fixed` | a signed 24.8 fixed-point number in one word, as in Wayland |
 | `scale` | a `u32` holding a scale in 120ths: 120 is 1, 150 is 1.25 |
 | `string` | a `u32` byte count, then UTF-8 bytes with no terminator, padded with zeros to a word |
-| `bytes` | a `u32` byte count, then the bytes, padded with zeros to a word |
 | `fd` | no bytes in the message. One file descriptor, passed as `SCM_RIGHTS` ancillary data on the socket |
 
 ### File descriptors
@@ -114,16 +113,14 @@ active viewer. The server sizes its output to the active viewer's window.
 The server can only allocate buffers the viewer's host can import. The
 viewer tells it what the host accepts before the first buffer.
 
-`formats(device: u64, count: u32, then for each: format: u32, modifier: u64)`
-: Viewer to server. `device` is the `dev_t` of the host's main device, from
-  the host's dmabuf feedback. The pairs are every DRM fourcc and modifier
-  the host can import for this window. The viewer sends `formats` again
-  whenever the host's feedback changes. For example, a scanout tranche
-  appears when the window goes fullscreen.
+`formats(count: u32, then for each: format: u32, modifier: u64)`
+: Viewer to server. The pairs are every DRM fourcc and modifier the host
+  can import for this window, from the host's dmabuf feedback. The viewer
+  sends `formats` again whenever the host's feedback changes. For example, a
+  scanout tranche appears when the window goes fullscreen.
 
-The server allocates on a device the host can read. It picks a format it can
-render to that the host also lists. It falls back to `LINEAR` when nothing
-else matches.
+The server picks a format it can render to that the host also lists. It
+falls back to `LINEAR` when nothing else matches.
 
 ### Buffers
 
@@ -137,11 +134,9 @@ another. The viewer therefore always holds at least one buffer. A pool has
 at least three buffers.
 
 `buffer(id: u32, width: u32, height: u32, format: u32, modifier: u64,
-opaque: u32, planes: u32, then for each plane: fd, offset: u32, stride: u32)`
+planes: u32, then for each plane: fd, offset: u32, stride: u32)`
 : Server to viewer. Announces a dmabuf, once, before the first `frame` that
-  uses it. Sizes are physical pixels, and row 0 is the top. `opaque` is 1
-  when the frame has no transparency. The viewer can then mark its surface
-  opaque.
+  uses it. Sizes are physical pixels, and row 0 is the top.
 
 `buffer_failed(id: u32)`
 : Viewer to server. The host could not import buffer `id`. The server
@@ -153,11 +148,9 @@ opaque: u32, planes: u32, then for each plane: fd, offset: u32, stride: u32)`
   drops its import. The server sends this only for a buffer the viewer does
   not hold.
 
-`frame(id: u32, fence: u32, damage: u32, then for each damage rect: x: i32,
-y: i32, width: u32, height: u32, then if fence is 1: fd)`
+`frame(id: u32, fence: u32, then if fence is 1: fd)`
 : Server to viewer. Buffer `id` holds a new frame, of that buffer's size.
-  Damage rects are in buffer pixels. A frame with no rects is wholly
-  damaged.
+  The viewer damages the whole buffer.
 : When `fence` is 1, the fd is a sync_file that signals when the server has
   finished rendering into the buffer. The viewer must not let the buffer
   reach the screen before then. It may wait on the fence itself, or hand it
@@ -222,12 +215,10 @@ them. The server handles each one when it arrives.
 `pointer(time: u32, x: fixed, y: fixed)`
 : The pointer moved to `x`, `y`.
 
-`pointer_left()`
-: The pointer left the window. A button still down stays down until its
-  `button` release arrives. The host's implicit grab delivers that release.
-
 `button(time: u32, button: u32, pressed: u32)`
 : A mouse button changed. `button` is a Linux evdev code, such as `BTN_LEFT`.
+  A button still down when the pointer leaves the window stays down until
+  its release arrives. The host's implicit grab delivers that release.
 
 `scroll(time: u32, source: u32, axis: u32, amount: fixed, steps: i32,
 stop: u32, inverted: u32)`
@@ -246,20 +237,11 @@ moves at the host's rate and never waits for a frame. Each viewer may show a
 different workspace. A cursor message applies only to the viewer that
 receives it.
 
-`cursor_image(id: u32, hotspot_x: i32, hotspot_y: i32, width: u32, height:
-u32, scale: scale, pixels: bytes)`
-: Server to viewer. Defines cursor image `id`, for later `cursor` messages.
-  Pixels are premultiplied ARGB8888, `width` times `height`, row by row. The
-  hotspot is in image pixels. `scale` is the scale the image was drawn for.
-  A new image with an existing `id` replaces the old one.
-
-`cursor(id: u32)`
-: Server to viewer. Show cursor image `id`.
-
 `cursor_shape(shape: string)`
 : Server to viewer. A named cursor, using the names of the cursor-shape
   protocol, such as `default`, `text` or `pointer`. The viewer shows the
-  matching cursor from its host's theme.
+  matching cursor from its host's theme. A client that sets a cursor
+  surface of its own gets `default`.
 
 `cursor_hidden()`
 : Server to viewer. No cursor over the frame.
@@ -316,16 +298,12 @@ own messages, with flow control.
 : Server to viewer. The whole list, after `welcome` and whenever it changes.
 
 `showing(id: u32)`
-: Server to viewer. The workspace this viewer shows.
-
-`show(id: u32)`
-: Viewer to server. Show workspace `id` in this viewer. Each viewer shows
-  its own workspace. The server answers with `showing`.
+: Server to viewer. The workspace this viewer shows. Each viewer shows its
+  own workspace.
 
 `list()`
 : Client to server, as the first message in place of `hello`. The server
   answers with `listing` and closes the connection. `decade list` uses it.
-  A viewer that has had `welcome` may send it too, and stays connected.
 
 `listing(count: u32, then for each: id: u32, name: string, cwd: string, panes: u32)`
 : Server to client. Every workspace in the order the picker shows them,
@@ -333,24 +311,14 @@ own messages, with flow control.
 
 ## Closing
 
-`close(reason: u32, message: string)`
+`close(message: string)`
 : Server to viewer, before the server closes the connection for a reason
-  other than an error. `message` is for a person to read.
+  other than an error, such as shutting down. `message` is for a person to
+  read.
 
-| reason | meaning |
-|---|---|
-| 1 | the server is shutting down |
-| 2 | another reason, given in `message` |
-
-`error(code: u32, message: string)`
+`error(message: string)`
 : Either direction. `message` is for a person to read. After `error`, the
   sender closes the connection.
-
-| code | meaning |
-|---|---|
-| 1 | an unknown opcode, a malformed message, or a missing or truncated fd |
-| 2 | no protocol version in common |
-| 3 | any other failure |
 
 ## Opcodes
 
@@ -369,14 +337,12 @@ Viewer to server:
 | 8 | `keys` |
 | 9 | `keys_released` |
 | 10 | `pointer` |
-| 11 | `pointer_left` |
-| 12 | `button` |
-| 13 | `scroll` |
-| 14 | `offer` |
-| 15 | `cleared` |
-| 16 | `request` |
-| 17 | `show` |
-| 18 | `list` |
+| 11 | `button` |
+| 12 | `scroll` |
+| 13 | `offer` |
+| 14 | `cleared` |
+| 15 | `request` |
+| 16 | `list` |
 
 Server to viewer:
 
@@ -388,17 +354,15 @@ Server to viewer:
 | 3 | `buffer` |
 | 4 | `forget` |
 | 5 | `frame` |
-| 6 | `cursor_image` |
-| 7 | `cursor` |
-| 8 | `cursor_shape` |
-| 9 | `cursor_hidden` |
-| 10 | `offer` |
-| 11 | `cleared` |
-| 12 | `request` |
-| 13 | `workspaces` |
-| 14 | `showing` |
-| 15 | `close` |
-| 16 | `listing` |
+| 6 | `cursor_shape` |
+| 7 | `cursor_hidden` |
+| 8 | `offer` |
+| 9 | `cleared` |
+| 10 | `request` |
+| 11 | `workspaces` |
+| 12 | `showing` |
+| 13 | `close` |
+| 14 | `listing` |
 
 Opcodes from 1000 up, in both directions, are reserved for remote frames and
 remote clipboard transfers.

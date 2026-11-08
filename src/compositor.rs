@@ -819,7 +819,6 @@ impl State {
         self.send(
             id,
             ServerMessage::Error {
-                code: 1,
                 message: message.to_string(),
             },
         );
@@ -858,7 +857,6 @@ impl State {
     fn close_viewers(&mut self) {
         for viewer in self.viewers.values_mut().filter(|viewer| viewer.welcomed) {
             let _ = viewer.outbox.push_server_message(ServerMessage::Close {
-                reason: 1,
                 message: "the server is shutting down".to_string(),
             });
             let deadline = Instant::now() + Duration::from_millis(CLOSE_TIMEOUT_MS as u64);
@@ -1351,7 +1349,6 @@ impl State {
                 let location = Point::<f64, Physical>::from((x, y)).to_logical(self.scale);
                 self.pointer_moved(location, time);
             }
-            ViewerMessage::PointerLeft => {}
             ViewerMessage::Button {
                 time,
                 button,
@@ -1415,7 +1412,6 @@ impl State {
                     let _ = request_primary_client_selection(&self.seat, mime, fd);
                 }
             }
-            ViewerMessage::Show { id: workspace } => self.show(id, workspace),
             ViewerMessage::List => {
                 let workspaces = self
                     .workspaces
@@ -1428,11 +1424,8 @@ impl State {
                     })
                     .collect();
                 self.send(id, ServerMessage::Listing { workspaces });
-                let welcomed = self.viewers.get(&id).is_some_and(|viewer| viewer.welcomed);
-                if !welcomed {
-                    self.flush_viewers();
-                    self.viewer_gone(id);
-                }
+                self.flush_viewers();
+                self.viewer_gone(id);
             }
             ViewerMessage::Error { message, .. } => {
                 eprintln!("decade: a viewer reported an error: {message}");
@@ -1593,7 +1586,6 @@ impl State {
                     height,
                     format: format.code as u32,
                     modifier: format.modifier.into(),
-                    opaque: true,
                     planes,
                 };
                 if viewer.outbox.push_server_message(message).is_err() {
@@ -1633,11 +1625,9 @@ impl State {
         viewer.pool[index].lent = true;
         viewer.ready = false;
         viewer.wants_frame = false;
-        let _ = viewer.outbox.push_server_message(ServerMessage::Frame {
-            id: buffer,
-            damage: Vec::new(),
-            fence,
-        });
+        let _ = viewer
+            .outbox
+            .push_server_message(ServerMessage::Frame { id: buffer, fence });
     }
 
     fn send_cursor(&mut self, id: usize) {

@@ -55,7 +55,6 @@ const RECEIVE_FLAGS: RecvFlags = RecvFlags::DONTWAIT;
 #[derive(Debug)]
 pub enum ViewerMessage {
     Error {
-        code: u32,
         message: String,
     },
     Hello {
@@ -66,7 +65,6 @@ pub enum ViewerMessage {
         scale: u32,
     },
     Formats {
-        device: u64,
         formats: Vec<Format>,
     },
     Resize {
@@ -97,7 +95,6 @@ pub enum ViewerMessage {
         x: f64,
         y: f64,
     },
-    PointerLeft,
     Button {
         time: u32,
         button: u32,
@@ -128,9 +125,6 @@ pub enum ViewerMessage {
         mime: String,
         fd: OwnedFd,
     },
-    Show {
-        id: u32,
-    },
     List,
 }
 
@@ -138,7 +132,6 @@ pub enum ViewerMessage {
 #[derive(Debug)]
 pub enum ServerMessage {
     Error {
-        code: u32,
         message: String,
     },
     Welcome {
@@ -155,7 +148,6 @@ pub enum ServerMessage {
         height: u32,
         format: u32,
         modifier: u64,
-        opaque: bool,
         planes: Vec<Plane>,
     },
     Forget {
@@ -163,20 +155,7 @@ pub enum ServerMessage {
     },
     Frame {
         id: u32,
-        damage: Vec<Rect>,
         fence: Option<OwnedFd>,
-    },
-    CursorImage {
-        id: u32,
-        hotspot_x: i32,
-        hotspot_y: i32,
-        width: u32,
-        height: u32,
-        scale: u32,
-        pixels: Vec<u8>,
-    },
-    Cursor {
-        id: u32,
     },
     CursorShape {
         shape: String,
@@ -205,7 +184,6 @@ pub enum ServerMessage {
         id: u32,
     },
     Close {
-        reason: u32,
         message: String,
     },
     Listing {
@@ -226,15 +204,6 @@ pub struct Plane {
     pub fd: OwnedFd,
     pub offset: u32,
     pub stride: u32,
-}
-
-/// A damaged rectangle in buffer pixels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rect {
-    pub x: i32,
-    pub y: i32,
-    pub width: u32,
-    pub height: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -293,8 +262,7 @@ impl ViewerMessage {
     pub fn encode(self, bytes: &mut Vec<u8>, fds: &mut Vec<OwnedFd>) -> Result<(), Error> {
         let mut w = Writer::new(bytes, fds);
         let opcode = match self {
-            ViewerMessage::Error { code, message } => {
-                w.u32(code);
+            ViewerMessage::Error { message } => {
                 w.string(&message);
                 0
             }
@@ -312,8 +280,7 @@ impl ViewerMessage {
                 w.u32(scale);
                 1
             }
-            ViewerMessage::Formats { device, formats } => {
-                w.u64(device);
+            ViewerMessage::Formats { formats } => {
                 w.count(formats.len());
                 for format in formats {
                     w.u32(format.format);
@@ -366,7 +333,6 @@ impl ViewerMessage {
                 w.fixed(y);
                 10
             }
-            ViewerMessage::PointerLeft => 11,
             ViewerMessage::Button {
                 time,
                 button,
@@ -375,7 +341,7 @@ impl ViewerMessage {
                 w.u32(time);
                 w.u32(button);
                 w.bool(pressed);
-                12
+                11
             }
             ViewerMessage::Scroll {
                 time,
@@ -393,7 +359,7 @@ impl ViewerMessage {
                 w.i32(steps);
                 w.bool(stop);
                 w.bool(inverted);
-                13
+                12
             }
             ViewerMessage::Offer {
                 selection,
@@ -402,12 +368,12 @@ impl ViewerMessage {
                 mimes,
             } => {
                 w.offer(selection, serial, seen, &mimes);
-                14
+                13
             }
             ViewerMessage::Cleared { selection, serial } => {
                 w.u32(selection);
                 w.u32(serial);
-                15
+                14
             }
             ViewerMessage::Request {
                 selection,
@@ -419,13 +385,9 @@ impl ViewerMessage {
                 w.u32(serial);
                 w.string(&mime);
                 w.fd(fd);
-                16
+                15
             }
-            ViewerMessage::Show { id } => {
-                w.u32(id);
-                17
-            }
-            ViewerMessage::List => 18,
+            ViewerMessage::List => 16,
         };
         w.finish(opcode)
     }
@@ -440,8 +402,7 @@ impl ServerMessage {
     pub fn encode(self, bytes: &mut Vec<u8>, fds: &mut Vec<OwnedFd>) -> Result<(), Error> {
         let mut w = Writer::new(bytes, fds);
         let opcode = match self {
-            ServerMessage::Error { code, message } => {
-                w.u32(code);
+            ServerMessage::Error { message } => {
                 w.string(&message);
                 0
             }
@@ -465,7 +426,6 @@ impl ServerMessage {
                 height,
                 format,
                 modifier,
-                opaque,
                 planes,
             } => {
                 w.u32(id);
@@ -473,7 +433,6 @@ impl ServerMessage {
                 w.u32(height);
                 w.u32(format);
                 w.u64(modifier);
-                w.bool(opaque);
                 w.count(planes.len());
                 for plane in planes {
                     w.fd(plane.fd);
@@ -486,48 +445,16 @@ impl ServerMessage {
                 w.u32(id);
                 4
             }
-            ServerMessage::Frame { id, damage, fence } => {
+            ServerMessage::Frame { id, fence } => {
                 w.u32(id);
-                w.bool(fence.is_some());
-                w.count(damage.len());
-                for rect in damage {
-                    w.i32(rect.x);
-                    w.i32(rect.y);
-                    w.u32(rect.width);
-                    w.u32(rect.height);
-                }
-                if let Some(fd) = fence {
-                    w.fd(fd);
-                }
+                w.fence(fence);
                 5
-            }
-            ServerMessage::CursorImage {
-                id,
-                hotspot_x,
-                hotspot_y,
-                width,
-                height,
-                scale,
-                pixels,
-            } => {
-                w.u32(id);
-                w.i32(hotspot_x);
-                w.i32(hotspot_y);
-                w.u32(width);
-                w.u32(height);
-                w.u32(scale);
-                w.bytes(&pixels);
-                6
-            }
-            ServerMessage::Cursor { id } => {
-                w.u32(id);
-                7
             }
             ServerMessage::CursorShape { shape } => {
                 w.string(&shape);
-                8
+                6
             }
-            ServerMessage::CursorHidden => 9,
+            ServerMessage::CursorHidden => 7,
             ServerMessage::Offer {
                 selection,
                 serial,
@@ -535,12 +462,12 @@ impl ServerMessage {
                 mimes,
             } => {
                 w.offer(selection, serial, seen, &mimes);
-                10
+                8
             }
             ServerMessage::Cleared { selection, serial } => {
                 w.u32(selection);
                 w.u32(serial);
-                11
+                9
             }
             ServerMessage::Request {
                 selection,
@@ -552,7 +479,7 @@ impl ServerMessage {
                 w.u32(serial);
                 w.string(&mime);
                 w.fd(fd);
-                12
+                10
             }
             ServerMessage::Workspaces { workspaces } => {
                 w.count(workspaces.len());
@@ -560,16 +487,15 @@ impl ServerMessage {
                     w.u32(workspace.id);
                     w.string(&workspace.name);
                 }
-                13
+                11
             }
             ServerMessage::Showing { id } => {
                 w.u32(id);
-                14
+                12
             }
-            ServerMessage::Close { reason, message } => {
-                w.u32(reason);
+            ServerMessage::Close { message } => {
                 w.string(&message);
-                15
+                13
             }
             ServerMessage::Listing { workspaces } => {
                 w.count(workspaces.len());
@@ -579,7 +505,7 @@ impl ServerMessage {
                     w.string(&workspace.cwd);
                     w.u32(workspace.panes);
                 }
-                16
+                14
             }
         };
         w.finish(opcode)
@@ -631,15 +557,11 @@ impl<'a> Writer<'a> {
         self.u32(count as u32);
     }
 
-    fn bytes(&mut self, data: &[u8]) {
-        self.count(data.len());
-        self.bytes.extend_from_slice(data);
-        let padding = data.len().next_multiple_of(4) - data.len();
-        self.bytes.extend_from_slice(&[0; 3][..padding]);
-    }
-
     fn string(&mut self, s: &str) {
-        self.bytes(s.as_bytes());
+        self.count(s.len());
+        self.bytes.extend_from_slice(s.as_bytes());
+        let padding = s.len().next_multiple_of(4) - s.len();
+        self.bytes.extend_from_slice(&[0; 3][..padding]);
     }
 
     fn fd(&mut self, fd: OwnedFd) {
@@ -864,7 +786,6 @@ impl Decoder {
         };
         let message = match opcode {
             0 => ViewerMessage::Error {
-                code: a.u32()?,
                 message: a.string()?,
             },
             1 => ViewerMessage::Hello {
@@ -875,7 +796,6 @@ impl Decoder {
                 scale: a.u32()?,
             },
             2 => {
-                let device = a.u64()?;
                 let count = a.count(12)?;
                 let mut formats = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -884,7 +804,7 @@ impl Decoder {
                         modifier: a.u64()?,
                     });
                 }
-                ViewerMessage::Formats { device, formats }
+                ViewerMessage::Formats { formats }
             }
             3 => ViewerMessage::Resize {
                 width: a.u32()?,
@@ -917,13 +837,12 @@ impl Decoder {
                 x: a.fixed()?,
                 y: a.fixed()?,
             },
-            11 => ViewerMessage::PointerLeft,
-            12 => ViewerMessage::Button {
+            11 => ViewerMessage::Button {
                 time: a.u32()?,
                 button: a.u32()?,
                 pressed: a.bool()?,
             },
-            13 => ViewerMessage::Scroll {
+            12 => ViewerMessage::Scroll {
                 time: a.u32()?,
                 source: a.u32()?,
                 axis: a.u32()?,
@@ -932,24 +851,23 @@ impl Decoder {
                 stop: a.bool()?,
                 inverted: a.bool()?,
             },
-            14 => ViewerMessage::Offer {
+            13 => ViewerMessage::Offer {
                 selection: a.u32()?,
                 serial: a.u32()?,
                 seen: a.u32()?,
                 mimes: a.strings()?,
             },
-            15 => ViewerMessage::Cleared {
+            14 => ViewerMessage::Cleared {
                 selection: a.u32()?,
                 serial: a.u32()?,
             },
-            16 => ViewerMessage::Request {
+            15 => ViewerMessage::Request {
                 selection: a.u32()?,
                 serial: a.u32()?,
                 mime: a.string()?,
                 fd: a.fd()?,
             },
-            17 => ViewerMessage::Show { id: a.u32()? },
-            18 => ViewerMessage::List,
+            16 => ViewerMessage::List,
             _ => return Err(Error::UnknownOpcode(opcode)),
         };
         a.finish()?;
@@ -963,7 +881,6 @@ impl Decoder {
         };
         let message = match opcode {
             0 => ServerMessage::Error {
-                code: a.u32()?,
                 message: a.string()?,
             },
             1 => ServerMessage::Welcome { version: a.u32()? },
@@ -978,7 +895,6 @@ impl Decoder {
                 let height = a.u32()?;
                 let format = a.u32()?;
                 let modifier = a.u64()?;
-                let opaque = a.bool()?;
                 let count = a.count(8)?;
                 let mut planes = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -994,56 +910,33 @@ impl Decoder {
                     height,
                     format,
                     modifier,
-                    opaque,
                     planes,
                 }
             }
             4 => ServerMessage::Forget { id: a.u32()? },
-            5 => {
-                let id = a.u32()?;
-                let fenced = a.bool()?;
-                let count = a.count(16)?;
-                let mut damage = Vec::with_capacity(count);
-                for _ in 0..count {
-                    damage.push(Rect {
-                        x: a.i32()?,
-                        y: a.i32()?,
-                        width: a.u32()?,
-                        height: a.u32()?,
-                    });
-                }
-                let fence = if fenced { Some(a.fd()?) } else { None };
-                ServerMessage::Frame { id, damage, fence }
-            }
-            6 => ServerMessage::CursorImage {
+            5 => ServerMessage::Frame {
                 id: a.u32()?,
-                hotspot_x: a.i32()?,
-                hotspot_y: a.i32()?,
-                width: a.u32()?,
-                height: a.u32()?,
-                scale: a.u32()?,
-                pixels: a.bytes()?.to_vec(),
+                fence: a.fence()?,
             },
-            7 => ServerMessage::Cursor { id: a.u32()? },
-            8 => ServerMessage::CursorShape { shape: a.string()? },
-            9 => ServerMessage::CursorHidden,
-            10 => ServerMessage::Offer {
+            6 => ServerMessage::CursorShape { shape: a.string()? },
+            7 => ServerMessage::CursorHidden,
+            8 => ServerMessage::Offer {
                 selection: a.u32()?,
                 serial: a.u32()?,
                 seen: a.u32()?,
                 mimes: a.strings()?,
             },
-            11 => ServerMessage::Cleared {
+            9 => ServerMessage::Cleared {
                 selection: a.u32()?,
                 serial: a.u32()?,
             },
-            12 => ServerMessage::Request {
+            10 => ServerMessage::Request {
                 selection: a.u32()?,
                 serial: a.u32()?,
                 mime: a.string()?,
                 fd: a.fd()?,
             },
-            13 => {
+            11 => {
                 let count = a.count(8)?;
                 let mut workspaces = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -1054,12 +947,11 @@ impl Decoder {
                 }
                 ServerMessage::Workspaces { workspaces }
             }
-            14 => ServerMessage::Showing { id: a.u32()? },
-            15 => ServerMessage::Close {
-                reason: a.u32()?,
+            12 => ServerMessage::Showing { id: a.u32()? },
+            13 => ServerMessage::Close {
                 message: a.string()?,
             },
-            16 => {
+            14 => {
                 let count = a.count(16)?;
                 let mut workspaces = Vec::with_capacity(count);
                 for _ in 0..count {
@@ -1131,15 +1023,10 @@ impl<'a> Args<'a> {
         Ok(count)
     }
 
-    fn bytes(&mut self) -> Result<&'a [u8], Error> {
+    fn string(&mut self) -> Result<String, Error> {
         let len = self.u32()? as usize;
         let padded = self.take(len.next_multiple_of(4))?;
-        Ok(&padded[..len])
-    }
-
-    fn string(&mut self) -> Result<String, Error> {
-        let bytes = self.bytes()?;
-        let s = std::str::from_utf8(bytes).map_err(|_| Error::Malformed)?;
+        let s = std::str::from_utf8(&padded[..len]).map_err(|_| Error::Malformed)?;
         Ok(s.to_owned())
     }
 
@@ -1206,7 +1093,6 @@ mod tests {
     fn viewer_messages() -> Vec<ViewerMessage> {
         vec![
             ViewerMessage::Error {
-                code: 3,
                 message: "it broke".into(),
             },
             ViewerMessage::Hello {
@@ -1217,7 +1103,6 @@ mod tests {
                 scale: 150,
             },
             ViewerMessage::Formats {
-                device: 0xe200,
                 formats: vec![
                     Format {
                         format: 0x34325241,
@@ -1256,7 +1141,6 @@ mod tests {
                 x: -1.5,
                 y: 1000.25,
             },
-            ViewerMessage::PointerLeft,
             ViewerMessage::Button {
                 time: 1002,
                 button: 0x110,
@@ -1287,7 +1171,6 @@ mod tests {
                 mime: "text/plain;charset=utf-8".into(),
                 fd: fd(),
             },
-            ViewerMessage::Show { id: 2 },
             ViewerMessage::List,
         ]
     }
@@ -1295,7 +1178,6 @@ mod tests {
     fn server_messages() -> Vec<ServerMessage> {
         vec![
             ServerMessage::Error {
-                code: 1,
                 message: "unknown opcode".into(),
             },
             ServerMessage::Welcome { version: 1 },
@@ -1310,7 +1192,6 @@ mod tests {
                 height: 1200,
                 format: 0x34325241,
                 modifier: 0x0100_0000_0000_0002,
-                opaque: true,
                 planes: vec![
                     Plane {
                         fd: fd(),
@@ -1325,39 +1206,11 @@ mod tests {
                 ],
             },
             ServerMessage::Forget { id: 1 },
-            ServerMessage::Frame {
-                id: 1,
-                damage: vec![],
-                fence: None,
-            },
+            ServerMessage::Frame { id: 1, fence: None },
             ServerMessage::Frame {
                 id: 2,
-                damage: vec![
-                    Rect {
-                        x: -4,
-                        y: 0,
-                        width: 10,
-                        height: 20,
-                    },
-                    Rect {
-                        x: 100,
-                        y: 200,
-                        width: 1,
-                        height: 1,
-                    },
-                ],
                 fence: Some(fd()),
             },
-            ServerMessage::CursorImage {
-                id: 3,
-                hotspot_x: 1,
-                hotspot_y: -2,
-                width: 1,
-                height: 2,
-                scale: 240,
-                pixels: vec![1, 2, 3, 4, 5, 6, 7, 8],
-            },
-            ServerMessage::Cursor { id: 3 },
             ServerMessage::CursorShape {
                 shape: "default".into(),
             },
@@ -1392,7 +1245,6 @@ mod tests {
             },
             ServerMessage::Showing { id: 2 },
             ServerMessage::Close {
-                reason: 1,
                 message: "shutting down".into(),
             },
             ServerMessage::Listing {
@@ -1527,7 +1379,6 @@ mod tests {
                 height: 1,
                 format: 0,
                 modifier: 0,
-                opaque: false,
                 planes: (0..3)
                     .map(|_| Plane {
                         fd: fd(),
@@ -1538,7 +1389,6 @@ mod tests {
             },
             ServerMessage::Frame {
                 id: 1,
-                damage: vec![],
                 fence: Some(fd()),
             },
         ]);
@@ -1584,7 +1434,6 @@ mod tests {
             height: 1,
             format: 0,
             modifier: 0,
-            opaque: false,
             planes: (0..3)
                 .map(|_| Plane {
                     fd: fd(),
@@ -1663,14 +1512,8 @@ mod tests {
     fn encoding_a_message_over_one_mebibyte_fails_and_appends_nothing() {
         let mut bytes = vec![1, 2, 3, 4];
         let mut fds = Vec::new();
-        let result = ServerMessage::CursorImage {
-            id: 1,
-            hotspot_x: 0,
-            hotspot_y: 0,
-            width: 512,
-            height: 512,
-            scale: 120,
-            pixels: vec![0; 512 * 512 * 4],
+        let result = ServerMessage::CursorShape {
+            shape: "x".repeat(MAX_MESSAGE_LEN),
         }
         .encode(&mut bytes, &mut fds);
         assert!(matches!(result, Err(Error::TooLong(_))));
@@ -1690,7 +1533,7 @@ mod tests {
     }
 
     #[test]
-    fn strings_and_bytes_carry_a_count_and_pad_to_a_word_with_zeros() {
+    fn strings_carry_a_count_and_pad_to_a_word_with_zeros() {
         let (bytes, _) = encode_server(vec![
             ServerMessage::CursorShape {
                 shape: "text".into(),
@@ -1700,38 +1543,28 @@ mod tests {
             },
             ServerMessage::CursorShape { shape: "".into() },
         ]);
-        let mut expected = header(16, 8, 0, 0);
+        let mut expected = header(16, 6, 0, 0);
         expected.extend_from_slice(&[4, 0, 0, 0]);
         expected.extend_from_slice(b"text");
-        expected.extend_from_slice(&header(20, 8, 0, 0));
+        expected.extend_from_slice(&header(20, 6, 0, 0));
         expected.extend_from_slice(&[7, 0, 0, 0]);
         expected.extend_from_slice(b"default\0");
-        expected.extend_from_slice(&header(12, 8, 0, 0));
+        expected.extend_from_slice(&header(12, 6, 0, 0));
         expected.extend_from_slice(&[0, 0, 0, 0]);
         assert_eq!(bytes, expected);
-
-        let (bytes, _) = encode_server(vec![ServerMessage::CursorImage {
-            id: 0,
-            hotspot_x: 0,
-            hotspot_y: 0,
-            width: 0,
-            height: 0,
-            scale: 0,
-            pixels: vec![9; 5],
-        }]);
-        assert_eq!(bytes.len(), 8 + 6 * 4 + 4 + 8);
-        assert_eq!(&bytes[32..], [5, 0, 0, 0, 9, 9, 9, 9, 9, 0, 0, 0]);
     }
 
     #[test]
     fn a_u64_is_written_low_word_first() {
         let (bytes, _) = encode_viewer(vec![ViewerMessage::Formats {
-            device: 0x1122_3344_5566_7788,
-            formats: vec![],
+            formats: vec![Format {
+                format: 0,
+                modifier: 0x1122_3344_5566_7788,
+            }],
         }]);
         assert_eq!(
-            &bytes[8..],
-            [0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0, 0, 0, 0]
+            &bytes[16..],
+            [0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
         );
     }
 
@@ -1768,7 +1601,6 @@ mod tests {
                 height: 768,
                 format: 0x34325241,
                 modifier: 0,
-                opaque: true,
                 planes,
             })
             .unwrap();
@@ -1781,17 +1613,11 @@ mod tests {
             outbox
                 .push_server_message(ServerMessage::Frame {
                     id,
-                    damage: vec![Rect {
-                        x: 0,
-                        y: 0,
-                        width: id,
-                        height: 1,
-                    }],
                     fence: Some(writer),
                 })
                 .unwrap();
             outbox
-                .push_server_message(ServerMessage::Cursor { id })
+                .push_server_message(ServerMessage::Showing { id })
                 .unwrap();
         }
         while !outbox.send(&server).unwrap() {}
@@ -1815,7 +1641,7 @@ mod tests {
                     }
                 }
                 ServerMessage::Frame { fence, .. } => written.push(fence.unwrap()),
-                ServerMessage::Cursor { .. } => {}
+                ServerMessage::Showing { .. } => {}
                 other => panic!("unexpected {other:?}"),
             }
         }

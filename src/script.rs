@@ -39,7 +39,6 @@ pub fn run(path: &str) -> Result<(), String> {
             modifier: format.modifier.into(),
         })
         .collect();
-    let device = gpu.node.dev_id();
     let stream = UnixStream::connect(viewer_socket_path())
         .map_err(|_| "no server is running".to_string())?;
     stream
@@ -61,7 +60,7 @@ pub fn run(path: &str) -> Result<(), String> {
         height: SIZE.1,
         scale: SCALE,
     })?;
-    session.send(ViewerMessage::Formats { device, formats })?;
+    session.send(ViewerMessage::Formats { formats })?;
     session.pump(SETTLE * 2)?;
     for (number, line) in text.lines().enumerate() {
         let line = line.trim();

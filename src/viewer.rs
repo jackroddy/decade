@@ -304,8 +304,8 @@ struct Viewer {
     fractional: bool,
     configured: bool,
 
-    /// The host's main device and the formats it imports for the window.
-    formats: Option<(u64, Vec<Format>)>,
+    /// The formats the host imports for the window.
+    formats: Option<Vec<Format>>,
 
     /// The size and scale the server last heard, once `hello` is sent.
     sent: Option<(u32, u32, u32)>,
@@ -505,7 +505,7 @@ impl Viewer {
         if self.sent.is_some() || !self.configured {
             return;
         }
-        let Some((device, formats)) = self.formats.clone() else {
+        let Some(formats) = self.formats.clone() else {
             return;
         };
         let (width, height) = self.size;
@@ -516,7 +516,7 @@ impl Viewer {
             height,
             scale: self.scale,
         });
-        self.send(ViewerMessage::Formats { device, formats });
+        self.send(ViewerMessage::Formats { formats });
         self.sent = Some((width, height, self.scale));
     }
 
@@ -553,7 +553,6 @@ impl Viewer {
                 Err(error) => {
                     eprintln!("decade: the server sent a bad message: {error}");
                     self.send(ViewerMessage::Error {
-                        code: 1,
                         message: error.to_string(),
                     });
                     self.exit = Some(1);
@@ -568,12 +567,8 @@ impl Viewer {
                 eprintln!("decade: the server reported an error: {message}");
                 self.exit = Some(1);
             }
-            ServerMessage::Close { reason, message } => {
-                if reason == 1 {
-                    eprintln!("decade: the server is shutting down");
-                } else {
-                    eprintln!("decade: the server closed this viewer: {message}");
-                }
+            ServerMessage::Close { message } => {
+                eprintln!("decade: {message}");
                 self.exit = Some(0);
             }
             ServerMessage::Listing { .. } => {}
@@ -599,9 +594,6 @@ impl Viewer {
             }
             ServerMessage::Frame { id, fence, .. } => self.frame(id, fence),
             ServerMessage::CursorShape { shape: name } => self.set_cursor(Some(shape(&name))),
-            ServerMessage::CursorImage { .. } | ServerMessage::Cursor { .. } => {
-                self.set_cursor(Some(Shape::Default))
-            }
             ServerMessage::CursorHidden => self.set_cursor(None),
             ServerMessage::Offer {
                 selection,
@@ -846,7 +838,6 @@ impl Viewer {
             }
             wl_pointer::Event::Leave { .. } => {
                 self.enter_serial = None;
-                self.input(ViewerMessage::PointerLeft);
             }
             wl_pointer::Event::Motion {
                 time,
@@ -1093,15 +1084,13 @@ impl DmabufHandler for Viewer {
                 modifier: entry.modifier,
             })
             .collect();
-        let formats = Some((feedback.main_device(), formats));
+        let formats = Some(formats);
         if formats == self.formats {
             return;
         }
         self.formats = formats;
         match (&self.sent, self.formats.clone()) {
-            (Some(_), Some((device, formats))) => {
-                self.send(ViewerMessage::Formats { device, formats })
-            }
+            (Some(_), Some(formats)) => self.send(ViewerMessage::Formats { formats }),
             _ => self.hello(),
         }
     }
