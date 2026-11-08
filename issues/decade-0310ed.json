@@ -3,7 +3,7 @@
   "title": "Closing a tab that holds the scratch pane leaves the workspace naming a pane that is gone",
   "body": "`State::remove_pane` in `compositor.rs` removes a pane from the layout, the router and `agents`, and clears `Workspace.scratch` when the pane was the scratch pane. `finish_closing_tab` removes every pane of a tab from the router and `agents` but does not touch `scratch`. After the tab closes, `Workspace::scratch_pane()` still names a pane no layout holds. I have not traced what `scratch.open` over MCP does then.\n\nThe fix belongs with the issue \"Workspace owns adding, removing and pruning panes\", which gives pane removal one home.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T20:12:51.752938931Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:38:28.025871823Z",
-  "updated_at": "2026-11-08T19:57:51.752938931Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T19:58:23.294313725Z",
+  "closed_at": "2026-11-08T19:58:23.294313725Z",
+  "close_reason": "Fixed in c577da4. Workspace::forget_pane clears the router entry, agent state and scratch mark, and both remove_tab and remove_pane call it. The test removing_the_tab_that_holds_the_scratch_pane_leaves_no_scratch_pane in workspace.rs failed before the fix.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "c577da4",
+      "branch": "simplify"
+    }
   }
 }
