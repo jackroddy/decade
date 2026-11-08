@@ -18,7 +18,7 @@ use crate::server::chrome::palette::{ACCENT, Rgba};
 use crate::server::chrome::picker::{Grid, Picker};
 use crate::server::chrome::settings::Settings;
 use crate::server::panes::{BACKGROUND, Chrome, Layout};
-use crate::server::workspace::Workspace;
+use crate::server::workspace::{self, Workspace};
 
 use super::input::Drag;
 use super::{Overlay, State, send_frames_surface_tree};
@@ -36,6 +36,12 @@ impl State {
         let current = self.current();
         let picking = matches!(self.overlay, Some(Overlay::Picker { .. }));
         let picker_grid = (workspace == current && picking).then(|| self.picker_grid());
+        if picker_grid.is_none() && self.sidebar_open {
+            let now = Instant::now();
+            for shown in &mut self.workspaces {
+                shown.refresh_branch(now);
+            }
+        }
         let frame = picker_grid.is_none().then(|| self.frame(workspace));
         let State {
             gpu,
@@ -184,17 +190,21 @@ impl State {
 
     /// The top bar and sidebar drawn around the workspace's panes.
     pub(super) fn frame(&self, shown: usize) -> frame::Frame {
+        let home = workspace::home();
         let entries = (self.workspaces.iter().enumerate())
             .map(|(i, workspace)| {
-                let urgent = workspace
-                    .router
-                    .statuses()
-                    .max_by_key(|status| status.state);
+                let urgent = (workspace.router.clients.values())
+                    .filter_map(|client| Some((client.status.as_ref()?, client.since)))
+                    .max_by_key(|(status, _)| status.state);
                 frame::Entry {
                     id: workspace.id,
                     name: workspace.name.clone(),
-                    state: workspace.agent_state(),
-                    message: urgent.and_then(|status| status.message.clone()),
+                    tabs: workspace.tabs.len(),
+                    path: frame::short_path(&workspace.cwd, &home),
+                    branch: workspace.branch.clone(),
+                    state: urgent.map(|(status, _)| status.state),
+                    age: urgent.map_or(Duration::ZERO, |(_, since)| since.elapsed()),
+                    message: urgent.and_then(|(status, _)| status.message.clone()),
                     current: i == shown,
                 }
             })

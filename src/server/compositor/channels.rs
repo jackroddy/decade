@@ -1,6 +1,7 @@
 use std::io::{self, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Command;
+use std::time::Instant;
 
 use decade_channel::{AgentState, Reply};
 use smithay::reexports::calloop::generic::Generic;
@@ -280,10 +281,12 @@ impl State {
     /// Return every agent in the workspace that is done or needs attention
     /// to idle, as the person at the screen.
     pub(super) fn clear_agents(&mut self, workspace: usize) {
-        let clients = self.workspaces[workspace].router.clients.values_mut();
-        for status in clients.filter_map(|client| client.status.as_mut()) {
-            if status.state > AgentState::Working {
+        for client in self.workspaces[workspace].router.clients.values_mut() {
+            if let Some(status) = &mut client.status
+                && status.state > AgentState::Working
+            {
                 status.state = AgentState::Idle;
+                client.since = Instant::now();
             }
         }
         self.request_redraw();

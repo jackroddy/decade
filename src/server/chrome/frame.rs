@@ -1,15 +1,17 @@
 use std::cmp::Reverse;
+use std::path::Path;
+use std::time::Duration;
 
 use crate::server::chrome::draw::Scene;
 use crate::server::chrome::palette;
 use crate::server::chrome::palette::Rgba;
-use crate::server::chrome::text::fit;
+use crate::server::chrome::text::{fit, tail};
 use crate::server::panes::CellRect;
 use decade_channel::AgentState;
 
 /// The rows above the panes that the top bar takes.
 const TOP: u32 = 1;
-const OPEN_WIDTH: u32 = 24;
+const OPEN_WIDTH: u32 = 32;
 const CLOSED_WIDTH: u32 = 3;
 const DIAMOND: char = '◆';
 const MENU: char = '≡';
@@ -40,7 +42,15 @@ pub fn pane_area(columns: u32, rows: u32, open: bool) -> CellRect {
 pub struct Entry {
     pub id: u32,
     pub name: String,
+    pub tabs: usize,
+
+    /// The workspace's directory, shortened by `short_path`.
+    pub path: String,
+    pub branch: Option<String>,
     pub state: Option<AgentState>,
+
+    /// How long the agent has held `state`.
+    pub age: Duration,
     pub message: Option<String>,
     pub current: bool,
 }
@@ -57,9 +67,18 @@ pub enum Hit {
 }
 
 enum Line {
-    Workspace(usize),
-    Message(usize),
+    /// A workspace's glyph in the closed sidebar.
+    Mark(usize),
+    Card(usize, Part),
     New,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Part {
+    Name,
+    Path,
+    State,
+    Message,
 }
 
 pub struct Frame {
@@ -84,6 +103,66 @@ fn mark(state: Option<AgentState>) -> (char, Rgba) {
         Some(AgentState::Idle) => ('○', DIM),
         None => ('·', MUTED),
     }
+}
+
+/// The state's name in a card.
+fn label(state: AgentState) -> &'static str {
+    match state {
+        AgentState::Attention => "needs you",
+        AgentState::Done => "done",
+        AgentState::Working => "working",
+        AgentState::Idle => "idle",
+    }
+}
+
+/// `age` in its largest whole unit: "now" under a minute, then "4m", "2h", "3d".
+fn age(age: Duration) -> String {
+    let minutes = age.as_secs() / 60;
+    match minutes {
+        0 => "now".to_string(),
+        1..60 => format!("{minutes}m"),
+        60..1440 => format!("{}h", minutes / 60),
+        _ => format!("{}d", minutes / 1440),
+    }
+}
+
+/// `cwd` with `home` as `~` and every directory but the last cut to its
+/// first letter, or its first two when the first is a dot.
+pub fn short_path(cwd: &Path, home: &Path) -> String {
+    let (head, rest) = match cwd.strip_prefix(home) {
+        Ok(rest) => ("~", rest),
+        Err(_) => ("", cwd.strip_prefix("/").unwrap_or(cwd)),
+    };
+    let names: Vec<_> = rest
+        .iter()
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect();
+    let mut parts = vec![head.to_string()];
+    for (i, name) in names.iter().enumerate() {
+        if i + 1 == names.len() {
+            parts.push(name.clone());
+        } else {
+            let letters = if name.starts_with('.') { 2 } else { 1 };
+            parts.push(name.chars().take(letters).collect());
+        }
+    }
+    let path = parts.join("/");
+    if path.is_empty() {
+        "/".to_string()
+    } else {
+        path
+    }
+}
+
+/// The current workspace's fill across a sidebar `width` columns wide.
+fn highlight(scene: &mut Scene, row: u32, width: u32) {
+    let rect = CellRect {
+        column: 0,
+        row,
+        columns: width.saturating_sub(1),
+        rows: 1,
+    };
+    scene.fill(rect, CURRENT);
 }
 
 impl Frame {
@@ -183,18 +262,24 @@ impl Frame {
 
     fn lines(&self) -> Vec<(u32, Line)> {
         let mut lines = Vec::new();
-        let mut row = TOP + if self.open { 2 } else { 1 };
-        for (i, entry) in self.entries.iter().enumerate() {
-            lines.push((row, Line::Workspace(i)));
-            row += 1;
-            let needs = entry.state >= Some(AgentState::Done);
-            if self.open && needs && entry.message.is_some() {
-                lines.push((row, Line::Message(i)));
+        if !self.open {
+            for i in 0..self.entries.len() {
+                lines.push((TOP + 1 + i as u32, Line::Mark(i)));
+            }
+        } else {
+            let mut row = TOP + 2;
+            for (i, entry) in self.entries.iter().enumerate() {
+                let message = entry.message.is_some().then_some(Part::Message);
+                for part in [Part::Name, Part::Path, Part::State]
+                    .into_iter()
+                    .chain(message)
+                {
+                    lines.push((row, Line::Card(i, part)));
+                    row += 1;
+                }
                 row += 1;
             }
-        }
-        if self.open {
-            lines.push((row + 1, Line::New));
+            lines.push((row, Line::New));
         }
         lines.retain(|&(row, _)| row < self.rows);
         lines
@@ -220,16 +305,16 @@ impl Frame {
         }
         let (_, line) = self.lines().into_iter().find(|&(at, _)| at == row)?;
         Some(match line {
-            Line::Workspace(i) => {
+            Line::Mark(i) => Hit::Show(self.entries[i].id),
+            Line::Card(i, part) => {
                 let entry = &self.entries[i];
                 let needs = entry.state >= Some(AgentState::Done);
-                if self.open && needs && column < 3 {
+                if part == Part::State && needs && (1..4).contains(&column) {
                     Hit::Clear(entry.id)
                 } else {
                     Hit::Show(entry.id)
                 }
             }
-            Line::Message(i) => Hit::Show(self.entries[i].id),
             Line::New => Hit::New,
         })
     }
@@ -298,32 +383,69 @@ impl Frame {
         if self.open {
             scene.text(1, TOP, "workspaces", MUTED);
         }
-        let room = width.saturating_sub(4) as usize;
         for (row, line) in self.lines() {
             match line {
-                Line::Workspace(i) => {
+                Line::Mark(i) => {
                     let entry = &self.entries[i];
                     if entry.current {
-                        let highlight = CellRect {
-                            column: 0,
-                            row,
-                            columns: width.saturating_sub(1),
-                            rows: 1,
-                        };
-                        scene.fill(highlight, CURRENT);
+                        highlight(scene, row, width);
                     }
                     let (glyph, color) = mark(entry.state);
                     scene.text(1, row, &glyph.to_string(), color);
-                    if self.open {
-                        let text = if entry.current { TEXT } else { DIM };
-                        scene.text(3, row, &fit(&entry.name, room), text);
-                    }
                 }
-                Line::Message(i) => {
-                    let message = self.entries[i].message.as_deref().unwrap_or("");
-                    scene.text(3, row, &fit(message, room), MUTED);
-                }
+                Line::Card(i, part) => self.draw_card_line(scene, row, &self.entries[i], part),
                 Line::New => scene.text(1, row, "+ new workspace", MUTED),
+            }
+        }
+    }
+
+    /// One row of a workspace's card in the open sidebar.
+    fn draw_card_line(&self, scene: &mut Scene, row: u32, entry: &Entry, part: Part) {
+        let width = OPEN_WIDTH.min(self.columns);
+        if entry.current {
+            highlight(scene, row, width);
+        }
+        let (glyph, color) = mark(entry.state);
+        if entry.state.is_some() {
+            let (x, y) = scene.px(0, row);
+            let (_, height) = scene.cell();
+            scene.rect(x, y, scene.line_width(), height, color);
+        }
+        let room = width.saturating_sub(3) as usize;
+        match part {
+            Part::Name => {
+                let tabs = match entry.tabs {
+                    1 => "1 tab".to_string(),
+                    tabs => format!("{tabs} tabs"),
+                };
+                let tabs_width = tabs.chars().count();
+                let name_room = room.saturating_sub(tabs_width + 1);
+                scene.text(2, row, &fit(&entry.name, name_room), TEXT);
+                let start = width.saturating_sub(1 + tabs_width as u32);
+                scene.text(start, row, &tabs, MUTED);
+            }
+            Part::Path => {
+                let branch = entry.branch.as_deref().map(|branch| fit(branch, room / 2));
+                let branch_width = branch.as_ref().map_or(0, |b| b.chars().count() + 2);
+                let path = tail(&entry.path, room.saturating_sub(branch_width));
+                scene.text(2, row, &path, DIM);
+                if let Some(branch) = branch {
+                    let column = 2 + path.chars().count() as u32 + 2;
+                    scene.text(column, row, &branch, palette::CYAN);
+                }
+            }
+            Part::State => {
+                scene.text(2, row, &glyph.to_string(), color);
+                let Some(state) = entry.state else {
+                    scene.text(4, row, &fit("no agent", room.saturating_sub(2)), MUTED);
+                    return;
+                };
+                let text = format!("{} · {}", label(state), age(entry.age));
+                scene.text(4, row, &fit(&text, room.saturating_sub(2)), color);
+            }
+            Part::Message => {
+                let message = entry.message.as_deref().unwrap_or("");
+                scene.text(4, row, &fit(message, room.saturating_sub(2)), DIM);
             }
         }
     }
@@ -337,7 +459,11 @@ mod tests {
         Entry {
             id,
             name: name.to_string(),
+            tabs: 1,
+            path: format!("~/p/{name}"),
+            branch: None,
             state,
+            age: Duration::from_secs(240),
             message: None,
             current: id == 0,
         }
@@ -378,17 +504,66 @@ mod tests {
     }
 
     #[test]
-    fn a_click_on_a_name_shows_it_and_on_an_urgent_mark_clears_it() {
+    fn a_card_takes_a_row_per_line_and_a_blank_row_after_it() {
         let frame = frame(true);
         let first = TOP + 2;
-        assert_eq!(frame.hit(8, first), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(1, first), Some(Hit::Clear(2)));
 
-        // foam's message takes the row under it, so sail is two rows down
-        assert_eq!(frame.hit(8, first + 1), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(8, first + 2), Some(Hit::Show(3)));
-        assert_eq!(frame.hit(1, first + 5), Some(Hit::Show(0)));
+        // foam has a message, so its card has four rows and sail's
+        // starts after the blank row under them
+        for row in first..first + 4 {
+            assert_eq!(frame.hit(8, row), Some(Hit::Show(2)));
+        }
+        assert_eq!(frame.hit(8, first + 4), None);
+        assert_eq!(frame.hit(8, first + 5), Some(Hit::Show(3)));
+        assert_eq!(frame.hit(8, first + 7), Some(Hit::Show(3)));
+        assert_eq!(frame.hit(8, first + 8), None);
+        assert_eq!(frame.hit(8, first + 9), Some(Hit::Show(4)));
+
+        // four cards of three rows after foam's, each with its blank row
+        assert_eq!(frame.hit(1, first + 5 + 4 * 4), Some(Hit::New));
         assert_eq!(frame.hit(40, first), None);
+    }
+
+    #[test]
+    fn a_click_on_the_state_glyph_clears_done_or_attention_and_nothing_else() {
+        let frame = frame(true);
+        let state = TOP + 2 + 2;
+        assert_eq!(frame.hit(2, state), Some(Hit::Clear(2)));
+        assert_eq!(frame.hit(2, state - 2), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(8, state), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(2, state + 5), Some(Hit::Clear(3)));
+
+        // nail is working and jack has no agent
+        assert_eq!(frame.hit(2, state + 13), Some(Hit::Show(1)));
+        assert_eq!(frame.hit(2, state + 17), Some(Hit::Show(0)));
+    }
+
+    #[test]
+    fn the_closed_sidebar_has_a_row_per_workspace() {
+        let frame = frame(false);
+        assert_eq!(frame.hit(1, TOP + 1), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(1, TOP + 2), Some(Hit::Show(3)));
+        assert_eq!(frame.hit(1, TOP + 5), Some(Hit::Show(0)));
+        assert_eq!(frame.hit(1, TOP + 6), None);
+        assert_eq!(frame.hit(5, TOP + 1), None);
+    }
+
+    #[test]
+    fn an_age_is_given_in_its_largest_whole_unit() {
+        let ages =
+            [59, 60, 3599, 3600, 86399, 86400 * 3].map(|secs| age(Duration::from_secs(secs)));
+        assert_eq!(ages, ["now", "1m", "59m", "1h", "23h", "3d"]);
+    }
+
+    #[test]
+    fn a_short_path_puts_home_as_a_tilde_and_cuts_the_middle_directories() {
+        let home = Path::new("/home/jack");
+        let short = |path: &str| short_path(Path::new(path), home);
+        assert_eq!(short("/home/jack/projects/decade"), "~/p/decade");
+        assert_eq!(short("/home/jack"), "~");
+        assert_eq!(short("/home/jack/.config/hypr/scripts"), "~/.c/h/scripts");
+        assert_eq!(short("/etc/nginx"), "/e/nginx");
+        assert_eq!(short("/"), "/");
     }
 
     #[test]

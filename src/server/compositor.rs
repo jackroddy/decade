@@ -84,6 +84,7 @@ const REFRESH_MILLIHERTZ: i32 = 60_000;
 const PICKER_TICK: Duration = Duration::from_millis(500);
 const SAVE_DELAY: Duration = Duration::from_secs(1);
 const SAVE_EVERY: Duration = Duration::from_secs(60);
+const AGE_EVERY: Duration = Duration::from_secs(60);
 
 /// The box or grid drawn over the workspace that takes the keys while it is open.
 enum Overlay {
@@ -241,6 +242,14 @@ pub fn run() {
     let _ = handle.insert_source(every, |_, _, state| {
         state.save();
         TimeoutAction::ToDuration(SAVE_EVERY)
+    });
+    let ages = Timer::from_duration(AGE_EVERY);
+    let _ = handle.insert_source(ages, |_, _, state| {
+        let reported = (state.workspaces.iter()).any(|shown| shown.agent_state().is_some());
+        if state.sidebar_open && reported {
+            state.request_redraw();
+        }
+        TimeoutAction::ToDuration(AGE_EVERY)
     });
     while !state.stopping {
         let backlog = state

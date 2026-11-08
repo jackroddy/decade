@@ -26,10 +26,12 @@ command line and what the tool writes.
 - A top bar replaces the status line. It shows the workspace and focused
   pane on the left, the number of workspaces whose agents need attention,
   are done or are working on the right, and a button that opens the
-  palette. A sidebar on the left lists every workspace, those whose agents
-  most need the person first, with the agent's message under one that
-  needs attention or is done. A click on a workspace shows it, and a click
-  on its mark returns done or attention to idle. Super+B collapses the
+  palette. A sidebar on the left lists every workspace as a card, those
+  whose agents most need the person first. A card shows the workspace's
+  name, its number of tabs, its directory, its git branch, the agent's
+  state with how long the agent has held it, and the agent's message. A
+  click on a card shows its workspace, and a click on the state's mark
+  returns done or attention to idle. Super+B collapses the
   sidebar to a strip of marks, and Super+A shows the next workspace whose
   agent needs the person.
 - The server saves its workspaces to `~/.local/state/decade/workspaces.toml`

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use decade_channel::{AgentState, Error, Focus, Hello, Pane, Reply, Status, VERSION, Welcome};
 use serde_json::{Map, Value, json};
@@ -16,6 +17,9 @@ pub struct Client {
 
     /// The agent state this client last reported for its pane.
     pub status: Option<Status>,
+
+    /// When the client said hello or its agent last changed state.
+    pub since: Instant,
 }
 
 pub enum Out {
@@ -148,6 +152,9 @@ impl Router {
                     status.is_some_and(|status| status.state == AgentState::Attention)
                 };
                 let raised = attention(Some(&status)) && !attention(client.status.as_ref());
+                if client.status.as_ref().map(|old| old.state) != Some(status.state) {
+                    client.since = Instant::now();
+                }
                 let message = status.message.clone();
                 client.status = Some(status);
                 vec![Out::Status {
@@ -233,6 +240,7 @@ impl Router {
                 accepts: hello.accepts,
                 pane: pane.clone(),
                 status,
+                since: Instant::now(),
             },
         );
         out.push(reply(
@@ -263,6 +271,7 @@ fn reply(id: usize, reply: Reply) -> Out {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     const PANES: [&str; 3] = ["chat", "terminal", "code"];
 
@@ -456,6 +465,22 @@ mod tests {
         ));
         let state = r.statuses().map(|status| status.state).max();
         assert_eq!(state, Some(AgentState::Attention));
+    }
+
+    #[test]
+    fn a_new_state_restarts_the_clients_clock_and_a_repeated_state_keeps_it() {
+        let mut r = Router::default();
+        r.handle(1, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
+        let status = |r: &mut Router, line: &str| {
+            let past = Instant::now() - Duration::from_secs(60);
+            r.clients.get_mut(&1).unwrap().since = past;
+            r.handle(1, line, &PANES);
+            r.clients[&1].since > past
+        };
+        assert!(status(&mut r, r#"{"status": {"state": "working"}}"#));
+        let repeated = r#"{"status": {"state": "working", "message": "cargo test"}}"#;
+        assert!(!status(&mut r, repeated));
+        assert!(status(&mut r, r#"{"status": {"state": "done"}}"#));
     }
 
     #[test]

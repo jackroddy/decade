@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use smithay::reexports::calloop::RegistrationToken;
 
@@ -19,6 +20,10 @@ pub struct Workspace {
     /// The event source accepting connections on this workspace's socket.
     pub listener: Option<RegistrationToken>,
     pub scratch: Option<Scratch>,
+
+    /// The git branch checked out at `cwd`, as last read.
+    pub branch: Option<String>,
+    branch_read: Option<Instant>,
 }
 
 /// One split tree of panes in a workspace.
@@ -32,6 +37,8 @@ pub struct Tab {
 /// The name a pane sees in `from` on a verb sent over MCP.
 const AGENT: &str = "agent";
 
+const BRANCH_EVERY: Duration = Duration::from_secs(2);
+
 fn pane_names(tabs: &[Tab]) -> Vec<&str> {
     (tabs.iter())
         .flat_map(|tab| &tab.layout.panes)
@@ -42,6 +49,32 @@ fn pane_names(tabs: &[Tab]) -> Vec<&str> {
 /// The app id prefix of a terminal started for one of the workspace's panes.
 pub fn app_id_prefix(workspace: u32) -> String {
     format!("decade.w{workspace}.")
+}
+
+/// The branch checked out in the git repository holding `cwd`, or the
+/// first 7 characters of the commit when HEAD is detached.
+pub fn branch(cwd: &Path) -> Option<String> {
+    let dot_git = cwd
+        .ancestors()
+        .map(|dir| dir.join(".git"))
+        .find(|git| git.exists())?;
+    let git_dir = if dot_git.is_file() {
+        let link = std::fs::read_to_string(&dot_git).ok()?;
+        let target = link.strip_prefix("gitdir:")?.trim();
+        dot_git.parent()?.join(target)
+    } else {
+        dot_git
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    match head.strip_prefix("ref:") {
+        Some(reference) => {
+            let reference = reference.trim();
+            let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
+            Some(name.to_string())
+        }
+        None => Some(head.chars().take(7).collect()),
+    }
 }
 
 pub fn home() -> PathBuf {
@@ -94,7 +127,22 @@ impl Workspace {
             router: Router::default(),
             listener: None,
             scratch: None,
+            branch: None,
+            branch_read: None,
         }
+    }
+
+    /// Read the branch again if it was last read `BRANCH_EVERY` or more
+    /// before `now`.
+    pub fn refresh_branch(&mut self, now: Instant) {
+        if self
+            .branch_read
+            .is_some_and(|read| now.duration_since(read) < BRANCH_EVERY)
+        {
+            return;
+        }
+        self.branch = branch(&self.cwd);
+        self.branch_read = Some(now);
     }
 
     /// Answer one line from socket client `id`.
@@ -261,6 +309,60 @@ mod tests {
             PathBuf::from("/home/jack"),
             crate::server::panes::tests::AREA,
         )
+    }
+
+    fn fresh_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("decade-branch-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_branch_is_read_from_head_in_the_cwd_or_a_directory_above_it() {
+        let repo = fresh_dir("plain");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src/server")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/dev\n").unwrap();
+        assert_eq!(branch(&repo).as_deref(), Some("dev"));
+        assert_eq!(branch(&repo.join("src/server")).as_deref(), Some("dev"));
+        std::fs::remove_dir_all(&repo).unwrap();
+    }
+
+    #[test]
+    fn a_git_file_points_at_the_directory_holding_head() {
+        let root = fresh_dir("worktree");
+        let git_dir = root.join("repo/.git/worktrees/feature");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
+        std::fs::create_dir_all(root.join("feature")).unwrap();
+        let link = "gitdir: ../repo/.git/worktrees/feature\n";
+        std::fs::write(root.join("feature/.git"), link).unwrap();
+        assert_eq!(branch(&root.join("feature")).as_deref(), Some("feature"));
+
+        let absolute = format!("gitdir: {}\n", git_dir.display());
+        std::fs::write(root.join("feature/.git"), absolute).unwrap();
+        assert_eq!(branch(&root.join("feature")).as_deref(), Some("feature"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_detached_head_shows_seven_characters_of_its_commit() {
+        let repo = fresh_dir("detached");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let commit = "b142ad7c0ffee0000000000000000000000000000\n";
+        std::fs::write(repo.join(".git/HEAD"), commit).unwrap();
+        assert_eq!(branch(&repo).as_deref(), Some("b142ad7"));
+        std::fs::remove_dir_all(&repo).unwrap();
+    }
+
+    #[test]
+    fn a_directory_outside_any_repository_has_no_branch() {
+        let dir = fresh_dir("none");
+        if dir.ancestors().all(|above| !above.join(".git").exists()) {
+            assert_eq!(branch(&dir), None);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
