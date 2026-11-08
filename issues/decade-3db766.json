@@ -1,0 +1,30 @@
+{
+  "id": "decade-3db766",
+  "title": "The scene-to-elements half of drawing lives in the compositor",
+  "body": "`draw.rs` builds `Scene` and `Shape` and owns `TextCache`. `Paint::scene` and `Shrink` in `compositor.rs`, about 115 lines, turn the shapes into smithay render elements. `Scene.shapes`, `Shape` and the fields of `TextTexture` are `pub` only for that, and `round_trip` is `pub` with no outside caller. Inside `Paint::scene`, the `Rect` arm premultiplies inline while the `Rounded` arm defines a `premultiply` closure for the same arithmetic.\n\n## Proposal\n\nMove `Paint`, `Shrink` and the shape-to-element match into `draw.rs` so one module owns drawing end to end, with `Element` passed in or moved along. Do \"Fonts and the text cache get one home\" and the border width bug first. Mostly moved lines, few deleted.",
+  "type": "chore",
+  "status": "open",
+  "priority": 4,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:39:48.119678799Z",
+  "updated_at": "2026-11-08T07:39:48.119678799Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
