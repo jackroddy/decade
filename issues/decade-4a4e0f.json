@@ -1,0 +1,28 @@
+{
+  "id": "decade-4a4e0f",
+  "title": "A UI kit separable from decade",
+  "body": "Jack wants decade's UI kit kept apart from decade so it can become its own crate once a second program needs it. The kit is the cell grid, the scene and its shapes, colours, text rasterization, and panes: the split tree, tabs, pane bars, and the input that resizes, moves and focuses them. A pane's content is an opaque id. The kit lays it out and leaves a `Shape::Content { id, rect }` placeholder, and the application's backend draws what the id shows. The kit names no renderer: no smithay, wgpu or GL.\n\nThe pieces, in order:\n\n- the drawing seam: `Scene`, shapes, `CellRect`, `Rgba` and text rasterization move into `src/ui/` with no smithay import\n- panes into the kit, holding content ids instead of Wayland clients\n\n## Review first\n\nJack wants this design reviewed thoroughly, over time, before any code is written. Nothing under this milestone starts until he signs off the design. The design must not change how decade owns and manages Wayland windows.",
+  "type": "milestone",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T22:30:49.622266013Z",
+  "updated_at": "2026-11-08T22:30:49.622266013Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "6bcc95b",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
