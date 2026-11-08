@@ -3,6 +3,8 @@ mod apps;
 #[cfg(target_os = "linux")]
 mod channel;
 #[cfg(target_os = "linux")]
+mod children;
+#[cfg(target_os = "linux")]
 mod compositor;
 #[cfg(target_os = "linux")]
 mod control;

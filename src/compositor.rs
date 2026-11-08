@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::io::{self, Write};
 use std::os::unix::io::OwnedFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -84,6 +83,7 @@ use smithay::{
 
 use crate::apps;
 use crate::channel::{AGENT, Host, Out};
+use crate::children::Children;
 use crate::control::{self, viewer_socket_path};
 use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::files;
@@ -180,12 +180,6 @@ enum Chord {
     Cut,
 }
 
-struct ChildEnv {
-    wayland: OsString,
-    runtime: PathBuf,
-    mcp: Option<String>,
-}
-
 pub struct State {
     repeat: Repeat,
     repeating: Option<(u32, RegistrationToken)>,
@@ -215,8 +209,7 @@ pub struct State {
     loop_handle: LoopHandle<'static, State>,
     sockets: HashMap<usize, (u32, UnixStream)>,
     next_client: usize,
-    env: ChildEnv,
-    children: Vec<Child>,
+    children: Children,
     font: Font,
     texts: TextCache,
     workspaces: Vec<Workspace>,
@@ -486,12 +479,7 @@ pub fn run() {
         loop_handle: handle.clone(),
         sockets: HashMap::new(),
         next_client: 0,
-        env: ChildEnv {
-            wayland: socket_name,
-            runtime,
-            mcp,
-        },
-        children: Vec::new(),
+        children: Children::new(socket_name, runtime, mcp),
         font,
         texts: TextCache::new(),
         menu_font: Font::load(settings.palette_size * scale as f32),
@@ -516,25 +504,7 @@ pub fn run() {
     };
 
     for workspace in 0..state.workspaces.len() {
-        state.listen(workspace);
-        let terminals: Vec<(String, PathBuf)> = state.workspaces[workspace]
-            .panes()
-            .filter_map(|pane| Some((pane.name.clone(), pane.cwd.clone()?)))
-            .collect();
-        for (pane, cwd) in terminals {
-            state.spawn_terminal(workspace, &pane, &cwd);
-        }
-        let mut tabs = Vec::new();
-        for (tab, entry) in state.workspaces[workspace].tabs.iter_mut().enumerate() {
-            for pane in &mut entry.layout.panes {
-                for cwd in std::mem::take(&mut pane.saved_tabs) {
-                    tabs.push((tab, pane.id, cwd));
-                }
-            }
-        }
-        for (tab, id, cwd) in tabs {
-            state.spawn_pane_tab(workspace, tab, id, &cwd);
-        }
+        state.start_workspace(workspace);
     }
     let every = Timer::from_duration(SAVE_EVERY);
     let _ = handle.insert_source(every, |_, _, state| {
@@ -556,11 +526,9 @@ pub fn run() {
     state.close_viewers();
     state.save();
 
-    for child in &mut state.children {
-        let _ = child.kill();
-    }
+    state.children.kill_all();
     for workspace in &state.workspaces {
-        let _ = std::fs::remove_file(state.socket_path(workspace.id));
+        let _ = std::fs::remove_file(state.children.socket_path(workspace.id));
     }
     let _ = std::fs::remove_file(&viewer_path);
 }
@@ -640,41 +608,40 @@ fn remove_stale_sockets(dir: &Path) {
 }
 
 impl State {
-    fn command(&self, workspace: usize, program: &str) -> Command {
-        let workspace = &self.workspaces[workspace];
-        let mut command = Command::new(program);
-        command
-            .current_dir(&workspace.cwd)
-            .env("DECADE_WORKSPACE", &workspace.name)
-            .env("WAYLAND_DISPLAY", &self.env.wayland)
-            .env("DECADE_SOCKET", self.socket_path(workspace.id))
-            .env_remove("DISPLAY");
-        if let Some(mcp) = &self.env.mcp {
-            command.env("DECADE_MCP", format!("{mcp}?workspace={}", workspace.id));
-        }
-        command
-    }
-
     fn launch(&mut self, argv: &[String]) {
         let Some((program, args)) = argv.split_first() else {
             return;
         };
-        match self.command(self.current(), program).args(args).spawn() {
-            Ok(child) => self.children.push(child),
-            Err(error) => eprintln!("decade: could not start {program}: {error}"),
+        let workspace = &self.workspaces[self.current()];
+        let mut command = self.children.command(workspace, program, None);
+        command.args(args);
+        if let Err(error) = self.children.spawn(command) {
+            eprintln!("decade: {error}");
         }
     }
 
-    /// A ghostty whose window goes in the pane, with the app id `class`
-    /// after the workspace's prefix.
-    fn ghostty(&self, workspace: usize, pane: &str, class: &str) -> Command {
-        let prefix = self.workspaces[workspace].app_id_prefix();
-        let mut ghostty = self.command(workspace, "ghostty");
-        ghostty
-            .env("DECADE_PANE", pane)
-            .args(["--window-decoration=none", "--gtk-titlebar=false"])
-            .arg(format!("--class={prefix}{class}"));
-        ghostty
+    /// Listen on the workspace's socket, and start a terminal for every pane
+    /// that holds one and for every terminal tab saved with a pane.
+    fn start_workspace(&mut self, workspace: usize) {
+        self.listen(workspace);
+        let mut terminals = Vec::new();
+        let mut tabs = Vec::new();
+        for (tab, entry) in self.workspaces[workspace].tabs.iter_mut().enumerate() {
+            for pane in &mut entry.layout.panes {
+                if pane.cwd.is_some() {
+                    terminals.push((tab, pane.id));
+                }
+                for cwd in std::mem::take(&mut pane.saved_tabs) {
+                    tabs.push((tab, pane.id, cwd));
+                }
+            }
+        }
+        for (tab, id) in terminals {
+            self.spawn_terminal(workspace, tab, id);
+        }
+        for (tab, id, cwd) in tabs {
+            self.spawn_pane_tab(workspace, tab, id, &cwd);
+        }
     }
 
     /// Start a ghostty that goes in the pane as a new tab.
@@ -682,31 +649,31 @@ impl State {
         let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane_mut(id) else {
             return;
         };
-        let name = pane.name.clone();
-        let class = format!("{name}.t{}", pane.next_tab);
+        let class = format!("{}.t{}", pane.name, pane.next_tab);
         pane.next_tab += 1;
-        let mut ghostty = self.ghostty(workspace, &name, &class);
-        ghostty.current_dir(cwd);
-        match ghostty.spawn() {
-            Ok(child) => self.children.push(child),
-            Err(error) => eprintln!("decade: could not start ghostty: {error}"),
+        let name = pane.name.clone();
+        let ghostty = self
+            .children
+            .ghostty(&self.workspaces[workspace], &name, &class, cwd);
+        if let Err(error) = self.children.spawn(ghostty) {
+            eprintln!("decade: {error}");
         }
     }
 
-    fn spawn_terminal(&mut self, workspace: usize, pane: &str, cwd: &Path) {
-        let mut ghostty = self.ghostty(workspace, pane, pane);
-        ghostty.current_dir(cwd);
-        match ghostty.spawn() {
-            Ok(child) => {
-                let shown = &mut self.workspaces[workspace];
-                if let Some((tab, id)) = shown.by_name(pane)
-                    && let Some(pane) = shown.tabs[tab].layout.pane_mut(id)
-                {
-                    pane.pid = Some(child.id());
-                }
-                self.children.push(child);
+    /// Start the ghostty of a pane that holds a terminal, in the pane's cwd.
+    fn spawn_terminal(&mut self, workspace: usize, tab: usize, id: usize) {
+        let shown = &self.workspaces[workspace];
+        let Some(pane) = shown.tabs[tab].layout.pane(id) else {
+            return;
+        };
+        let cwd = pane.cwd.as_deref().unwrap_or(&shown.cwd);
+        let ghostty = self.children.ghostty(shown, &pane.name, &pane.name, cwd);
+        match self.children.spawn(ghostty) {
+            Ok(pid) => {
+                let layout = &mut self.workspaces[workspace].tabs[tab].layout;
+                layout.pane_mut(id).unwrap().pid = Some(pid);
             }
-            Err(error) => eprintln!("decade: could not start ghostty: {error}"),
+            Err(error) => eprintln!("decade: {error}"),
         }
     }
 
@@ -978,10 +945,7 @@ impl State {
         let taken = self.workspaces.iter().map(|known| known.name.as_str());
         created.name = workspace::unique_name(&created.name, taken);
         self.workspaces.push(created);
-        let index = self.workspaces.len() - 1;
-        self.listen(index);
-        let cwd = self.workspaces[index].cwd.clone();
-        self.spawn_terminal(index, "terminal", &cwd);
+        self.start_workspace(self.workspaces.len() - 1);
         id
     }
 
@@ -1021,7 +985,7 @@ impl State {
         if let Some(token) = removed.listener {
             self.loop_handle.remove(token);
         }
-        let _ = std::fs::remove_file(self.socket_path(removed.id));
+        let _ = std::fs::remove_file(self.children.socket_path(removed.id));
         self.sockets
             .retain(|_, (workspace, _)| *workspace != removed.id);
         if self.workspaces.is_empty() {
@@ -1522,16 +1486,9 @@ impl State {
         self.send(id, message);
     }
 
-    fn socket_path(&self, workspace: u32) -> PathBuf {
-        let pid = std::process::id();
-        self.env
-            .runtime
-            .join(format!("decade-{pid}-w{workspace}.sock"))
-    }
-
     fn listen(&mut self, workspace: usize) {
         let id = self.workspaces[workspace].id;
-        let path = self.socket_path(id);
+        let path = self.children.socket_path(id);
         let _ = std::fs::remove_file(&path);
         let listener = match UnixListener::bind(&path) {
             Ok(listener) => listener,
@@ -1653,7 +1610,7 @@ impl State {
     fn scratch_open(&mut self, workspace: usize, launch: Launch) -> Result<String, String> {
         let shown = &self.workspaces[workspace];
         let name = shown.scratch_pane().ok_or(NO_SCRATCH)?;
-        scratch::find_program(
+        scratch::check_program(
             &launch.program,
             &std::env::var_os("PATH").unwrap_or_default(),
         )?;
@@ -1688,24 +1645,21 @@ impl State {
             .scratch_pane()
             .ok_or(NO_SCRATCH)?
             .to_string();
+        let shown = &self.workspaces[workspace];
         let mut command = if launch.terminal {
-            let mut ghostty = self.ghostty(workspace, &name, &name);
-            ghostty.arg("-e").arg(&launch.program).args(&launch.args);
+            let mut ghostty = self.children.ghostty(shown, &name, &name, &shown.cwd);
+            ghostty.arg("-e").arg(&launch.program);
             ghostty
         } else {
-            let mut command = self.command(workspace, &launch.program);
-            command.env("DECADE_PANE", &name).args(&launch.args);
-            command
+            self.children.command(shown, &launch.program, Some(&name))
         };
-        let child = command
-            .spawn()
-            .map_err(|error| format!("could not start {}: {error}", launch.program))?;
+        command.args(&launch.args);
+        let pid = self.children.spawn(command)?;
         if !launch.terminal
             && let Some(scratch) = &mut self.workspaces[workspace].scratch
         {
-            scratch.expected = Some(child.id());
+            scratch.expected = Some(pid);
         }
-        self.children.push(child);
         let place = if launch.terminal {
             "in a terminal in"
         } else {
@@ -2076,10 +2030,11 @@ impl State {
         let layout = shown.layout_mut();
         let id = layout.add_transient(name.clone());
         if let Some(pane) = layout.pane_mut(id) {
-            pane.cwd = Some(cwd.clone());
+            pane.cwd = Some(cwd);
         }
-        shown.router.add_pane(name.clone());
-        self.spawn_terminal(current, &name, &cwd);
+        shown.router.add_pane(name);
+        let tab = shown.active_tab;
+        self.spawn_terminal(current, tab, id);
         self.relayout();
         self.focus(id);
     }
@@ -2112,9 +2067,9 @@ impl State {
     fn new_tab(&mut self) {
         let current = self.current();
         let area = self.pane_area();
-        let (tab, name) = self.workspaces[current].add_tab(area);
-        let cwd = self.workspaces[current].cwd.clone();
-        self.spawn_terminal(current, &name, &cwd);
+        let (tab, _) = self.workspaces[current].add_tab(area);
+        let id = self.workspaces[current].tabs[tab].layout.focused;
+        self.spawn_terminal(current, tab, id);
         self.show_tab(tab);
     }
 
@@ -2192,17 +2147,11 @@ impl State {
         if !pane.restartable() {
             return;
         }
-        let starting = pane.pid.is_some_and(|pid| {
-            self.children
-                .iter_mut()
-                .find(|child| child.id() == pid)
-                .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
-        });
-        if starting {
+        if pane.pid.is_some_and(|pid| self.children.running(pid)) {
             return;
         }
-        let (name, cwd) = (pane.name.clone(), pane.cwd.clone().unwrap_or_default());
-        self.spawn_terminal(workspace, &name, &cwd);
+        let tab = self.workspaces[workspace].active_tab;
+        self.spawn_terminal(workspace, tab, id);
     }
 
     fn remove_pane(&mut self, workspace: usize, tab: usize, id: usize) {
