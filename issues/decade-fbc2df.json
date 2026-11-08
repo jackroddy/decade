@@ -3,7 +3,7 @@
   "title": "Menu, panel and picker become one overlay with one outcome type",
   "body": "`State` holds `menu: Option<Menu>`, `panel: Option<Panel>`, `picker: Option<Picker>` and `picker_tick: Option<RegistrationToken>`, the last alive only while the picker is. Each overlay has its own outcome type: `menu::Outcome { Open, Close, Run(Action) }`, `PanelOutcome { Open, Close, Changed }` and `picker::Outcome { Open, Close, Show, New, CloseWorkspace, Move }`. `Open` and `Close` appear three times and `CloseWorkspace` twice. In `compositor.rs`:\n\n- `run_key` routes `Key::Menu` to the picker, then the panel, then the menu, in an order nothing states.\n- \"is any overlay open\" is written at the input gate and again for the scrim in `render`.\n- teardown clears all three by hand.\n- each of the five `Outcome::Run(Action::..)` arms begins with `self.menu = None`.\n- \"open the palette at New workspace\" is written in `frame_hit` and in `picker_outcome`.\n- the picker's inputs are rebuilt at every call: `ids: Vec<u32>` is collected at three sites, `Grid` built at three, and `cell_height` passed to `close_button` and `press` though `Grid::new` already had it.\n- `paint_picker`, 139 lines, draws the picker's chrome in the compositor while `Menu::draw` and `Panel::draw` draw their own; `Picker.selected`, `confirming` and `dragging` are `pub` only for it.\n\nThe three fields can all be `Some` at once; see the bug \"The palette opens over the settings panel and both stay open\".\n\n## Proposal\n\n`overlay: Option<Overlay>` with `enum Overlay { Menu(Menu), Panel(Panel), Picker { picker, tick } }`. Each overlay's `key`, `press`, `release` and `motion` return one `Outcome { Open, Close, Run(Action) }`, with `Action` taking the picker's `Show`, `New` and `Move` and the panel's `Changed`. One `act` in the compositor closes the overlay and dispatches. `Picker::draw(over, under, &Grid, labels)` moves into `picker.rs` and the compositor keeps the thumbnail loop. `Grid` stores its button side and the picker methods take `&Grid`.\n\n## Cost\n\nAbout 80 lines in `compositor.rs` plus the three overlay modules, net about 30 fewer. The menu-over-panel state becomes unrepresentable.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,13 +12,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T20:50:19.482486754Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:39:08.735009614Z",
-  "updated_at": "2026-11-08T20:38:08.034621392Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T20:38:08.045926226Z",
+  "closed_at": "2026-11-08T20:38:08.045926226Z",
+  "close_reason": "State holds overlay: Option<Overlay>, the three overlays return menu::Outcome, and Picker::draw lives in picker.rs, in 781975d. The note above covers the Run and Apply split.",
+  "resolution": "done",
   "notes": [
     {
       "id": "84e9b2f9",
@@ -34,6 +34,9 @@
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "781975d",
+      "branch": "simplify"
+    }
   }
 }
