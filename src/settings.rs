@@ -1,9 +1,11 @@
+use std::io;
 use std::path::{Path, PathBuf};
-use std::{env, fs, io};
 
 use serde::{Deserialize, Serialize};
 
-const VERSION: i64 = 1;
+use crate::files;
+
+const VERSION: u32 = 1;
 
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -105,39 +107,26 @@ impl Knob {
 }
 
 pub fn path() -> Option<PathBuf> {
-    let config = env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    let config = files::xdg_home("XDG_CONFIG_HOME", ".config")?;
     Some(config.join("decade").join("config.toml"))
 }
 
 pub fn load(path: &Path) -> Result<Settings, String> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Settings::default()),
-        Err(error) => return Err(error.to_string()),
-    };
-    parse(&text)
+    match files::read(path)? {
+        Some(text) => parse(&text),
+        None => Ok(Settings::default()),
+    }
 }
 
 fn parse(text: &str) -> Result<Settings, String> {
-    let table: toml::Table = toml::from_str(text).map_err(|error| error.to_string())?;
-    match table
-        .get("version")
-        .and_then(|version| version.as_integer())
-    {
-        Some(VERSION) => {}
-        Some(other) => return Err(format!("version {other} is not one decade reads")),
-        None => return Err("the file has no version".to_string()),
+    match files::version(text)? {
+        VERSION => toml::from_str(text).map_err(|error| error.to_string()),
+        other => Err(format!("version {other} is not one decade reads")),
     }
-    toml::from_str(text).map_err(|error| error.to_string())
 }
 
 pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    fs::write(path, render(settings))
+    files::write(path, &render(settings))
 }
 
 fn render(settings: &Settings) -> String {

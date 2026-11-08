@@ -4,15 +4,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::files;
 use crate::panes::{Axis, CellRect, Kind, Layout, Node, Pane};
 use crate::workspace::Workspace;
 
 const VERSION: u32 = 2;
-
-#[derive(Deserialize)]
-struct Version {
-    version: u32,
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct File {
@@ -101,28 +97,18 @@ struct SavedPane {
 }
 
 pub fn path() -> Option<PathBuf> {
-    let state = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-        })?;
+    let state = files::xdg_home("XDG_STATE_HOME", ".local/state")?;
     Some(state.join("decade").join("workspaces.toml"))
 }
 
 /// The saved file, or `None` when there is none.
 pub fn load(path: &Path) -> Result<Option<File>, String> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    read(&text).map(Some)
+    files::read(path)?.map(|text| read(&text)).transpose()
 }
 
 fn read(text: &str) -> Result<File, String> {
     let error = |error: toml::de::Error| error.to_string();
-    let version: Version = toml::from_str(text).map_err(error)?;
-    match version.version {
+    match files::version(text)? {
         1 => {
             let old: FileV1 = toml::from_str(text).map_err(error)?;
             let workspaces = old
@@ -154,12 +140,7 @@ pub fn save(path: &Path, workspaces: &[Workspace], sidebar_open: bool) -> io::Re
         workspaces: workspaces.iter().map(saved).collect(),
     };
     let text = toml::to_string(&file).map_err(io::Error::other)?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let partial = path.with_extension("toml.partial");
-    std::fs::write(&partial, text)?;
-    std::fs::rename(&partial, path)
+    files::write(path, &text)
 }
 
 fn saved(workspace: &Workspace) -> Saved {

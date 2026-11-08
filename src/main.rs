@@ -9,6 +9,8 @@ mod control;
 #[cfg(target_os = "linux")]
 mod draw;
 #[cfg(target_os = "linux")]
+mod files;
+#[cfg(target_os = "linux")]
 mod frame;
 #[cfg(target_os = "linux")]
 mod gpu;

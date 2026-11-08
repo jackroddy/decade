@@ -88,6 +88,7 @@ use crate::apps;
 use crate::channel::{AGENT, Host, Out};
 use crate::control::{self, viewer_socket_path};
 use crate::draw::{Face, Scene, Shape, TextCache};
+use crate::files;
 use crate::frame::{self, Hit, fit};
 use crate::gpu::Gpu;
 use crate::mcp;
@@ -309,9 +310,7 @@ struct Repeat {
 
 pub fn run() {
     let viewer_path = viewer_socket_path();
-    if let Some(dir) = viewer_path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
+    let _ = std::fs::create_dir_all(control::dir());
     let _lock = control::lock_server();
 
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new().unwrap();
@@ -456,9 +455,7 @@ pub fn run() {
         )
         .unwrap();
 
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+    let runtime = files::runtime_dir();
     remove_stale_sockets(&runtime);
     let (mcp_requests, mcp_source) = calloop_channel::channel();
     handle

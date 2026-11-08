@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use rustix::fs::FlockOperation;
 
+use crate::files;
 use crate::wire::{Decoder, Listed, Outbox, ServerMessage, ViewerMessage};
 use rustix::process::{Pid, Signal};
 
@@ -18,15 +19,17 @@ const START_TIMEOUT: Duration = Duration::from_secs(10);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(50);
 
+/// The directory of the server's viewer socket, lock and log.
+pub fn dir() -> PathBuf {
+    files::runtime_dir().join("decade")
+}
+
 pub fn viewer_socket_path() -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    dir.join("decade").join("viewer.sock")
+    dir().join("viewer.sock")
 }
 
 fn lock_path() -> PathBuf {
-    viewer_socket_path().with_file_name("server.lock")
+    dir().join("server.lock")
 }
 
 /// Lock the server's lock file and record this process's pid in it, or exit.
@@ -153,10 +156,8 @@ pub fn connect_or_start() -> Result<UnixStream, String> {
         return Ok(stream);
     }
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let log_path = path.with_file_name("server.log");
-    let log = log_path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
+    let log_path = dir().join("server.log");
+    let log = std::fs::create_dir_all(dir())
         .and_then(|()| OpenOptions::new().create(true).append(true).open(&log_path))
         .map_err(|error| format!("{}: {error}", log_path.display()))?;
     let log_out = log.try_clone().map_err(|error| error.to_string())?;

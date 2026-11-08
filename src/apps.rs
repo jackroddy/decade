@@ -3,6 +3,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::files;
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct App {
     pub name: String,
@@ -33,9 +35,7 @@ pub fn installed() -> Vec<App> {
 }
 
 fn application_dirs() -> Vec<PathBuf> {
-    let home = env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
+    let home = files::xdg_home("XDG_DATA_HOME", ".local/share");
     let system = env::var("XDG_DATA_DIRS")
         .ok()
         .filter(|dirs| !dirs.is_empty())
