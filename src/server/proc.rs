@@ -25,7 +25,7 @@ pub fn cwd(pid: u32) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(super) mod tests {
     use super::*;
     use std::path::Path;
     use std::process::Command;

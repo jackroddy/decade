@@ -1290,7 +1290,7 @@ fn split_at<'a>(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(super) mod tests {
     use super::*;
 
     pub const AREA: CellRect = CellRect {

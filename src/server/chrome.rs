@@ -1,8 +1,8 @@
-pub(crate) mod draw;
-pub(crate) mod frame;
-pub(crate) mod menu;
+pub(super) mod draw;
+pub(super) mod frame;
+pub(super) mod menu;
 pub(crate) mod palette;
-pub(crate) mod panel;
-pub(crate) mod picker;
-pub(crate) mod settings;
-pub(crate) mod text;
+pub(super) mod panel;
+pub(super) mod picker;
+pub(super) mod settings;
+pub(super) mod text;
