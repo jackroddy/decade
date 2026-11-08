@@ -57,6 +57,17 @@ x on its bar or when the program in it exits.
 texture at that size, on whole pixels. Text is never scaled. Anything drawn
 scaled, such as the drag ghost, leaves its text out.
 
+**UI toolkit.** decade's UI kit is kept apart so it can become its own crate
+once a second program needs it. The kit is the cell grid, the scene and its
+shapes, colours, text rasterization, and panes: the split tree, tabs, pane
+bars, and the input that resizes, moves and focuses them. A pane's content is
+an id that the kit lays out and leaves a placeholder for. The application's
+backend draws what each id shows. The kit imports nothing from smithay and
+nothing else from decade. Wayland clients, texture upload and decade's own
+widgets, such as the sidebar and the palette, stay outside it. The split is
+being designed under foam milestone decade-4a4e0f. No code moves until Jack
+signs off the design.
+
 **Formats.** A change to an on-disk layout bumps that format's version byte.
 The reader keeps an arm for the old layout by default. A breaking release may
 drop that arm, listed under `### Removed`.
