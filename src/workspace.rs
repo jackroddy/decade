@@ -173,17 +173,24 @@ impl Workspace {
     /// unless it was the one removed. Return whether it was.
     pub fn remove_tab(&mut self, tab: usize) -> bool {
         let removed = self.tabs.remove(tab);
-
-        // TODO: the scratch pane is left named when its tab goes
         for pane in &removed.layout.panes {
-            self.router.remove_pane(&pane.name);
-            self.agents.remove(&pane.name);
+            self.forget_pane(&pane.name);
         }
         let was_active = self.active_tab == tab;
         if self.active_tab > tab || self.active_tab == self.tabs.len() {
             self.active_tab = self.active_tab.saturating_sub(1);
         }
         was_active
+    }
+
+    /// Drop what the workspace keeps about a pane that has gone: its router
+    /// entry, its agent state and its scratch mark.
+    pub fn forget_pane(&mut self, name: &str) {
+        self.router.remove_pane(name);
+        self.agents.remove(name);
+        if self.scratch_pane() == Some(name) {
+            self.scratch = None;
+        }
     }
 
     /// The most urgent state of the workspace's agents, or `None` when no
@@ -288,6 +295,16 @@ mod tests {
         assert_eq!(workspace.active_tab, 0);
         assert_eq!(workspace.by_name("terminal3"), None);
         assert_eq!(workspace.by_name("terminal2"), Some((0, 0)));
+    }
+
+    #[test]
+    fn removing_the_tab_that_holds_the_scratch_pane_leaves_no_scratch_pane() {
+        let mut workspace =
+            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.toggle_scratch("terminal2");
+        workspace.remove_tab(1);
+        assert_eq!(workspace.scratch_pane(), None);
     }
 
     #[test]

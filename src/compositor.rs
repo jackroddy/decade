@@ -2152,11 +2152,7 @@ impl State {
         };
         let name = pane.name.clone();
         layout.remove(id);
-        shown.router.remove_pane(&name);
-        shown.agents.remove(&name);
-        if shown.scratch_pane() == Some(name.as_str()) {
-            shown.scratch = None;
-        }
+        shown.forget_pane(&name);
         if shown.tabs[tab].closing {
             self.finish_closing(workspace);
             return;
