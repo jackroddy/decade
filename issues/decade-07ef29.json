@@ -3,7 +3,7 @@
   "title": "Selection numbers decode once into an enum at the wire boundary",
   "body": "The wire carries a selection as a `u32`, 0 for the clipboard and 1 for primary. `CLIPBOARD` and `PRIMARY` are defined as `u32` in `compositor.rs` and as `usize` in `viewer/clipboard.rs`. On the server, `out_of_range` rejects values above 1 after decoding, and the `Request` arm, `viewer_offer`, `viewer_owns` and `clear_selection` each match `selection { CLIPBOARD => .., _ => .. }` to pick the clipboard or primary smithay call; `selection_number` maps smithay's `SelectionTarget` back to the number. On the viewer, the handlers guard with `.get(selection as usize)`.\n\n## Proposal\n\n`wire::Selection { Clipboard, Primary }` that `Args` decodes and rejects otherwise. The server converts it to `SelectionTarget` once in `viewer_message`. The `_ =>` arms, the `.get()` guards, `selection_number` and the duplicate constants go.",
   "type": "chore",
-  "status": "open",
+  "status": "in_progress",
   "priority": 3,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T19:44:51.647407482Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:39:48.161245471Z",
-  "updated_at": "2026-11-08T07:39:48.161245471Z",
+  "updated_at": "2026-11-08T19:29:51.647407482Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
