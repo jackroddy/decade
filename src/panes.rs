@@ -309,24 +309,19 @@ impl Layout {
         self.arrange();
     }
 
-    fn body(&self) -> CellRect {
-        self.area
-    }
-
     pub fn arrange(&mut self) {
         for pane in &mut self.panes {
             pane.rect = CellRect::EMPTY;
         }
-        let body = self.body();
         if let Some(zoom) = self.zoom {
             if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == zoom) {
-                pane.rect = body;
+                pane.rect = self.area;
                 return;
             }
             self.zoom = None;
         }
         let mut rects = Vec::new();
-        arrange_node(&self.root, body, &mut rects);
+        arrange_node(&self.root, self.area, &mut rects);
         for (id, rect) in rects {
             if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == id) {
                 pane.rect = rect;
@@ -402,7 +397,7 @@ impl Layout {
         let Some(path) = found else {
             return;
         };
-        let area = node_area(&self.root, self.body(), &path);
+        let area = node_area(&self.root, self.area, &path);
         let Some(Node::Split { ratio, .. }) = node_at(&mut self.root, &path) else {
             return;
         };
@@ -508,34 +503,24 @@ impl Layout {
             return None;
         }
         let mut path = Vec::new();
-        find_boundary(&self.root, self.body(), column, row, &mut path)
+        find_boundary(&self.root, self.area, column, row, &mut path)
     }
 
     pub fn drop_at(&self, dragged: usize, column: u32, row: u32) -> Option<Drop> {
-        let body = self.body();
-        if self.panes.len() < 2 || row >= body.rows || body.columns <= EDGE_BAND * 2 {
+        if self.panes.len() < 2 || self.area.columns <= EDGE_BAND * 2 {
             return None;
         }
-        if column < EDGE_BAND {
-            return Some(Drop::Edge(Side::Left));
-        }
-        if column >= body.columns - EDGE_BAND {
-            return Some(Drop::Edge(Side::Right));
-        }
-        if row < EDGE_BAND {
-            return Some(Drop::Edge(Side::Above));
-        }
-        if row >= body.rows.saturating_sub(EDGE_BAND) {
-            return Some(Drop::Edge(Side::Below));
+        if let Some((side, _)) = edge_strips(self.area)
+            .into_iter()
+            .find(|(_, strip)| strip.contains(column, row))
+        {
+            return Some(Drop::Edge(side));
         }
         let target = self.pane_at(column, row).filter(|&id| id != dragged)?;
-        drop_zones(self.pane(target)?.rect)
+        drop_zones(target, self.pane(target)?.rect)
             .into_iter()
             .find(|(_, zone)| zone.contains(column, row))
-            .map(|(side, _)| match side {
-                None => Drop::Swap(target),
-                Some(side) => Drop::Split { target, side },
-            })
+            .map(|(drop, _)| drop)
     }
 
     pub fn apply_drop(&mut self, dragged: usize, drop: Drop) {
@@ -551,54 +536,17 @@ impl Layout {
         if let Some(target) = self.pane_at(column, row).filter(|&id| id != dragged)
             && let Some(pane) = self.pane(target)
         {
-            for (side, zone) in drop_zones(pane.rect) {
-                let drop = match side {
-                    None => Drop::Swap(target),
-                    Some(side) => Drop::Split { target, side },
-                };
+            for (drop, zone) in drop_zones(target, pane.rect) {
                 draw_zone(scene, zone, active == Some(drop));
             }
         }
-        let body = self.body();
-        let strips = [
-            (
-                Side::Left,
-                CellRect {
-                    columns: EDGE_BAND,
-                    ..body
-                },
-            ),
-            (
-                Side::Right,
-                CellRect {
-                    column: body.columns.saturating_sub(EDGE_BAND),
-                    columns: EDGE_BAND,
-                    ..body
-                },
-            ),
-            (
-                Side::Above,
-                CellRect {
-                    rows: EDGE_BAND,
-                    ..body
-                },
-            ),
-            (
-                Side::Below,
-                CellRect {
-                    row: body.rows.saturating_sub(EDGE_BAND),
-                    rows: EDGE_BAND,
-                    ..body
-                },
-            ),
-        ];
-        for (side, strip) in strips {
+        for (side, strip) in edge_strips(self.area) {
             draw_zone(scene, strip, active == Some(Drop::Edge(side)));
         }
     }
 
     pub fn drag_boundary(&mut self, boundary: &Boundary, column: u32, row: u32) {
-        let area = node_area(&self.root, self.body(), &boundary.path);
+        let area = node_area(&self.root, self.area, &boundary.path);
         let Some(node) = node_at(&mut self.root, &boundary.path) else {
             return;
         };
@@ -1100,7 +1048,7 @@ fn swap_leaves(node: &mut Node, a: usize, b: usize) {
     }
 }
 
-fn drop_zones(rect: CellRect) -> [(Option<Side>, CellRect); 5] {
+fn drop_zones(target: usize, rect: CellRect) -> [(Drop, CellRect); 5] {
     let (quarter_columns, quarter_rows) = (rect.columns / 4, rect.rows / 4);
     let middle_columns = rect.columns - quarter_columns * 2;
     let middle_rows = rect.rows - quarter_rows * 2;
@@ -1110,17 +1058,18 @@ fn drop_zones(rect: CellRect) -> [(Option<Side>, CellRect); 5] {
         columns,
         rows,
     };
+    let split = |side| Drop::Split { target, side };
     [
         (
-            None,
+            Drop::Swap(target),
             zone(quarter_columns, quarter_rows, middle_columns, middle_rows),
         ),
         (
-            Some(Side::Left),
+            split(Side::Left),
             zone(0, quarter_rows, quarter_columns, middle_rows),
         ),
         (
-            Some(Side::Right),
+            split(Side::Right),
             zone(
                 quarter_columns + middle_columns,
                 quarter_rows,
@@ -1129,17 +1078,54 @@ fn drop_zones(rect: CellRect) -> [(Option<Side>, CellRect); 5] {
             ),
         ),
         (
-            Some(Side::Above),
+            split(Side::Above),
             zone(quarter_columns, 0, middle_columns, quarter_rows),
         ),
         (
-            Some(Side::Below),
+            split(Side::Below),
             zone(
                 quarter_columns,
                 quarter_rows + middle_rows,
                 middle_columns,
                 quarter_rows,
             ),
+        ),
+    ]
+}
+
+/// The bands along the edges of the area where a dropped pane spans that
+/// side of every other pane.
+fn edge_strips(area: CellRect) -> [(Side, CellRect); 4] {
+    [
+        (
+            Side::Left,
+            CellRect {
+                columns: EDGE_BAND,
+                ..area
+            },
+        ),
+        (
+            Side::Right,
+            CellRect {
+                column: area.column + area.columns.saturating_sub(EDGE_BAND),
+                columns: EDGE_BAND,
+                ..area
+            },
+        ),
+        (
+            Side::Above,
+            CellRect {
+                rows: EDGE_BAND,
+                ..area
+            },
+        ),
+        (
+            Side::Below,
+            CellRect {
+                row: area.row + area.rows.saturating_sub(EDGE_BAND),
+                rows: EDGE_BAND,
+                ..area
+            },
         ),
     ]
 }
@@ -1567,6 +1553,36 @@ pub(crate) mod tests {
         assert_eq!(layout.drop_at(1, 0, 10), Some(Drop::Edge(Side::Left)));
         assert_eq!(layout.drop_at(0, code.column + 3, code.row + 3), None);
         assert_eq!(layout.drop_at(0, 20, 20), None);
+    }
+
+    #[test]
+    fn the_edge_strips_are_hit_where_they_are_drawn_when_the_area_is_inset() {
+        let area = CellRect {
+            column: 24,
+            row: 1,
+            columns: 96,
+            rows: 40,
+        };
+        let mut layout = Layout::new(area);
+        layout.add_transient("code".to_string());
+        assert_eq!(layout.drop_at(1, 24, 20), Some(Drop::Edge(Side::Left)));
+        assert_eq!(layout.drop_at(1, 0, 20), None);
+        assert_eq!(layout.drop_at(1, 119, 20), Some(Drop::Edge(Side::Right)));
+        assert_ne!(layout.drop_at(1, 94, 20), Some(Drop::Edge(Side::Right)));
+        assert_eq!(layout.drop_at(1, 30, 1), Some(Drop::Edge(Side::Above)));
+        assert_eq!(layout.drop_at(1, 30, 40), Some(Drop::Edge(Side::Below)));
+
+        let font = crate::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw_drop(&mut scene, 1, (24, 20));
+        let active = scene.shapes.iter().find_map(|shape| match shape {
+            crate::draw::Shape::Rect { at, color, .. } if color[3] < 1.0 => Some(*at),
+            _ => None,
+        });
+        assert_eq!(
+            active,
+            Some((24 * font.cell_width as i32, font.cell_height as i32).into())
+        );
     }
 
     #[test]
