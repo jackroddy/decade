@@ -1,0 +1,30 @@
+{
+  "id": "decade-b8b8ec",
+  "title": "The palette opens over the settings panel and both stay open",
+  "body": "`State` holds `menu: Option<Menu>`, `panel: Option<Panel>` and `picker: Option<Picker>` as three independent fields. `pointer_button` returns early only when the picker is open. With the panel open, a click on the frame's palette button reaches `frame_hit(Hit::Palette)` and `open_palette`, which sets `menu` without looking at `panel`. Both boxes then paint at `overlay_origin`, and keys go to the panel, since `run_key` checks the picker, then the panel, then the menu.\n\nThe fix is the issue \"Menu, panel and picker become one overlay with one outcome type\", which makes the state unrepresentable.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:38:28.04594194Z",
+  "updated_at": "2026-11-08T07:38:28.04594194Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
