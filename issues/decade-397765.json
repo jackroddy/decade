@@ -15,11 +15,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:38:28.055972789Z",
-  "updated_at": "2026-11-08T07:38:28.055972789Z",
+  "updated_at": "2026-11-08T20:12:13.650659633Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "cbac2132",
+      "at": "2026-11-08T20:12:13.650658833Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "The `border_width` uniform this issue names is now set in `Paint::scene` in `draw.rs`, since commit for decade-3db766 moved `Paint` there from the compositor.",
+      "commit": "141646e",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
