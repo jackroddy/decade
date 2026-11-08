@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{self, Write};
 use std::os::unix::io::OwnedFd;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -101,7 +102,7 @@ use crate::panes::{
 };
 use crate::picker::{self, Grid, Picker};
 use crate::pool::Pool;
-use crate::save;
+use crate::save::{self, TerminalTab};
 use crate::scratch::{self, Launch};
 use crate::settings::{self, Settings};
 use crate::text::Font;
@@ -304,154 +305,27 @@ pub fn run() {
             std::process::exit(1);
         }
     };
-
-    let mut dmabuf_state = DmabufState::new();
-    let formats = gpu.renderer.dmabuf_formats();
-    let rounded = gpu
-        .renderer
-        .compile_custom_pixel_shader(
-            include_str!("rounded.frag"),
-            &[
-                UniformName::new("fill", UniformType::_4f),
-                UniformName::new("border", UniformType::_4f),
-                UniformName::new("radius", UniformType::_1f),
-                UniformName::new("border_width", UniformType::_1f),
-            ],
-        )
-        .expect("the rounded rect shader compiles");
-    let feedback = DmabufFeedbackBuilder::new(gpu.node.dev_id(), formats.clone())
-        .build()
-        .map_err(|error| error.to_string());
-    let _dmabuf_global = match feedback {
-        Ok(feedback) => dmabuf_state.create_global_with_default_feedback::<State>(&dh, &feedback),
-        Err(error) => {
-            eprintln!(
-                "decade: clients get no GPU to render on and may fall back to software: {error}"
-            );
-            dmabuf_state.create_global::<State>(&dh, formats)
-        }
-    };
-
+    let dmabuf_state = dmabuf_global(&gpu, &dh);
+    let rounded = rounded_shader(&mut gpu.renderer);
     let size: Size<i32, Physical> = (1920, 1080).into();
     let scale = 1.0;
-    let mode = Mode {
-        size,
-        refresh: REFRESH_MILLIHERTZ,
-    };
-    let output = Output::new(
-        "decade".into(),
-        PhysicalProperties {
-            size: (0, 0).into(),
-            subpixel: Subpixel::Unknown,
-            make: "decade".into(),
-            model: "nested".into(),
-        },
-    );
-    let _output_global = output.create_global::<State>(&dh);
-    output.change_current_state(
-        Some(mode),
-        Some(Transform::Normal),
-        Some(Scale::Fractional(scale)),
-        Some((0, 0).into()),
-    );
-    output.set_preferred(mode);
-
-    let mut seat_state = SeatState::new();
-    let mut seat = seat_state.new_wl_seat(&dh, "decade");
+    let output = output(&dh, size, scale);
     let repeat = Repeat {
         delay: 200,
         rate: 25,
     };
+    let mut seat_state = SeatState::new();
+    let mut seat = seat_state.new_wl_seat(&dh, "decade");
     seat.add_keyboard(Default::default(), repeat.delay, repeat.rate)
         .unwrap();
     seat.add_pointer();
-
-    let mut settings_path = settings::path();
-    let settings = match settings_path.as_deref().map(settings::load) {
-        Some(Ok(settings)) => settings,
-        Some(Err(error)) => {
-            let path = settings_path.take().unwrap_or_default();
-            eprintln!(
-                "decade: {} could not be read, so decade uses the defaults and will not write it: {error}",
-                path.display()
-            );
-            Settings::default()
-        }
-        None => Settings::default(),
-    };
-    let font = Font::load(settings.font_size * scale as f32);
-    let (columns, rows) = (
-        size.w as u32 / font.cell_width,
-        size.h as u32 / font.cell_height,
-    );
-    let (workspaces, sidebar_open, save_path) = restore(columns, rows);
+    let (settings, settings_path) = load_settings();
 
     let handle = event_loop.handle();
-    let socket = ListeningSocketSource::new_auto().unwrap();
-    let socket_name = socket.socket_name().to_os_string();
-    handle
-        .insert_source(socket, |stream, _, state| {
-            state
-                .display_handle
-                .insert_client(stream, Arc::new(ClientState::default()))
-                .unwrap();
-        })
-        .unwrap();
-    handle
-        .insert_source(
-            Generic::new(display, Interest::READ, CalloopMode::Level),
-            |_, display, state| {
-                unsafe { display.get_mut().dispatch_clients(state).unwrap() };
-                Ok(PostAction::Continue)
-            },
-        )
-        .unwrap();
-    handle
-        .insert_source(
-            Signals::new(&[Signal::SIGTERM, Signal::SIGINT]).unwrap(),
-            |_, _, state| state.stopping = true,
-        )
-        .unwrap();
-
-    let _ = std::fs::remove_file(&viewer_path);
-    let viewer_listener = UnixListener::bind(&viewer_path).unwrap();
-    viewer_listener.set_nonblocking(true).unwrap();
-    handle
-        .insert_source(
-            Generic::new(viewer_listener, Interest::READ, CalloopMode::Level),
-            |_, listener, state| {
-                loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => state.viewer_connected(stream),
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
-                        Err(error) => {
-                            eprintln!("decade: accepting a viewer failed: {error}");
-                            break;
-                        }
-                    }
-                }
-                Ok(PostAction::Continue)
-            },
-        )
-        .unwrap();
-
+    let socket_name = insert_sources(&handle, display, &viewer_path);
     let runtime = files::runtime_dir();
     remove_stale_sockets(&runtime);
-    let (mcp_requests, mcp_source) = calloop_channel::channel();
-    handle
-        .insert_source(mcp_source, |event, _, state| {
-            if let ChannelEvent::Msg(request) = event {
-                state.mcp_request(request);
-            }
-        })
-        .unwrap();
-    let mcp = match mcp::start(mcp_requests) {
-        Ok(server) => Some(server.url),
-        Err(error) => {
-            eprintln!("decade: the MCP server did not start: {error}");
-            None
-        }
-    };
+    let mcp = start_mcp(&handle);
     let mut state = State {
         repeat,
         repeating: None,
@@ -480,21 +354,21 @@ pub fn run() {
         sockets: HashMap::new(),
         next_client: 0,
         children: Children::new(socket_name, runtime, mcp),
-        font,
+        font: Font::load(settings.font_size * scale as f32),
         texts: TextCache::new(),
         menu_font: Font::load(settings.palette_size * scale as f32),
         rounded,
-        next_workspace: workspaces.len() as u32,
-        workspaces,
+        next_workspace: 0,
+        workspaces: Vec::new(),
         unplaced: Vec::new(),
         menu: None,
         picker: None,
-        sidebar_open,
+        sidebar_open: true,
         picker_tick: None,
         panel: None,
         settings,
         settings_path,
-        save_path,
+        save_path: save::path(),
         save_due: None,
         pointer: (0.0, 0.0).into(),
         drag: None,
@@ -502,10 +376,8 @@ pub fn run() {
         scale,
         start: Instant::now(),
     };
+    state.restore();
 
-    for workspace in 0..state.workspaces.len() {
-        state.start_workspace(workspace);
-    }
     let every = Timer::from_duration(SAVE_EVERY);
     let _ = handle.insert_source(every, |_, _, state| {
         state.save();
@@ -533,55 +405,158 @@ pub fn run() {
     let _ = std::fs::remove_file(&viewer_path);
 }
 
-/// The saved workspaces and whether the sidebar is open, for a window of
-/// `columns` by `rows` cells.
-fn restore(columns: u32, rows: u32) -> (Vec<Workspace>, bool, Option<PathBuf>) {
-    let home = |open: bool| {
-        let area = frame::pane_area(columns, rows, open);
-        vec![Workspace::new(0, workspace::home(), area)]
-    };
-    let Some(path) = save::path() else {
-        return (home(true), true, None);
-    };
-    let restored = save::load(&path).and_then(|file| {
-        let Some(file) = file else {
-            return Ok((Vec::new(), true));
-        };
-        let area = frame::pane_area(columns, rows, file.sidebar_open);
-        let workspaces = file
-            .workspaces
-            .iter()
-            .enumerate()
-            .map(|(id, saved)| {
-                let id = id as u32;
-                let prefix = format!("decade.w{id}.");
-                let layouts = saved.layouts(area, &prefix)?;
-                let mut workspace = Workspace::with_tabs(
-                    id,
-                    saved.name.clone(),
-                    saved.cwd.clone(),
-                    layouts,
-                    saved.active_tab,
-                );
-                if let Some(name) = &saved.scratch
-                    && workspace.by_name(name).is_some()
-                {
-                    workspace.toggle_scratch(name);
-                }
-                Ok(workspace)
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        Ok((workspaces, file.sidebar_open))
-    });
-    match restored {
-        Ok((workspaces, open)) if workspaces.is_empty() => (home(open), open, Some(path)),
-        Ok((workspaces, open)) => (workspaces, open, Some(path)),
+/// The linux-dmabuf global, offering the GPU's formats and naming the GPU
+/// as the device clients render on.
+fn dmabuf_global(gpu: &Gpu, dh: &DisplayHandle) -> DmabufState {
+    let mut dmabuf_state = DmabufState::new();
+    let formats = gpu.renderer.dmabuf_formats();
+    let feedback = DmabufFeedbackBuilder::new(gpu.node.dev_id(), formats.clone())
+        .build()
+        .map_err(|error| error.to_string());
+    match feedback {
+        Ok(feedback) => {
+            dmabuf_state.create_global_with_default_feedback::<State>(dh, &feedback);
+        }
         Err(error) => {
             eprintln!(
-                "decade: {} could not be read, so decade starts fresh and will not save over it: {error}",
+                "decade: clients get no GPU to render on and may fall back to software: {error}"
+            );
+            dmabuf_state.create_global::<State>(dh, formats);
+        }
+    }
+    dmabuf_state
+}
+
+fn rounded_shader(renderer: &mut GlesRenderer) -> GlesPixelProgram {
+    renderer
+        .compile_custom_pixel_shader(
+            include_str!("rounded.frag"),
+            &[
+                UniformName::new("fill", UniformType::_4f),
+                UniformName::new("border", UniformType::_4f),
+                UniformName::new("radius", UniformType::_1f),
+                UniformName::new("border_width", UniformType::_1f),
+            ],
+        )
+        .expect("the rounded rect shader compiles")
+}
+
+fn output(dh: &DisplayHandle, size: Size<i32, Physical>, scale: f64) -> Output {
+    let mode = Mode {
+        size,
+        refresh: REFRESH_MILLIHERTZ,
+    };
+    let output = Output::new(
+        "decade".into(),
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: "decade".into(),
+            model: "nested".into(),
+        },
+    );
+    output.create_global::<State>(dh);
+    output.change_current_state(
+        Some(mode),
+        Some(Transform::Normal),
+        Some(Scale::Fractional(scale)),
+        Some((0, 0).into()),
+    );
+    output.set_preferred(mode);
+    output
+}
+
+/// The settings, and the path to write them to, or `None` when the file
+/// there could not be read.
+fn load_settings() -> (Settings, Option<PathBuf>) {
+    let Some(path) = settings::path() else {
+        return (Settings::default(), None);
+    };
+    match settings::load(&path) {
+        Ok(settings) => (settings, Some(path)),
+        Err(error) => {
+            eprintln!(
+                "decade: {} could not be read, so decade uses the defaults and will not write it: {error}",
                 path.display()
             );
-            (home(true), true, None)
+            (Settings::default(), None)
+        }
+    }
+}
+
+/// Listen for Wayland clients, viewers and the signals that stop the
+/// server, and return the Wayland socket's name.
+fn insert_sources(
+    handle: &LoopHandle<'static, State>,
+    display: Display<State>,
+    viewer_path: &Path,
+) -> OsString {
+    let socket = ListeningSocketSource::new_auto().unwrap();
+    let socket_name = socket.socket_name().to_os_string();
+    handle
+        .insert_source(socket, |stream, _, state| {
+            state
+                .display_handle
+                .insert_client(stream, Arc::new(ClientState::default()))
+                .unwrap();
+        })
+        .unwrap();
+    handle
+        .insert_source(
+            Generic::new(display, Interest::READ, CalloopMode::Level),
+            |_, display, state| {
+                unsafe { display.get_mut().dispatch_clients(state).unwrap() };
+                Ok(PostAction::Continue)
+            },
+        )
+        .unwrap();
+    handle
+        .insert_source(
+            Signals::new(&[Signal::SIGTERM, Signal::SIGINT]).unwrap(),
+            |_, _, state| state.stopping = true,
+        )
+        .unwrap();
+
+    let _ = std::fs::remove_file(viewer_path);
+    let viewer_listener = UnixListener::bind(viewer_path).unwrap();
+    viewer_listener.set_nonblocking(true).unwrap();
+    handle
+        .insert_source(
+            Generic::new(viewer_listener, Interest::READ, CalloopMode::Level),
+            |_, listener, state| {
+                loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => state.viewer_connected(stream),
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(error) => {
+                            eprintln!("decade: accepting a viewer failed: {error}");
+                            break;
+                        }
+                    }
+                }
+                Ok(PostAction::Continue)
+            },
+        )
+        .unwrap();
+    socket_name
+}
+
+/// Start the MCP server, whose requests arrive on the event loop, and
+/// return its address.
+fn start_mcp(handle: &LoopHandle<'static, State>) -> Option<String> {
+    let (mcp_requests, mcp_source) = calloop_channel::channel();
+    handle
+        .insert_source(mcp_source, |event, _, state| {
+            if let ChannelEvent::Msg(request) = event {
+                state.mcp_request(request);
+            }
+        })
+        .unwrap();
+    match mcp::start(mcp_requests) {
+        Ok(server) => Some(server.url),
+        Err(error) => {
+            eprintln!("decade: the MCP server did not start: {error}");
+            None
         }
     }
 }
@@ -620,27 +595,59 @@ impl State {
         }
     }
 
-    /// Listen on the workspace's socket, and start a terminal for every pane
-    /// that holds one and for every terminal tab saved with a pane.
-    fn start_workspace(&mut self, workspace: usize) {
-        self.listen(workspace);
-        let mut terminals = Vec::new();
-        let mut tabs = Vec::new();
-        for (tab, entry) in self.workspaces[workspace].tabs.iter_mut().enumerate() {
-            for pane in &mut entry.layout.panes {
-                if pane.cwd.is_some() {
-                    terminals.push((tab, pane.id));
+    /// Put back the saved workspaces, or add the home workspace when none
+    /// were saved.
+    fn restore(&mut self) {
+        if let Some(path) = self.save_path.clone() {
+            let restored = save::load(&path).and_then(|file| {
+                let Some(file) = file else {
+                    return Ok(Vec::new());
+                };
+                self.sidebar_open = file.sidebar_open;
+                let area = self.pane_area();
+                (file.workspaces.iter().enumerate())
+                    .map(|(id, saved)| saved.workspace(id as u32, area))
+                    .collect::<Result<Vec<_>, String>>()
+            });
+            match restored {
+                Ok(workspaces) => {
+                    for (workspace, tabs) in workspaces {
+                        self.workspaces.push(workspace);
+                        self.next_workspace += 1;
+                        self.start_workspace(self.workspaces.len() - 1, tabs);
+                    }
                 }
-                for cwd in std::mem::take(&mut pane.saved_tabs) {
-                    tabs.push((tab, pane.id, cwd));
+                Err(error) => {
+                    eprintln!(
+                        "decade: {} could not be read, so decade starts fresh and will not save over it: {error}",
+                        path.display()
+                    );
+                    self.save_path = None;
+                    self.sidebar_open = true;
                 }
             }
         }
+        if self.workspaces.is_empty() {
+            self.add_workspace(workspace::home());
+        }
+    }
+
+    /// Listen on the workspace's socket, and start a terminal for every pane
+    /// that holds one and for every terminal tab in `tabs`.
+    fn start_workspace(&mut self, workspace: usize, tabs: Vec<TerminalTab>) {
+        self.listen(workspace);
+        let terminals: Vec<(usize, usize)> = (self.workspaces[workspace].tabs.iter().enumerate())
+            .flat_map(|(tab, entry)| {
+                (entry.layout.panes.iter())
+                    .filter(|pane| pane.cwd.is_some())
+                    .map(move |pane| (tab, pane.id))
+            })
+            .collect();
         for (tab, id) in terminals {
             self.spawn_terminal(workspace, tab, id);
         }
-        for (tab, id, cwd) in tabs {
-            self.spawn_pane_tab(workspace, tab, id, &cwd);
+        for saved in tabs {
+            self.spawn_pane_tab(workspace, saved.tab, saved.pane, &saved.cwd);
         }
     }
 
@@ -945,7 +952,7 @@ impl State {
         let taken = self.workspaces.iter().map(|known| known.name.as_str());
         created.name = workspace::unique_name(&created.name, taken);
         self.workspaces.push(created);
-        self.start_workspace(self.workspaces.len() - 1);
+        self.start_workspace(self.workspaces.len() - 1, Vec::new());
         id
     }
 
@@ -3540,7 +3547,7 @@ impl CompositorHandler for State {
                     .iter()
                     .enumerate()
                     .find_map(|(index, workspace)| {
-                        let prefix = workspace.app_id_prefix();
+                        let prefix = workspace::app_id_prefix(workspace.id);
                         workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
                             let (id, terminal_tab) =
                                 entry.layout.place(app_id.as_deref(), &prefix)?;

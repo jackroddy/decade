@@ -43,6 +43,11 @@ pub struct Agent {
     pub client: usize,
 }
 
+/// The app id prefix of a terminal started for one of the workspace's panes.
+pub fn app_id_prefix(workspace: u32) -> String {
+    format!("decade.w{workspace}.")
+}
+
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }
@@ -173,11 +178,6 @@ impl Workspace {
         } else {
             Some(Scratch::new(name.to_string()))
         };
-    }
-
-    /// The app id prefix of a terminal started for one of this workspace's panes.
-    pub fn app_id_prefix(&self) -> String {
-        format!("decade.w{}.", self.id)
     }
 }
 

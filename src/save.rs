@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::files;
 use crate::panes::{Axis, CellRect, Kind, Layout, Node, Pane};
-use crate::workspace::Workspace;
+use crate::workspace::{self, Workspace};
 
 const VERSION: u32 = 2;
 
@@ -21,13 +21,13 @@ pub struct File {
 /// One workspace as the file holds it.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Saved {
-    pub name: String,
-    pub cwd: PathBuf,
-    pub active_tab: usize,
+    name: String,
+    cwd: PathBuf,
+    active_tab: usize,
 
     /// The name of the scratch pane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scratch: Option<String>,
+    scratch: Option<String>,
     #[serde(rename = "tab")]
     tabs: Vec<SavedTab>,
 }
@@ -241,10 +241,50 @@ fn shell_cwd(ghostty: u32) -> Option<PathBuf> {
     std::fs::read_link(format!("/proc/{shell}/cwd")).ok()
 }
 
+/// A terminal tab to start in a restored pane.
+#[derive(Debug, PartialEq)]
+pub struct TerminalTab {
+    pub tab: usize,
+    pub pane: usize,
+    pub cwd: PathBuf,
+}
+
 impl Saved {
+    /// Rebuild the workspace with the id `id`, and list the terminal tabs
+    /// to start in its panes.
+    pub fn workspace(
+        &self,
+        id: u32,
+        area: CellRect,
+    ) -> Result<(Workspace, Vec<TerminalTab>), String> {
+        let layouts = self.layouts(area, &workspace::app_id_prefix(id))?;
+        let mut restored = Workspace::with_tabs(
+            id,
+            self.name.clone(),
+            self.cwd.clone(),
+            layouts,
+            self.active_tab,
+        );
+        if let Some(name) = &self.scratch
+            && restored.by_name(name).is_some()
+        {
+            restored.toggle_scratch(name);
+        }
+        let mut tabs = Vec::new();
+        for (tab, saved) in self.tabs.iter().enumerate() {
+            for (pane, saved) in saved.panes.iter().enumerate() {
+                for cwd in &saved.tabs {
+                    let cwd = cwd.clone();
+                    tabs.push(TerminalTab { tab, pane, cwd });
+                }
+            }
+        }
+        Ok((restored, tabs))
+    }
+
     /// Rebuild the layout of each tab, with each pinned terminal waiting for
     /// the app id that starts with `prefix`.
-    pub fn layouts(&self, area: CellRect, prefix: &str) -> Result<Vec<Layout>, String> {
+    fn layouts(&self, area: CellRect, prefix: &str) -> Result<Vec<Layout>, String> {
         if self.tabs.is_empty() {
             return Err(format!("workspace {} has no tab", self.name));
         }
@@ -299,7 +339,6 @@ impl SavedTab {
                 let mut pane = Pane::new(id, saved.name.clone(), kind);
                 pane.cwd = saved.cwd.clone();
                 pane.app_id = saved.app_id.clone();
-                pane.saved_tabs = saved.tabs.clone();
                 pane
             })
             .collect();
@@ -567,7 +606,7 @@ cwd = "/tmp"
     }
 
     #[test]
-    fn the_directories_of_a_panes_terminal_tabs_read_back_onto_the_pane() {
+    fn the_directories_of_a_panes_terminal_tabs_read_back_with_the_pane() {
         let mut saved = saved(&workspace());
         let tabs = vec![PathBuf::from("/tmp"), PathBuf::from("/home/jack")];
         saved.tabs[0].panes[1].tabs = tabs.clone();
@@ -578,9 +617,16 @@ cwd = "/tmp"
         })
         .unwrap();
         let back = &read(&text).unwrap().workspaces[0];
-        let layout = first_layout(back);
-        assert_eq!(layout.pane(1).unwrap().saved_tabs, tabs);
-        assert!(layout.pane(0).unwrap().saved_tabs.is_empty());
+        let (_, restored) = back.workspace(0, crate::panes::tests::AREA).unwrap();
+        let expected: Vec<TerminalTab> = tabs
+            .into_iter()
+            .map(|cwd| TerminalTab {
+                tab: 0,
+                pane: 1,
+                cwd,
+            })
+            .collect();
+        assert_eq!(restored, expected);
         assert!(!text.contains("tabs = []"));
     }
 }

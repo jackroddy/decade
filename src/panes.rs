@@ -153,9 +153,6 @@ pub struct Pane {
     /// The number in the app id of the next terminal tab decade starts.
     pub next_tab: u32,
 
-    /// The directories of the terminal tabs to start for a restored pane.
-    pub saved_tabs: Vec<PathBuf>,
-
     /// The app id of the last client in the pane.
     pub app_id: Option<String>,
 
@@ -198,7 +195,6 @@ impl Pane {
             clients: Vec::new(),
             shown: 0,
             next_tab: 2,
-            saved_tabs: Vec::new(),
             app_id: None,
             cwd: None,
             pid: None,

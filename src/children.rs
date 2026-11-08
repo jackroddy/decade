@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, app_id_prefix};
 
 /// The programs decade started, and what each one is told about decade.
 pub struct Children {
@@ -56,7 +56,7 @@ impl Children {
         ghostty
             .current_dir(cwd)
             .args(["--window-decoration=none", "--gtk-titlebar=false"])
-            .arg(format!("--class={}{class}", workspace.app_id_prefix()));
+            .arg(format!("--class={}{class}", app_id_prefix(workspace.id)));
         ghostty
     }
 
