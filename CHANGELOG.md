@@ -134,7 +134,7 @@ command line and what the tool writes.
   key moves the nearest divider, and Super+M zooms the focused pane. A click
   focuses the pane under the pointer.
 - Held keys repeat in decade's own bindings, the palette and the settings
-  panel, at the delay and rate Hyprland is set to.
+  panel, at the delay and rate of the compositor decade's window is on.
 - Under Hyprland, while decade's window is the only one on its workspace,
   Hyprland passes decade the keys it would otherwise take. Binds marked
   `dont_inhibit` keep working in Hyprland.

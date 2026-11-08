@@ -213,6 +213,12 @@ them. The server handles each one when it arrives.
 : The window lost keyboard focus. The server releases every key this viewer
   had pressed.
 
+`repeat(rate: u32, delay: u32)`
+: The host's key repeat: `rate` keys a second, 0 for no repeat, after
+  `delay` milliseconds. The viewer sends it after `welcome` and whenever
+  the host changes it. The server repeats at the newest values any viewer
+  sent, and at 25 a second after 200 milliseconds until one arrives.
+
 `pointer(time: u32, x: fixed, y: fixed)`
 : The pointer moved to `x`, `y`.
 
@@ -346,6 +352,7 @@ Viewer to server:
 | 14 | `cleared` |
 | 15 | `request` |
 | 16 | `list` |
+| 17 | `repeat` |
 
 Server to viewer:
 

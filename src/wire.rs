@@ -152,6 +152,10 @@ pub enum ViewerMessage {
         fd: OwnedFd,
     },
     List,
+    Repeat {
+        rate: u32,
+        delay: u32,
+    },
 }
 
 /// A message from the server to a viewer.
@@ -423,6 +427,11 @@ impl ViewerMessage {
                 15
             }
             ViewerMessage::List => 16,
+            ViewerMessage::Repeat { rate, delay } => {
+                w.u32(rate);
+                w.u32(delay);
+                17
+            }
         };
         w.finish(opcode)
     }
@@ -905,6 +914,10 @@ impl Decoder {
                 fd: a.fd()?,
             },
             16 => ViewerMessage::List,
+            17 => ViewerMessage::Repeat {
+                rate: a.u32()?,
+                delay: a.u32()?,
+            },
             _ => return Err(Error::UnknownOpcode(opcode)),
         };
         a.finish()?;
@@ -1216,6 +1229,10 @@ mod tests {
                 fd: fd(),
             },
             ViewerMessage::List,
+            ViewerMessage::Repeat {
+                rate: 25,
+                delay: 600,
+            },
         ]
     }
 

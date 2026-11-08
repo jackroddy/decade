@@ -90,7 +90,6 @@ use crate::control::{self, viewer_socket_path};
 use crate::draw::{Face, Scene, Shape, TextCache};
 use crate::frame::{self, Hit, fit};
 use crate::gpu::Gpu;
-use crate::hypr::Hyprland;
 use crate::mcp;
 use crate::menu::{Action, Menu, MenuKey, Outcome};
 use crate::palette::Rgba;
@@ -380,11 +379,9 @@ pub fn run() {
 
     let mut seat_state = SeatState::new();
     let mut seat = seat_state.new_wl_seat(&dh, "decade");
-    let hyprland = Hyprland::find();
-    let option = |name: &str| hyprland.as_ref().and_then(|hyprland| hyprland.option(name));
     let repeat = Repeat {
-        delay: option("input:repeat_delay").unwrap_or(200).clamp(1, 5000) as i32,
-        rate: option("input:repeat_rate").unwrap_or(25).clamp(1, 1000) as i32,
+        delay: 200,
+        rate: 25,
     };
     seat.add_keyboard(Default::default(), repeat.delay, repeat.rate)
         .unwrap();
@@ -1409,6 +1406,14 @@ impl State {
                 self.send(id, ServerMessage::Listing { workspaces });
                 self.flush_viewers();
                 self.viewer_gone(id);
+            }
+            ViewerMessage::Repeat { rate, delay } => {
+                self.repeat = Repeat {
+                    rate: rate.min(1000) as i32,
+                    delay: delay.clamp(1, 5000) as i32,
+                };
+                let keyboard = self.seat.get_keyboard().unwrap();
+                keyboard.change_repeat_info(self.repeat.rate, self.repeat.delay);
             }
             ViewerMessage::Error { message, .. } => {
                 eprintln!("decade: a viewer reported an error: {message}");
@@ -2670,6 +2675,9 @@ impl State {
     }
 
     fn start_repeat(&mut self, code: u32, key: Key) {
+        if self.repeat.rate == 0 {
+            return;
+        }
         let interval = Duration::from_millis(1000 / self.repeat.rate as u64);
         let timer = Timer::from_duration(Duration::from_millis(self.repeat.delay as u64));
         let token = self.loop_handle.insert_source(timer, move |_, _, state| {

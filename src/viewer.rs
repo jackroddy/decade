@@ -290,6 +290,9 @@ struct Viewer {
     /// The size and scale the server last heard, once `hello` is sent.
     sent: Option<(u32, u32, u32)>,
     welcomed: bool,
+
+    /// The host's key repeat rate and delay, once the host has sent them.
+    repeat: Option<(u32, u32)>,
     buffers: HashMap<u32, Imported>,
 
     /// A frame not yet on screen.
@@ -447,6 +450,7 @@ impl Viewer {
             formats: None,
             sent: None,
             welcomed: false,
+            repeat: None,
             buffers: HashMap::new(),
             pending: None,
             shown: None,
@@ -556,6 +560,7 @@ impl Viewer {
                 self.welcomed = true;
                 self.sync_size();
                 self.send_keys();
+                self.send_repeat();
                 self.send_selections();
             }
             ServerMessage::Buffer {
@@ -748,6 +753,12 @@ impl Viewer {
         });
     }
 
+    fn send_repeat(&mut self) {
+        if let (true, Some((rate, delay))) = (self.welcomed, self.repeat) {
+            self.send(ViewerMessage::Repeat { rate, delay });
+        }
+    }
+
     fn set_shortcuts(&mut self, on: bool) {
         if let Some(shortcuts) = &mut self.shortcuts {
             shortcuts.set(on, self.window.wl_surface(), &self.seat, &self.qh);
@@ -932,6 +943,10 @@ impl Viewer {
                     locked: self.keys.locked,
                     ..Keys::default()
                 };
+            }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                self.repeat = Some((rate.max(0) as u32, delay.max(0) as u32));
+                self.send_repeat();
             }
             wl_keyboard::Event::Modifiers { mods_locked, .. } => {
                 self.keys.locked = 0;
