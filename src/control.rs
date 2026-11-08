@@ -21,7 +21,7 @@ const POLL: Duration = Duration::from_millis(50);
 
 /// The directory of the server's viewer socket, lock and log.
 pub fn dir() -> PathBuf {
-    files::runtime_dir().join("decade")
+    files::runtime_dir().join(files::DIR)
 }
 
 pub fn viewer_socket_path() -> PathBuf {

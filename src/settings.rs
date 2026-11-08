@@ -111,7 +111,7 @@ impl Knob {
 
 pub fn path() -> Option<PathBuf> {
     let config = files::xdg_home("XDG_CONFIG_HOME", ".config")?;
-    Some(config.join("decade").join("config.toml"))
+    Some(config.join(files::DIR).join("config.toml"))
 }
 
 pub fn load(path: &Path) -> Result<Settings, String> {

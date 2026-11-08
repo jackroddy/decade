@@ -99,7 +99,7 @@ struct SavedPane {
 
 pub fn path() -> Option<PathBuf> {
     let state = files::xdg_home("XDG_STATE_HOME", ".local/state")?;
-    Some(state.join("decade").join("workspaces.toml"))
+    Some(state.join(files::DIR).join("workspaces.toml"))
 }
 
 /// The saved file, or `None` when there is none.

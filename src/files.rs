@@ -9,6 +9,9 @@ struct Version {
     version: Option<u32>,
 }
 
+/// The name of decade's directory under each XDG base directory.
+pub const DIR: &str = "decade";
+
 /// The directory for sockets: `$XDG_RUNTIME_DIR`, or the temp directory.
 pub fn runtime_dir() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
