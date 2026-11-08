@@ -3,7 +3,7 @@
   "title": "decade list spins the CPU until the server answers",
   "body": "`control::list` connects a blocking `UnixStream`, pushes `ViewerMessage::List`, then loops on `decoder.next_server_message()` and `decoder.receive(&stream)`. `Decoder::receive` in `wire.rs` receives with `RECEIVE_FLAGS`, which include `DONTWAIT`, and maps `EAGAIN` to `Ok(true)`. So the loop in `list` never blocks and burns a core until the listing arrives.\n\n`script.rs` polls the socket with `rustix::event::poll` before each receive, and `State::close_viewers` in `compositor.rs` has a third hand-written poll loop with a deadline. `UnixStream::connect(viewer_socket_path()).map_err(|_| \"no server is running\")` is written in both `control.rs` and `script.rs`. In `script.rs`, `while !outbox.is_empty() { if !send { break } }` does what one `send` call does.\n\n## Proposal\n\nOne wait helper in `wire.rs`, something like `Decoder::wait(&stream, timeout)` and `Outbox::flush(&stream, deadline)`, used by `list`, `script` and `close_viewers`. A `control::connect()` replaces the two connect copies.",
   "type": "bug",
-  "status": "open",
+  "status": "in_progress",
   "priority": 3,
   "labels": [
     "simplification"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/913b1d2c",
+  "lease_expires": "2026-11-08T21:12:22.185640447Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:38:28.035877142Z",
-  "updated_at": "2026-11-08T07:38:28.035877142Z",
+  "updated_at": "2026-11-08T20:57:22.185640447Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
