@@ -1,0 +1,30 @@
+{
+  "id": "decade-0310ed",
+  "title": "Closing a tab that holds the scratch pane leaves the workspace naming a pane that is gone",
+  "body": "`State::remove_pane` in `compositor.rs` removes a pane from the layout, the router and `agents`, and clears `Workspace.scratch` when the pane was the scratch pane. `finish_closing_tab` removes every pane of a tab from the router and `agents` but does not touch `scratch`. After the tab closes, `Workspace::scratch_pane()` still names a pane no layout holds. I have not traced what `scratch.open` over MCP does then.\n\nThe fix belongs with the issue \"Workspace owns adding, removing and pruning panes\", which gives pane removal one home.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:38:28.025871823Z",
+  "updated_at": "2026-11-08T07:38:28.025871823Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
