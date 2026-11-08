@@ -3,7 +3,7 @@
   "title": "The palette box border follows the chrome font while its rule follows the palette font",
   "body": "`Scene::line_width` in `draw.rs` is `(cell_width / 8).max(1)` from the font the scene was built with. `Paint::scene` in `compositor.rs` sets the rounded box shader's `border_width` from `self.font.cell_width / 8.0`, the chrome font, for every `Shape::Rounded`. The palette's scene is built from `menu_font`, so its rule line and its box border come out at different widths once the two font sizes differ.\n\n## Proposal\n\n`Scene::rounded` stores the width in `Shape::Rounded` and `Paint::scene` reads it from there. `Paint` then no longer needs `font` for this.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "simplification"
@@ -12,13 +12,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T20:53:25.519188451Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:38:28.055972789Z",
-  "updated_at": "2026-11-08T20:38:25.519188451Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T20:39:38.170043596Z",
+  "closed_at": "2026-11-08T20:39:38.170043596Z",
+  "close_reason": "Shape::Rounded carries the scene's line_width and Paint::scene passes it to the shader, in dc52a04. Frames at default sizes are unchanged; a 16 px chrome font moves the palette border from 1.25 px to 1 px.",
+  "resolution": "done",
   "notes": [
     {
       "id": "cbac2132",
@@ -35,6 +35,9 @@
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "dc52a04",
+      "branch": "simplify"
+    }
   }
 }
