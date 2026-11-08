@@ -883,6 +883,7 @@ impl State {
     }
 
     fn open_palette(&mut self) {
+        self.panel = None;
         let shown = &self.workspaces[self.current()];
         let (id, name, tab) = (shown.id, shown.name.clone(), shown.active_tab);
         self.menu = Some(Menu::new(
