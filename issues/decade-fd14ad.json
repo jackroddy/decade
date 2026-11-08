@@ -1,0 +1,28 @@
+{
+  "id": "decade-fd14ad",
+  "title": "The open sidebar shows a card per workspace",
+  "body": "The open sidebar lists each workspace as a state glyph and a name, with the agent's message under one whose state is done or needs you. Nothing records when an agent entered its state, and nothing reads the workspace's git branch.\n\n## Proposal\n\n- `channel::Client.since: Instant`, set at hello and when a status changes the state. A repeated state keeps it.\n- `branch(cwd)` in `workspace.rs` walks up to the first `.git`, follows a `gitdir:` file, and reads `HEAD`: the branch name, or 7 characters of a detached hash. `Workspace` rereads it at most every 2 s when a frame is built.\n- `OPEN_WIDTH` goes to 32. Each card is the name with \"N tabs\" at the right, the short path and branch, the state with its age (\"now\", \"4m\", \"2h\", \"3d\"), and the message when there is one. A blank row separates cards. A line-width stripe in the state colour runs down the card's left edge. The current card is filled with `SELECTION`.\n- A click on a card shows its workspace. A click on the state glyph clears the state.\n- A timer redraws once a minute while a card shows an age.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-30d5e3",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T21:58:48.93917675Z",
+  "updated_at": "2026-11-08T21:58:48.93917675Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b142ad7",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
