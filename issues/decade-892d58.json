@@ -1,7 +1,7 @@
 {
   "id": "decade-892d58",
   "title": "The palette is read from the Omarchy theme at start",
-  "body": "`src/palette.rs` is a hardcoded copy of the colours in\n`~/.local/state/omarchy/current/theme/colors.toml` as of 2026-11-06. A theme\nswitch in Omarchy does not reach decade.\n\n## Proposal\n\nRead that file at start when it exists, falling back to the copied values,\nand map its keys to the palette's names one to one. Reloading on a theme\nchange is a later step; the hooks Omarchy offers for theme-set could restart\nor signal decade.",
+  "body": "`src/server/chrome/palette.rs` is a hardcoded copy of the colours in\n`~/.local/state/omarchy/current/theme/colors.toml` as of 2026-11-06. A theme\nswitch in Omarchy does not reach decade.\n\n## Proposal\n\nRead that file at start when it exists, falling back to the copied values,\nand map its keys to the palette's names one to one. Reloading on a theme\nchange is a later step; the hooks Omarchy offers for theme-set could restart\nor signal decade.",
   "type": "feature",
   "status": "open",
   "priority": 4,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:27:44.876807341Z",
-  "updated_at": "2026-11-07T05:27:44.876807341Z",
+  "updated_at": "2026-11-08T21:17:01.646228018Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
