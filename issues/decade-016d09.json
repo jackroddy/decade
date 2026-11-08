@@ -3,7 +3,7 @@
   "title": "Pane gaps, unfocused outlines and pinned panes look unfinished",
   "body": "The UI audit of 2026-11-07 (`tmp-claude/2026-11-07-ui-audit/`, local to Jack's machine) found these in the normal workspace view:\n\n- Gaps between panes and the margin at the window's edge are not uniform. The horizontal and vertical gaps differ.\n- An unfocused pane's outline is a faint grey and hard to see. Only the focused pane has colour.\n- Nothing shows that a pane is pinned except the Ctrl bar.\n\nThe status line findings belong to the frame issue, which replaces it.\n\n## Proposal\n\nMake every gap and the outer margin the same width. Raise the unfocused outline's contrast, and consider dimming unfocused content slightly. Draw a small pinned mark on a pinned pane's outline.\n\n## Open\n\n- The overlays (palette, picker, Ctrl bar, settings) were not audited, because no input reached them. They wait for the screenshot tool in this milestone.",
   "type": "task",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-492261",
@@ -15,10 +15,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T23:31:39.742798946Z",
-  "updated_at": "2026-11-07T23:45:37.060480466Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T00:21:04.297633951Z",
+  "closed_at": "2026-11-08T00:21:04.297633951Z",
+  "close_reason": "Landed in 38c02c6, with the audit findings noted on this issue except the Ctrl bar covering the pane's first row, which is intended (the bar leaves the client's size alone). Picker thumbnails spilling past their cell is fixed separately.",
+  "resolution": "done",
   "notes": [
     {
       "id": "59a122fb",
@@ -34,6 +34,9 @@
       "commit": "bc045c7",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "38c02c6",
+      "branch": "sessions"
+    }
   }
 }
