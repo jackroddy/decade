@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T19:58:16.909181505Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.078629927Z",
-  "updated_at": "2026-11-08T19:43:16.909181505Z",
+  "updated_at": "2026-11-08T19:45:27.060577182Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "04ec2dc3",
+      "at": "2026-11-08T19:45:27.060576512Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "The handshake fields `configured`, `formats`, `sent` and `welcomed` stay loose on `Viewer`. `hello`, `sync_size` and `input` each read two or three of them alongside `size` and `scale`, and a struct around the four would only rename the reads. rustfmt does not format the `use wayland_client::protocol` block at the top of `viewer.rs`, since one line there is too long for it.",
+      "commit": "275e382",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
