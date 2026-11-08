@@ -1,0 +1,30 @@
+{
+  "id": "decade-ef989b",
+  "title": "51b88db has no changelog entry",
+  "body": "The last five commits all touch `CHANGELOG.md` except 51b88db, \"Crop picker thumbnails to their cell and fit them to the pane area\". It changes how the picker draws, which is an unreleased feature from 38c02c6, so the Unreleased entry for the picker may already cover it.\n\n## Proposal\n\nRead the picker's Unreleased entry and either leave it or add one line under `### Changed`.",
+  "type": "chore",
+  "status": "open",
+  "priority": 4,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T18:44:01.308947017Z",
+  "updated_at": "2026-11-08T18:44:01.308947017Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
