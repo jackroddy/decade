@@ -1,0 +1,30 @@
+{
+  "id": "decade-397765",
+  "title": "The palette box border follows the chrome font while its rule follows the palette font",
+  "body": "`Scene::line_width` in `draw.rs` is `(cell_width / 8).max(1)` from the font the scene was built with. `Paint::scene` in `compositor.rs` sets the rounded box shader's `border_width` from `self.font.cell_width / 8.0`, the chrome font, for every `Shape::Rounded`. The palette's scene is built from `menu_font`, so its rule line and its box border come out at different widths once the two font sizes differ.\n\n## Proposal\n\n`Scene::rounded` stores the width in `Shape::Rounded` and `Paint::scene` reads it from there. `Paint` then no longer needs `font` for this.",
+  "type": "bug",
+  "status": "open",
+  "priority": 4,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:38:28.055972789Z",
+  "updated_at": "2026-11-08T07:38:28.055972789Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
