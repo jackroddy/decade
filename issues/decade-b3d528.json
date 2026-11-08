@@ -1,0 +1,30 @@
+{
+  "id": "decade-b3d528",
+  "title": "devscreen rebuilds and launches with a relative path that only works at the repo root",
+  "body": "`scripts/devscreen run` runs `cargo build` and then executes `target/debug/decade` relative to the current directory, with a hard-coded `-j4`. `scripts/launch` resolves the repository, builds and reports the error, and `decade-dev` links to it.\n\n## Proposal\n\n`devscreen run` executes the `decade-dev` link with `--class decade-dev`, so one script owns build-and-exec.",
+  "type": "chore",
+  "status": "open",
+  "priority": 4,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:41:30.902866539Z",
+  "updated_at": "2026-11-08T07:41:30.902866539Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
