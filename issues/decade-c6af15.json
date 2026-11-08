@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T21:22:39.758523809Z",
   "defer_until": null,
   "created_at": "2026-11-08T18:44:01.253135833Z",
-  "updated_at": "2026-11-08T21:07:39.758523809Z",
+  "updated_at": "2026-11-08T21:09:07.46573436Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "fc942c7a",
+      "at": "2026-11-08T21:09:07.46573372Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "Re-ran `cargo clippy -- -W clippy::pedantic -W clippy::nursery` at 3e2fe5c plus this phase's commits. Fixed in 3347d46: the redundant clones in `channel.rs` and `workspace.rs`, `filter_map(..).next()` in `gpu.rs`, and six methods that took `&mut self` without changing anything.\n\nLeft as they are:\n\n- `needless_pass_by_value`: `Launch`, `Drag`, `wire::Scroll`, `wl_pointer::Event` and the like are messages moved into their handler. `OwnedFd` in `Offer::receive` is closed when the call returns, which is intended. `read_lines` in `decade-channel` owns its stream on its own thread.\n- `derive_partial_eq_without_eq` on `decade-channel`'s public types: adding `Eq` changes the library's API, so it would need a changelog entry. It removes no duplication.\n- `assigning_clones` (`clone_from`), `map_or`, `single_match_else`, redundant closures over a method, `match_same_arms` on the `{}` arms in `viewer.rs`, the test `for_each` calls: style only.\n- `unused_async` on `list_tools`: it implements a trait method, which must be `async`.",
+      "commit": "3347d46",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
