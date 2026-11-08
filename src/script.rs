@@ -118,9 +118,7 @@ impl Session {
                 self.press(&modifiers, key, ms)?;
             }
             "press" | "release" => {
-                let key = named_key(rest)
-                    .or_else(|| chord(rest).ok().map(|(_, key)| key))
-                    .ok_or(format!("no key named {rest}"))?;
+                let (_, key) = chord(rest)?;
                 self.key(key, command == "press")?;
                 self.pump(STEP)?;
             }
@@ -291,8 +289,9 @@ impl Session {
                 self.send(ViewerMessage::Release { id, fence: None })?;
                 self.send(ViewerMessage::Ready)?;
             }
-            ServerMessage::Error { message, .. } => return Err(message),
-            ServerMessage::Close { message, .. } => return Err(message),
+            ServerMessage::Error { message, .. } | ServerMessage::Close { message, .. } => {
+                return Err(message);
+            }
             _ => {}
         }
         Ok(())
@@ -327,12 +326,9 @@ fn chord(text: &str) -> Result<(Vec<u32>, u32), String> {
     let mut parts: Vec<&str> = text.split('+').collect();
     let key = parts.pop().ok_or("an empty chord")?;
     for part in parts {
-        modifiers.push(match part.to_lowercase().as_str() {
-            "super" => KEY_LEFTMETA,
-            "shift" => KEY_LEFTSHIFT,
-            "ctrl" => KEY_LEFTCTRL,
-            "alt" => KEY_LEFTALT,
-            other => return Err(format!("{other} is not a modifier")),
+        modifiers.push(match named_key(part) {
+            Some(key @ (KEY_LEFTMETA | KEY_LEFTSHIFT | KEY_LEFTCTRL | KEY_LEFTALT)) => key,
+            _ => return Err(format!("{part} is not a modifier")),
         });
     }
     let key = named_key(key)
