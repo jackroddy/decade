@@ -3,7 +3,7 @@
   "title": "Runtime and XDG directories are computed in six places",
   "body": "| rule | sites |\n|---|---|\n| `$XDG_RUNTIME_DIR` with a `temp_dir` fallback | `control::viewer_socket_path`, `compositor::run` for `ChildEnv.runtime`, and a third reading in `hypr.rs` |\n| `$XDG_*_HOME` with a `$HOME` fallback | `save::path` (state), `settings::path` (config), `apps::application_dirs` (data); `workspace::home` reads `HOME` a fourth time |\n| create `<runtime>/decade` | `run` before `lock_server`, and `control::connect_or_start` again for the log |\n\n`lock_path` and the log path are built as `with_file_name` siblings of the socket. `settings::load` and `save::load` have the same `read_to_string` match on `ErrorKind::NotFound` and then a version-gated `toml::from_str`; settings gates on a `toml::Table` with an `i64` version, save on a `Version` struct with a `u32`. `save` writes through a `.partial` file and a rename; `settings` writes in place.\n\n## Proposal\n\n`control::runtime_dir()` and `control::dir()`, the latter creating `<runtime>/decade` once, with the socket, lock and log paths as joins on it. One XDG helper taking the variable and the fallback suffix. One file helper for read-or-none, the version gate and the atomic write, so settings gains the atomic write.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "simplification"
@@ -12,13 +12,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T19:51:56.371968183Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T07:40:26.099425337Z",
-  "updated_at": "2026-11-08T19:38:46.677244913Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T19:38:46.68850833Z",
+  "closed_at": "2026-11-08T19:38:46.68850833Z",
+  "close_reason": "Landed in de48915. The note above records where it departs from the proposal.",
+  "resolution": "done",
   "notes": [
     {
       "id": "9b917ce8",
@@ -34,6 +34,9 @@
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "de48915",
+      "branch": "simplify"
+    }
   }
 }
