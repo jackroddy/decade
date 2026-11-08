@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::compositor::with_states;
@@ -10,6 +11,7 @@ use crate::server::chrome::draw::{Face, Scene};
 use crate::server::chrome::palette;
 use crate::server::chrome::palette::Rgba;
 use crate::server::chrome::text::fit;
+use crate::server::proc;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;
@@ -25,6 +27,7 @@ const CLOSE_HOVER: Rgba = palette::RED;
 const UNPINNED: Rgba = palette::MUTED;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 
+const RUNNING_EVERY: Duration = Duration::from_secs(2);
 const MIN_PANE: u32 = 4;
 const EDGE_BAND: u32 = 2;
 const BUTTON_WIDTH: u32 = 4;
@@ -160,6 +163,10 @@ pub struct Pane {
 
     /// The ghostty decade started for the pane.
     pub pid: Option<u32>,
+
+    /// What the shown terminal runs, as last read, with the pid of its
+    /// ghostty and when it was read.
+    running: Option<(u32, Instant, Option<String>)>,
 }
 
 impl Pane {
@@ -171,6 +178,50 @@ impl Pane {
     /// The cells the pane's client fills.
     pub fn client_rect(&self) -> CellRect {
         client_area(self.rect, self.clients.len())
+    }
+
+    /// The pid of the shown client, when it is a ghostty decade started.
+    fn shown_terminal(&self) -> Option<u32> {
+        let client = self.clients.get(self.shown)?;
+        let pid = client.pid?;
+        (client.terminal_tab || self.pid == Some(pid)).then_some(pid)
+    }
+
+    /// Read what the shown terminal runs again if it was last read
+    /// `RUNNING_EVERY` or more before `now`, or under another ghostty.
+    pub fn refresh_running(&mut self, now: Instant, home: &Path) {
+        let Some(ghostty) = self.shown_terminal() else {
+            return;
+        };
+        if let Some((pid, read, _)) = self.running
+            && pid == ghostty
+            && now.duration_since(read) < RUNNING_EVERY
+        {
+            return;
+        }
+        self.running = Some((ghostty, now, running(ghostty, home)));
+    }
+
+    /// What runs in the pane: the shown terminal's program as last read,
+    /// or the last part of the shown client's app id, or the pane's name.
+    pub fn running_label(&self) -> String {
+        let read = match (self.shown_terminal(), &self.running) {
+            (Some(ghostty), Some((pid, _, label))) if ghostty == *pid => label.clone(),
+            (Some(_), _) => None,
+            (None, _) => {
+                let app_id = self
+                    .clients
+                    .get(self.shown)
+                    .and_then(|c| c.app_id.as_deref());
+                app_id.map(|app_id| app_id.rsplit('.').next().unwrap_or(app_id).to_string())
+            }
+        };
+        read.unwrap_or_else(|| self.name.clone())
+    }
+
+    /// The shown client's title, or the last part of its app id.
+    pub fn title(&self) -> Option<String> {
+        self.clients.get(self.shown)?.label()
     }
 
     /// The window of the tab drawn.
@@ -225,8 +276,30 @@ impl Pane {
             app_id: None,
             cwd: None,
             pid: None,
+            running: None,
         }
     }
+}
+
+/// What a terminal decade started runs: its shell's foreground program,
+/// or at the prompt the last directory of the shell's cwd.
+fn running(ghostty: u32, home: &Path) -> Option<String> {
+    let shell = proc::first_child(ghostty)?;
+    match proc::foreground_group(shell) {
+        Some(group) => proc::comm(group),
+        None => Some(last_directory(&proc::cwd(shell)?, home)),
+    }
+}
+
+/// The last directory of `cwd`, or `~` for `home`.
+fn last_directory(cwd: &Path, home: &Path) -> String {
+    if cwd == home {
+        return "~".to_string();
+    }
+    cwd.file_name().map_or_else(
+        || "/".to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 pub enum Node {
@@ -1309,6 +1382,20 @@ pub(super) mod tests {
         }
         layout.focused = 1;
         layout
+    }
+
+    #[test]
+    fn a_terminal_at_its_prompt_is_named_by_the_last_directory_of_its_shell() {
+        let home = Path::new("/home/jack");
+        let found =
+            proc::tests::under_shell("cd /usr && setsid sleep 5; true", |sh| running(sh, home));
+        assert_eq!(found.as_deref(), Some("usr"));
+        assert_eq!(last_directory(home, home), "~");
+        assert_eq!(last_directory(Path::new("/"), home), "/");
+        assert_eq!(
+            last_directory(&home.join("projects/decade"), home),
+            "decade"
+        );
     }
 
     #[test]

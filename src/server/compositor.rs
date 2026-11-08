@@ -898,6 +898,11 @@ impl State {
             Hit::Sidebar => self.toggle_sidebar(),
             Hit::Tab(tab) => self.show_tab(tab),
             Hit::NewTab => self.new_tab(),
+            Hit::Next(state) => {
+                if let Some(id) = self.frame(self.current()).next_in(state) {
+                    self.show_on_active(id);
+                }
+            }
         }
         self.request_redraw();
     }

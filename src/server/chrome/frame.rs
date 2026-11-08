@@ -10,11 +10,18 @@ use crate::server::panes::CellRect;
 use decade_channel::AgentState;
 
 /// The rows above the panes that the top bar takes.
-const TOP: u32 = 1;
+const TOP: u32 = 2;
 const OPEN_WIDTH: u32 = 32;
 const CLOSED_WIDTH: u32 = 3;
 const DIAMOND: char = '◆';
 const MENU: char = '≡';
+const DOT: char = '●';
+
+/// The columns at the right of the top bar that open the palette.
+const MENU_WIDTH: u32 = 5;
+
+/// The most columns of what runs in a tab, on its pill.
+const TAB_LABEL: usize = 16;
 
 const BAR: Rgba = palette::LIGHTER_BACKGROUND;
 const SIDEBAR: Rgba = palette::DARK_BACKGROUND;
@@ -31,6 +38,7 @@ const CARD_GAP: i32 = 6;
 const CARD_PADDING: i32 = 4;
 const CARD_RADIUS: i32 = 6;
 const STRIPE: i32 = 3;
+const PILL_RADIUS: i32 = 4;
 
 fn sidebar_width(open: bool) -> u32 {
     if open { OPEN_WIDTH } else { CLOSED_WIDTH }
@@ -45,6 +53,15 @@ pub fn pane_area(columns: u32, rows: u32, open: bool) -> CellRect {
         columns: columns - left,
         rows: rows.saturating_sub(TOP),
     }
+}
+
+/// A tab of the current workspace, as its pill shows it.
+pub struct Tab {
+    /// What runs in the tab's focused pane.
+    pub label: String,
+
+    /// The most urgent state an agent in the tab has reported.
+    pub state: Option<AgentState>,
 }
 
 pub struct Entry {
@@ -72,6 +89,30 @@ pub enum Hit {
     Sidebar,
     Tab(usize),
     NewTab,
+
+    /// Show the next workspace whose agent is in this state.
+    Next(AgentState),
+}
+
+/// A rounded button on the top bar.
+struct Pill {
+    column: u32,
+    text: String,
+
+    /// The colour of a state dot after the text.
+    dot: Option<Rgba>,
+    hit: Hit,
+}
+
+impl Pill {
+    fn width(&self) -> u32 {
+        let dot = if self.dot.is_some() { 2 } else { 0 };
+        self.text.chars().count() as u32 + dot
+    }
+
+    fn contains(&self, column: u32) -> bool {
+        (self.column..self.column + self.width()).contains(&column)
+    }
 }
 
 pub struct Frame {
@@ -81,9 +122,11 @@ pub struct Frame {
 
     /// The workspaces, most urgent agent state first, otherwise in the picker's order.
     pub entries: Vec<Entry>,
-    pub tabs: usize,
+    pub tabs: Vec<Tab>,
     pub active_tab: usize,
-    pub pane: String,
+
+    /// The focused window's title.
+    pub title: String,
     pub zoom: bool,
 
     /// The width and height of a chrome cell in pixels.
@@ -119,6 +162,16 @@ fn tint(state: Option<AgentState>) -> Rgba {
         Some(AgentState::Working) => palette::LIGHT_YELLOW,
         Some(AgentState::Idle) => DIM,
         None => MUTED,
+    }
+}
+
+/// The background of a state's pill on the top bar.
+fn pill_background(state: AgentState) -> Rgba {
+    match state {
+        AgentState::Attention => palette::DARK_RED,
+        AgentState::Done => palette::DARK_GREEN,
+        AgentState::Working => palette::DARK_YELLOW,
+        AgentState::Idle => CURRENT,
     }
 }
 
@@ -187,8 +240,8 @@ impl Frame {
         (columns, rows): (u32, u32),
         open: bool,
         mut entries: Vec<Entry>,
-        (tabs, active_tab): (usize, usize),
-        pane: String,
+        (tabs, active_tab): (Vec<Tab>, usize),
+        title: String,
         zoom: bool,
         cell: (i32, i32),
     ) -> Frame {
@@ -200,7 +253,7 @@ impl Frame {
             entries,
             tabs,
             active_tab,
-            pane,
+            title,
             zoom,
             cell,
         }
@@ -211,6 +264,16 @@ impl Frame {
         self.entries
             .iter()
             .find(|entry| !entry.current && entry.state >= Some(AgentState::Done))
+            .map(|entry| entry.id)
+    }
+
+    /// The workspace in `state` after the current one, wrapping round.
+    pub fn next_in(&self, state: AgentState) -> Option<u32> {
+        let count = self.entries.len();
+        let current = self.entries.iter().position(|entry| entry.current)?;
+        (1..count)
+            .map(|step| &self.entries[(current + step) % count])
+            .find(|entry| entry.state == Some(state))
             .map(|entry| entry.id)
     }
 
@@ -229,29 +292,40 @@ impl Frame {
         (self.columns as usize / 2).max(8)
     }
 
-    /// The top bar's tab buttons and the `+` after them, each with its
-    /// first column and label, up to the ones that would reach the counts.
-    fn tab_buttons(&self) -> Vec<(u32, String, Hit)> {
-        let mut column = CLOSED_WIDTH + self.name().chars().count() as u32 + 1;
-        let end = self.counts_start();
-        let mut buttons = Vec::new();
-        let tabs = (0..self.tabs).map(|tab| (format!(" {} ", tab + 1), Hit::Tab(tab)));
-        for (label, hit) in tabs.chain([(" + ".to_string(), Hit::NewTab)]) {
-            let width = label.chars().count() as u32;
-            if column + width >= end {
+    /// The top bar's tab pills and the `+` after them, up to the ones
+    /// that would reach the state pills.
+    fn tab_pills(&self) -> Vec<Pill> {
+        let mut column = CLOSED_WIDTH + self.name().chars().count() as u32 + 2;
+        let end = self.states_start();
+        let tabs = self.tabs.iter().enumerate().map(|(i, tab)| Pill {
+            column: 0,
+            text: format!(" {} {} ", i + 1, fit(&tab.label, TAB_LABEL)),
+            dot: tab.state.map(|state| mark(Some(state)).1),
+            hit: Hit::Tab(i),
+        });
+        let new = Pill {
+            column: 0,
+            text: " + ".to_string(),
+            dot: None,
+            hit: Hit::NewTab,
+        };
+        let mut pills = Vec::new();
+        for mut pill in tabs.chain([new]) {
+            if column + pill.width() >= end {
                 break;
             }
-            buttons.push((column, label, hit));
-            column += width;
+            pill.column = column;
+            column += pill.width() + 1;
+            pills.push(pill);
         }
-        buttons
+        pills
     }
 
-    /// The agent counts at the right of the top bar, each with its first
-    /// column, text and colour.
-    fn counts(&self) -> Vec<(u32, String, Rgba)> {
-        let mut right = self.columns.saturating_sub(5);
-        let mut counts = Vec::new();
+    /// The pills at the right of the top bar that count the workspaces
+    /// in each state, right to left.
+    fn state_pills(&self) -> Vec<Pill> {
+        let mut right = self.columns.saturating_sub(MENU_WIDTH);
+        let mut pills = Vec::new();
         for state in [AgentState::Working, AgentState::Done, AgentState::Attention] {
             let count = self
                 .entries
@@ -261,21 +335,26 @@ impl Frame {
             if count == 0 {
                 continue;
             }
-            let (glyph, color) = mark(Some(state));
-            let text = format!("{glyph} {count}");
+            let (glyph, _) = mark(Some(state));
+            let text = format!(" {glyph} {count} {} ", label(state));
             right = right.saturating_sub(text.chars().count() as u32);
-            counts.push((right, text, color));
-            right = right.saturating_sub(2);
+            pills.push(Pill {
+                column: right,
+                text,
+                dot: None,
+                hit: Hit::Next(state),
+            });
+            right = right.saturating_sub(1);
         }
-        counts
+        pills
     }
 
-    /// The first column of the counts, or of the menu button when there
-    /// are none.
-    fn counts_start(&self) -> u32 {
-        self.counts()
+    /// The first column of the state pills, or of the menu button when
+    /// there are none.
+    fn states_start(&self) -> u32 {
+        self.state_pills()
             .last()
-            .map_or(self.columns.saturating_sub(2), |&(column, _, _)| column)
+            .map_or(self.columns.saturating_sub(MENU_WIDTH), |pill| pill.column)
     }
 
     /// The workspaces with a glyph in the closed sidebar, each with its row.
@@ -331,15 +410,13 @@ impl Frame {
         if row < TOP {
             return if column < CLOSED_WIDTH {
                 Some(Hit::Sidebar)
-            } else if column + 3 >= self.columns {
+            } else if column + MENU_WIDTH >= self.columns {
                 Some(Hit::Palette)
             } else {
-                self.tab_buttons()
-                    .into_iter()
-                    .find(|(start, label, _)| {
-                        (*start..start + label.chars().count() as u32).contains(&column)
-                    })
-                    .map(|(_, _, hit)| hit)
+                let mut pills = self.tab_pills().into_iter().chain(self.state_pills());
+                pills
+                    .find(|pill| pill.contains(column))
+                    .map(|pill| pill.hit)
             };
         }
         if column >= sidebar_width(self.open) {
@@ -377,46 +454,73 @@ impl Frame {
     }
 
     fn draw_top(&self, scene: &mut Scene) {
-        let bar = CellRect {
-            column: 0,
-            row: 0,
-            columns: self.columns,
-            rows: TOP,
-        };
-        scene.fill(bar, BAR);
-        scene.text(1, 0, &DIAMOND.to_string(), palette::ACCENT);
-        scene.text(CLOSED_WIDTH, 0, &self.name(), TEXT);
-        let mut column = CLOSED_WIDTH;
-        for (start, label, hit) in self.tab_buttons() {
-            let width = label.chars().count() as u32;
-            let color = if hit == Hit::Tab(self.active_tab) {
-                let button = CellRect {
-                    column: start,
-                    row: 0,
-                    columns: width,
-                    rows: TOP,
-                };
-                scene.fill(button, CURRENT);
+        let (cell_width, cell_height) = self.cell;
+        let (width, height) = (self.columns as i32 * cell_width, TOP as i32 * cell_height);
+        let line = scene.line_width();
+        scene.rect(0, 0, width, height, BAR);
+        scene.rect(0, height - line, width, line, EDGE);
+
+        let y = cell_height / 2;
+        let x = |column: u32| column as i32 * cell_width;
+        let diamond = DIAMOND.to_string();
+        scene.text_px(x(1), y, &diamond, Face::ChromeBold, palette::ACCENT);
+        scene.text_px(x(CLOSED_WIDTH), y, &self.name(), Face::ChromeBold, TEXT);
+
+        let tabs = self.tab_pills();
+        for pill in &tabs {
+            let color = if pill.hit == Hit::Tab(self.active_tab) {
+                self.draw_pill(scene, pill.column, pill.width(), CURRENT);
                 TEXT
             } else {
                 DIM
             };
-            scene.text(start, 0, &label, color);
-            column = start + width + 1;
-        }
-        let end = self.counts_start().saturating_sub(1);
-        let room = (end.saturating_sub(column) as usize).min(self.room() / 2);
-        let pane = fit(&self.pane, room);
-        scene.text(column, 0, &pane, DIM);
-        column += pane.chars().count() as u32 + 2;
-        if self.zoom && column + 4 <= end {
-            scene.text(column, 0, "zoom", palette::ACCENT);
+            scene.text_px(x(pill.column), y, &pill.text, Face::Chrome, color);
+            if let Some(dot) = pill.dot {
+                let column = pill.column + pill.text.chars().count() as u32;
+                scene.text_px(x(column), y, &DOT.to_string(), Face::Chrome, dot);
+            }
         }
 
-        scene.text(self.columns.saturating_sub(2), 0, &MENU.to_string(), DIM);
-        for (column, text, color) in self.counts() {
-            scene.text(column, 0, &text, color);
+        let states_start = self.states_start();
+        let all_tabs = tabs.last().is_some_and(|pill| pill.hit == Hit::NewTab);
+        if let Some(last) = tabs.last().filter(|_| all_tabs) {
+            let separator = last.column + last.width() + 3;
+            let column = separator + 3;
+            let zoom = if self.zoom { "  zoom" } else { "" };
+            let room = states_start.saturating_sub(column + 2) as usize;
+            if room > zoom.len() {
+                scene.text_px(x(separator), y, "│", Face::Chrome, MUTED);
+                let title = fit(&self.title, room - zoom.len());
+                scene.text_px(x(column), y, &title, Face::Chrome, DIM);
+                let zoom_column = column + title.chars().count() as u32;
+                scene.text_px(x(zoom_column), y, zoom, Face::Chrome, palette::ACCENT);
+            }
         }
+
+        for pill in self.state_pills() {
+            let Hit::Next(state) = pill.hit else {
+                continue;
+            };
+            self.draw_pill(scene, pill.column, pill.width(), pill_background(state));
+            scene.text_px(
+                x(pill.column),
+                y,
+                &pill.text,
+                Face::Chrome,
+                tint(Some(state)),
+            );
+        }
+        let menu = self.columns.saturating_sub(3);
+        scene.text_px(x(menu), y, &MENU.to_string(), Face::Chrome, DIM);
+    }
+
+    /// The rounded background of a pill `width` columns wide from `column`.
+    fn draw_pill(&self, scene: &mut Scene, column: u32, width: u32, color: Rgba) {
+        let (cell_width, cell_height) = self.cell;
+        let x = column as i32 * cell_width;
+        let size = (width as i32 * cell_width, cell_height);
+        let radius = self.scaled(PILL_RADIUS);
+        scene.rounded(x, cell_height / 2, size, radius, color, color);
     }
 
     fn draw_sidebar(&self, scene: &mut Scene) {
@@ -538,6 +642,13 @@ mod tests {
         }
     }
 
+    fn tab(label: &str, state: Option<AgentState>) -> Tab {
+        Tab {
+            label: label.to_string(),
+            state,
+        }
+    }
+
     fn frame(open: bool) -> Frame {
         let mut entries = vec![
             entry(0, "jack", None),
@@ -551,8 +662,11 @@ mod tests {
             (120, 40),
             open,
             entries,
-            (2, 1),
-            "terminal".to_string(),
+            (
+                vec![tab("coax", Some(AgentState::Working)), tab("cargo", None)],
+                1,
+            ),
+            "~/projects/decade: cargo test".to_string(),
             false,
             (8, 18),
         )
@@ -586,8 +700,8 @@ mod tests {
             .iter()
             .map(|&(_, top, height)| (top, height))
             .collect();
-        assert_eq!(tops, [(72, 80), (158, 62), (226, 62), (294, 62), (362, 62)]);
-        assert_eq!(new, Some(436));
+        assert_eq!(tops, [(90, 80), (176, 62), (244, 62), (312, 62), (380, 62)]);
+        assert_eq!(new, Some(454));
     }
 
     #[test]
@@ -595,15 +709,15 @@ mod tests {
         let mut frame = frame(true);
         frame.cell = (12, 27);
         let (cards, _) = frame.cards();
-        assert_eq!(cards[0], (0, 4 * 27, 2 * 6 + 4 * 27));
-        assert_eq!(cards[1].1, 4 * 27 + 2 * 6 + 4 * 27 + 9);
+        assert_eq!(cards[0], (0, 5 * 27, 2 * 6 + 4 * 27));
+        assert_eq!(cards[1].1, 5 * 27 + 2 * 6 + 4 * 27 + 9);
         assert_eq!(frame.card_span(), (9, 32 * 12 - 18));
     }
 
     #[test]
     fn cards_that_reach_past_the_bottom_are_left_out() {
         let mut frame = frame(true);
-        frame.rows = 13;
+        frame.rows = 14;
         let (cards, new) = frame.cards();
         assert_eq!(cards.len(), 2);
         assert_eq!(new, None);
@@ -612,14 +726,14 @@ mod tests {
     #[test]
     fn a_click_anywhere_on_a_card_shows_its_workspace_and_a_gap_does_nothing() {
         let frame = frame(true);
-        assert_eq!(frame.hit(100, 72), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(250, 151), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(100, 152), None);
-        assert_eq!(frame.hit(100, 158), Some(Hit::Show(3)));
-        assert_eq!(frame.hit(100, 400), Some(Hit::Show(0)));
-        assert_eq!(frame.hit(100, 436), Some(Hit::New));
-        assert_eq!(frame.hit(100, 60), None);
-        assert_eq!(frame.hit(32 * 8, 72), None);
+        assert_eq!(frame.hit(100, 90), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(250, 169), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(100, 170), None);
+        assert_eq!(frame.hit(100, 176), Some(Hit::Show(3)));
+        assert_eq!(frame.hit(100, 418), Some(Hit::Show(0)));
+        assert_eq!(frame.hit(100, 454), Some(Hit::New));
+        assert_eq!(frame.hit(100, 78), None);
+        assert_eq!(frame.hit(32 * 8, 90), None);
     }
 
     #[test]
@@ -629,15 +743,15 @@ mod tests {
         // the state line is the third, and its glyph sits one cell in
         // from the 3 px stripe of a card inset 6 px
         let glyph = 6 + 3 + 8;
-        let state = 72 + 4 + 2 * 18;
+        let state = 90 + 4 + 2 * 18;
         assert_eq!(frame.hit(glyph, state), Some(Hit::Clear(2)));
         assert_eq!(frame.hit(glyph, state - 18), Some(Hit::Show(2)));
         assert_eq!(frame.hit(glyph + 3 * 8, state), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(glyph, 158 + 4 + 36), Some(Hit::Clear(3)));
+        assert_eq!(frame.hit(glyph, 176 + 4 + 36), Some(Hit::Clear(3)));
 
         // nail is working and jack has no agent
-        assert_eq!(frame.hit(glyph, 294 + 4 + 36), Some(Hit::Show(1)));
-        assert_eq!(frame.hit(glyph, 362 + 4 + 36), Some(Hit::Show(0)));
+        assert_eq!(frame.hit(glyph, 312 + 4 + 36), Some(Hit::Show(1)));
+        assert_eq!(frame.hit(glyph, 380 + 4 + 36), Some(Hit::Show(0)));
     }
 
     #[test]
@@ -669,24 +783,92 @@ mod tests {
     }
 
     #[test]
-    fn the_top_bar_toggles_the_sidebar_on_the_left_and_opens_the_palette_on_the_right() {
+    fn the_two_row_top_bar_toggles_the_sidebar_on_the_left_and_opens_the_palette_on_the_right() {
         let frame = frame(true);
-        assert_eq!(hit_cell(&frame, 1, 0), Some(Hit::Sidebar));
-        assert_eq!(hit_cell(&frame, 118, 0), Some(Hit::Palette));
-        assert_eq!(hit_cell(&frame, 60, 0), None);
+        assert_eq!(pane_area(120, 40, true).row, 2);
+        assert_eq!(frame.hit(8, 0), Some(Hit::Sidebar));
+        assert_eq!(frame.hit(8, 35), Some(Hit::Sidebar));
+        assert_eq!(frame.hit(8, 36), None);
+        assert_eq!(hit_cell(&frame, 115, 1), Some(Hit::Palette));
+        assert_eq!(hit_cell(&frame, 60, 1), None);
     }
 
     #[test]
-    fn the_top_bar_has_a_button_per_tab_after_the_name_and_a_plus_after_them() {
+    fn the_top_bar_has_a_pill_per_tab_after_the_name_and_a_plus_after_them() {
         let frame = frame(true);
 
-        // "jack" takes columns 3 to 6, so " 1 " starts at 8
-        assert_eq!(hit_cell(&frame, 7, 0), None);
-        assert_eq!(hit_cell(&frame, 8, 0), Some(Hit::Tab(0)));
-        assert_eq!(hit_cell(&frame, 10, 0), Some(Hit::Tab(0)));
-        assert_eq!(hit_cell(&frame, 11, 0), Some(Hit::Tab(1)));
-        assert_eq!(hit_cell(&frame, 14, 0), Some(Hit::NewTab));
-        assert_eq!(hit_cell(&frame, 17, 0), None);
+        // "jack" takes columns 3 to 6 and two spaces follow it; " 1 coax "
+        // and its dot take 10 columns, with one between pills
+        assert_eq!(hit_cell(&frame, 8, 1), None);
+        assert_eq!(hit_cell(&frame, 9, 1), Some(Hit::Tab(0)));
+        assert_eq!(hit_cell(&frame, 18, 1), Some(Hit::Tab(0)));
+        assert_eq!(hit_cell(&frame, 19, 1), None);
+        assert_eq!(hit_cell(&frame, 20, 1), Some(Hit::Tab(1)));
+        assert_eq!(hit_cell(&frame, 28, 1), Some(Hit::Tab(1)));
+        assert_eq!(hit_cell(&frame, 30, 1), Some(Hit::NewTab));
+        assert_eq!(hit_cell(&frame, 33, 1), None);
+    }
+
+    #[test]
+    fn a_tab_pill_names_what_runs_and_has_a_dot_when_an_agent_in_it_has_reported() {
+        let pills = frame(true).tab_pills();
+        let texts: Vec<_> = pills
+            .iter()
+            .map(|pill| (pill.text.as_str(), pill.dot))
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                (" 1 coax ", Some(palette::YELLOW)),
+                (" 2 cargo ", None),
+                (" + ", None)
+            ]
+        );
+    }
+
+    #[test]
+    fn the_state_pills_read_needs_you_done_working_left_to_right_before_the_menu() {
+        let frame = frame(true);
+        let mut pills = frame.state_pills();
+        pills.reverse();
+        let texts: Vec<_> = pills
+            .iter()
+            .map(|pill| (pill.column, pill.text.as_str()))
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                (75, " ! 1 needs you "),
+                (91, " ✓ 2 done "),
+                (102, " ● 1 working ")
+            ]
+        );
+        assert_eq!(
+            hit_cell(&frame, 75, 1),
+            Some(Hit::Next(AgentState::Attention))
+        );
+        assert_eq!(hit_cell(&frame, 90, 1), None);
+        assert_eq!(hit_cell(&frame, 100, 1), Some(Hit::Next(AgentState::Done)));
+        assert_eq!(
+            hit_cell(&frame, 114, 1),
+            Some(Hit::Next(AgentState::Working))
+        );
+    }
+
+    #[test]
+    fn a_state_without_workspaces_has_no_pill() {
+        let mut frame = frame(true);
+        frame
+            .entries
+            .retain(|entry| entry.state != Some(AgentState::Done));
+        let states: Vec<_> = frame.state_pills().iter().map(|pill| pill.hit).collect();
+        assert_eq!(
+            states,
+            [
+                Hit::Next(AgentState::Working),
+                Hit::Next(AgentState::Attention)
+            ]
+        );
     }
 
     #[test]
@@ -698,22 +880,40 @@ mod tests {
             .find(|entry| entry.current)
             .unwrap()
             .name = "x".repeat(200);
-        let buttons = frame.tab_buttons();
-        let (start, _, hit) = buttons.last().unwrap();
-        assert_eq!(*hit, Hit::NewTab);
-        assert!(*start < 60);
+        let pills = frame.tab_pills();
+        let last = pills.last().unwrap();
+        assert_eq!(last.hit, Hit::NewTab);
+        assert!(last.column < 60);
     }
 
     #[test]
-    fn tab_buttons_stop_before_they_reach_the_agent_counts() {
+    fn tab_pills_stop_before_they_reach_the_state_pills() {
         let mut frame = frame(true);
-        frame.columns = 40;
-        frame.tabs = 30;
-        let start = frame.counts_start();
-        let buttons = frame.tab_buttons();
-        assert!(buttons.len() < 31);
-        let (column, label, _) = buttons.last().unwrap();
-        assert!(column + label.chars().count() as u32 <= start);
+        frame.columns = 80;
+        frame.tabs = (0..30).map(|_| tab("cargo", None)).collect();
+        let start = frame.states_start();
+        let pills = frame.tab_pills();
+        assert!(pills.len() < 31);
+        let last = pills.last().unwrap();
+        assert!(last.column + last.width() <= start);
+        assert_eq!(frame.state_pills().len(), 3);
+    }
+
+    #[test]
+    fn a_state_pill_shows_the_next_workspace_in_its_state_and_cycles() {
+        let mut frame = frame(true);
+        assert_eq!(frame.next_in(AgentState::Done), Some(3));
+        let current = |frame: &mut Frame, id: u32| {
+            for entry in &mut frame.entries {
+                entry.current = entry.id == id;
+            }
+        };
+        current(&mut frame, 3);
+        assert_eq!(frame.next_in(AgentState::Done), Some(4));
+        current(&mut frame, 4);
+        assert_eq!(frame.next_in(AgentState::Done), Some(3));
+        current(&mut frame, 2);
+        assert_eq!(frame.next_in(AgentState::Attention), None);
     }
 
     #[test]

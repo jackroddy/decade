@@ -145,6 +145,17 @@ impl Workspace {
         self.branch_read = Some(now);
     }
 
+    /// Read again what runs in each tab's focused pane, where it was last
+    /// read long enough before `now`.
+    pub fn refresh_running(&mut self, now: Instant, home: &Path) {
+        for tab in &mut self.tabs {
+            let focused = tab.layout.focused;
+            if let Some(pane) = tab.layout.pane_mut(focused) {
+                pane.refresh_running(now, home);
+            }
+        }
+    }
+
     /// Answer one line from socket client `id`.
     pub fn channel_line(&mut self, id: usize, line: &str) -> Vec<Out> {
         self.router.handle(id, line, &pane_names(&self.tabs))

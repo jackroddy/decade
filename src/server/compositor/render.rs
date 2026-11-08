@@ -36,11 +36,14 @@ impl State {
         let current = self.current();
         let picking = matches!(self.overlay, Some(Overlay::Picker { .. }));
         let picker_grid = (workspace == current && picking).then(|| self.picker_grid());
-        if picker_grid.is_none() && self.sidebar_open {
+        if picker_grid.is_none() {
             let now = Instant::now();
-            for shown in &mut self.workspaces {
-                shown.refresh_branch(now);
+            if self.sidebar_open {
+                for shown in &mut self.workspaces {
+                    shown.refresh_branch(now);
+                }
             }
+            self.workspaces[workspace].refresh_running(now, &workspace::home());
         }
         let frame = picker_grid.is_none().then(|| self.frame(workspace));
         let State {
@@ -210,17 +213,35 @@ impl State {
             })
             .collect();
         let shown = &self.workspaces[shown];
+        let tabs = (shown.tabs.iter())
+            .map(|tab| {
+                let names: Vec<_> = (tab.layout.panes.iter())
+                    .map(|pane| pane.name.as_str())
+                    .collect();
+                let state = (shown.router.clients.values())
+                    .filter(|client| {
+                        (client.pane.as_deref()).is_some_and(|pane| names.contains(&pane))
+                    })
+                    .filter_map(|client| Some(client.status.as_ref()?.state))
+                    .max();
+                let label = tab.layout.pane(tab.layout.focused);
+                frame::Tab {
+                    label: label.map(|pane| pane.running_label()).unwrap_or_default(),
+                    state,
+                }
+            })
+            .collect();
         let layout = shown.layout();
-        let pane = layout
-            .pane(layout.focused)
-            .map(|pane| pane.name.clone())
+        let focused = layout.pane(layout.focused);
+        let title = focused
+            .map(|pane| pane.title().unwrap_or_else(|| pane.name.clone()))
             .unwrap_or_default();
         frame::Frame::new(
             self.grid(),
             self.sidebar_open,
             entries,
-            (shown.tabs.len(), shown.active_tab),
-            pane,
+            (tabs, shown.active_tab),
+            title,
             layout.zoom.is_some(),
             (
                 self.text.chrome.cell_width as i32,

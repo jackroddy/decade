@@ -23,11 +23,18 @@ command line and what the tool writes.
   the directories that complete it. Tab or Enter on a directory completes
   it, and Open creates a workspace there and shows it. The workspace takes
   the directory's name, with a count after it when that name is taken.
-- A top bar replaces the status line. It shows the workspace and focused
-  pane on the left, the number of workspaces whose agents need attention,
-  are done or are working on the right, and a button that opens the
-  palette. A sidebar on the left lists every workspace as a card, those
-  whose agents most need the person first. A card shows the workspace's
+- A top bar two rows tall replaces the status line. On the left it shows
+  the workspace's name in bold, a pill for each tab and the focused
+  window's title. A tab's pill holds the name of what runs in the tab's
+  focused pane. For a terminal decade started, that is the shell's
+  foreground program. At the prompt it is the name of the shell's working
+  directory. For another window it is the last part of the app id. A dot
+  on the pill in a state's colour means an agent in the tab has reported
+  that state. On the right, a pill for each of needs you, done and working
+  counts the workspaces in that state. A click on one shows the next
+  workspace in that state. The last button opens the palette. A sidebar
+  on the left lists every workspace as a card, those whose agents most
+  need the person first. A card shows the workspace's
   name, its number of tabs, its directory, its git branch, the agent's
   state with how long the agent has held it, and the agent's message. A
   click on a card shows its workspace, and a click on the state's mark
@@ -61,9 +68,9 @@ command line and what the tool writes.
 - A workspace holds tabs, each its own split tree of panes. Super+T opens a
   tab with one terminal in the workspace's directory and shows it. Super+[
   and Super+] show the previous and next tab. They wrap at the ends. The
-  top bar shows a numbered button for each tab after the workspace name,
-  with the shown tab highlighted, and a `+` button that opens a tab. A
-  click on a number shows that tab. Programs in hidden tabs keep running at
+  top bar shows a numbered pill for each tab after the workspace name,
+  with the shown tab filled, and a `+` pill that opens a tab. A click on
+  a tab's pill shows that tab. Programs in hidden tabs keep running at
   the size of the pane area. decade sends them no frame callbacks until
   their tab is shown. A pane name stays unique across a workspace's tabs.
   Focusing a pane over the socket or MCP shows its tab.
