@@ -3,9 +3,6 @@ use std::collections::HashMap;
 use decade_channel::{AgentState, Error, Focus, Hello, Pane, Reply, Status, VERSION, Welcome};
 use serde_json::{Map, Value, json};
 
-/// The client id under which MCP tool calls reach a router.
-pub const AGENT: usize = usize::MAX;
-
 /// The keys a pane verb may not take: decade's own verbs and the
 /// names decade's replies and forwarded messages use.
 const RESERVED: [&str; 7] = [
@@ -93,7 +90,13 @@ impl Router {
             return vec![error_line(id, "say hello first", value)];
         }
         match to {
-            Some(Value::String(to)) => self.forward(id, &to, verb, payload, value, panes),
+            Some(Value::String(to)) => {
+                let from = self.clients[&id].name.clone();
+                match self.send(&from, &to, verb, payload, panes) {
+                    Ok((target, line)) => vec![Out::Line(target, line)],
+                    Err(reason) => vec![error_line(id, &reason, value)],
+                }
+            }
             Some(_) => vec![error_line(id, "\"to\" names a pane", value)],
             None => self.command(id, &verb, payload, value, panes),
         }
@@ -163,7 +166,7 @@ impl Router {
     }
 
     /// Every pane and the name of the client occupying it.
-    fn panes(&self, panes: &[&str]) -> Vec<Pane> {
+    pub fn panes(&self, panes: &[&str]) -> Vec<Pane> {
         panes
             .iter()
             .map(|name| Pane {
@@ -173,41 +176,32 @@ impl Router {
             .collect()
     }
 
-    /// Send a pane verb on to the client occupying pane `to`.
-    fn forward(
+    /// The id of the client occupying pane `to` and the line that carries
+    /// it a pane verb from `from`, or the reason it cannot go.
+    pub fn send(
         &self,
-        id: usize,
+        from: &str,
         to: &str,
         verb: String,
         payload: Value,
-        value: Value,
         panes: &[&str],
-    ) -> Vec<Out> {
+    ) -> Result<(usize, String), String> {
         if RESERVED.contains(&verb.as_str()) {
-            return vec![error_line(id, &format!("{verb} is reserved"), value)];
+            return Err(format!("{verb} is reserved"));
         }
         if !panes.contains(&to) {
-            return vec![error_line(id, &format!("no pane named {to}"), value)];
+            return Err(format!("no pane named {to}"));
         }
-        let Some((target, client)) = self.occupant(to) else {
-            return vec![error_line(
-                id,
-                &format!("no client occupies pane {to}"),
-                value,
-            )];
-        };
+        let (target, client) = self
+            .occupant(to)
+            .ok_or_else(|| format!("no client occupies pane {to}"))?;
         if !client.accepts.is_empty() && !client.accepts.contains(&verb) {
-            return vec![error_line(
-                id,
-                &format!("pane {to} does not accept {verb}"),
-                value,
-            )];
+            return Err(format!("pane {to} does not accept {verb}"));
         }
-        let from = self.clients[&id].name.clone();
         let mut forwarded = Map::new();
         forwarded.insert(verb, payload);
-        forwarded.insert("from".to_string(), Value::String(from));
-        vec![Out::Line(target, Value::Object(forwarded).to_string())]
+        forwarded.insert("from".to_string(), Value::String(from.to_string()));
+        Ok((target, Value::Object(forwarded).to_string()))
     }
 
     fn hello(&mut self, id: usize, hello: Hello, value: Value, panes: &[&str]) -> Vec<Out> {

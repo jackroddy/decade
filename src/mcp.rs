@@ -1,7 +1,7 @@
 use std::io;
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
 
+use decade_channel::code;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
@@ -18,21 +18,29 @@ use crate::scratch::Launch;
 
 pub struct Request {
     /// The workspace named in the address the call came in on.
-    pub workspace: Option<u32>,
+    pub workspace: u32,
     pub call: Call,
-    pub reply: oneshot::Sender<Vec<String>>,
+
+    /// The tool result's text, or the reason the call failed.
+    pub reply: oneshot::Sender<Result<String, String>>,
 }
 
 pub enum Call {
-    /// A socket line from the built-in agent client.
-    Line(String),
-    ScratchOpen(Launch),
+    /// A pane verb for the program in pane `to`.
+    Send {
+        to: String,
+        verb: String,
+        payload: Value,
+    },
 
-    /// A message to the program in the scratch pane.
+    /// A pane verb for the program in the scratch pane.
     ScratchSend {
         verb: String,
         payload: Value,
     },
+    Focus(String),
+    Panes,
+    ScratchOpen(Launch),
 }
 
 pub struct Server {
@@ -44,14 +52,13 @@ pub fn start(requests: Sender<Request>) -> io::Result<Server> {
     let port = listener.local_addr()?.port();
     let url = format!("http://127.0.0.1:{port}/mcp");
     listener.set_nonblocking(true)?;
-    let requests = Arc::new(Mutex::new(requests));
     std::thread::Builder::new()
         .name("decade-mcp".into())
         .spawn(move || serve(listener, requests))?;
     Ok(Server { url })
 }
 
-fn serve(listener: TcpListener, requests: Arc<Mutex<Sender<Request>>>) {
+fn serve(listener: TcpListener, requests: Sender<Request>) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -78,7 +85,7 @@ fn serve(listener: TcpListener, requests: Arc<Mutex<Sender<Request>>>) {
 
 #[derive(Clone)]
 struct Decade {
-    requests: Arc<Mutex<Sender<Request>>>,
+    requests: Sender<Request>,
 }
 
 fn schema(value: Value) -> Map<String, Value> {
@@ -174,13 +181,23 @@ fn workspace_in(query: &str) -> Option<u32> {
 }
 
 fn call_for(name: &str, mut arguments: Map<String, Value>) -> Result<Call, String> {
-    let line = match name {
-        "code.show" => json!({"to": "code", "show": arguments}),
-        "code.mark" => json!({"to": "code", "mark": arguments}),
-        "code.clear" => json!({"to": "code", "clear": {}}),
-        "focus" => json!({"focus": arguments}),
-        "panes" => json!({"panes": {}}),
-        "scratch.open" => return scratch_open(arguments).map(Call::ScratchOpen),
+    let code = |verb: &str, payload: Map<String, Value>| Call::Send {
+        to: "code".to_string(),
+        verb: verb.to_string(),
+        payload: Value::Object(payload),
+    };
+    match name {
+        "code.show" => Ok(code(code::SHOW, arguments)),
+        "code.mark" => Ok(code(code::MARK, arguments)),
+        "code.clear" => Ok(code(code::CLEAR, Map::new())),
+        "focus" => {
+            let Some(Value::String(pane)) = arguments.remove("pane") else {
+                return Err("focus needs a pane, a string".to_string());
+            };
+            Ok(Call::Focus(pane))
+        }
+        "panes" => Ok(Call::Panes),
+        "scratch.open" => scratch_open(arguments).map(Call::ScratchOpen),
         "scratch.send" => {
             let Some(Value::String(verb)) = arguments.remove("verb") else {
                 return Err("scratch.send needs a verb, a string".to_string());
@@ -188,11 +205,10 @@ fn call_for(name: &str, mut arguments: Map<String, Value>) -> Result<Call, Strin
             let Some(payload @ Value::Object(_)) = arguments.remove("payload") else {
                 return Err("scratch.send needs a payload, an object".to_string());
             };
-            return Ok(Call::ScratchSend { verb, payload });
+            Ok(Call::ScratchSend { verb, payload })
         }
-        _ => return Err(format!("no tool named {name}")),
-    };
-    Ok(Call::Line(line.to_string()))
+        _ => Err(format!("no tool named {name}")),
+    }
 }
 
 fn scratch_open(arguments: Map<String, Value>) -> Result<Launch, String> {
@@ -252,13 +268,12 @@ impl ServerHandler for Decade {
             .extensions
             .get::<axum::http::request::Parts>()
             .and_then(|parts| parts.uri.query())
-            .and_then(workspace_in);
+            .and_then(workspace_in)
+            .ok_or_else(|| ErrorData::invalid_params("the MCP address names no workspace", None))?;
         let call = call_for(&request.name, request.arguments.unwrap_or_default())
             .map_err(|reason| ErrorData::invalid_params(reason, None))?;
         let (reply, answer) = oneshot::channel();
         self.requests
-            .lock()
-            .unwrap()
             .send(Request {
                 workspace,
                 call,
@@ -268,23 +283,9 @@ impl ServerHandler for Decade {
         let answer = answer
             .await
             .map_err(|_| ErrorData::internal_error("decade did not answer", None))?;
-        let failed = answer.iter().any(|text| {
-            serde_json::from_str::<Value>(text)
-                .map(|value| value.get("error").is_some())
-                .unwrap_or(false)
-        });
-        let content = if answer.is_empty() {
-            vec![ContentBlock::text(format!(
-                "sent {} to decade",
-                request.name
-            ))]
-        } else {
-            answer.into_iter().map(ContentBlock::text).collect()
-        };
-        let result = if failed {
-            CallToolResult::error(content)
-        } else {
-            CallToolResult::success(content)
+        let result = match answer {
+            Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
+            Err(reason) => CallToolResult::error(vec![ContentBlock::text(reason)]),
         };
         Ok(result.into())
     }
@@ -308,29 +309,31 @@ mod tests {
     }
 
     #[test]
-    fn tools_are_relayed_as_socket_lines_and_answers_become_results() {
+    fn tools_are_relayed_as_calls_and_answers_become_results() {
         let (sender, source) = channel::channel::<Request>();
         let server = start(sender).unwrap();
         let url = format!("{}?workspace=7", server.url);
+        let unaddressed = server.url.clone();
 
-        let mut event_loop: EventLoop<Vec<(Option<u32>, String)>> = EventLoop::try_new().unwrap();
+        let mut event_loop: EventLoop<Vec<(u32, Value)>> = EventLoop::try_new().unwrap();
         event_loop
             .handle()
             .insert_source(source, |event, _, seen| {
-                if let Event::Msg(request) = event {
-                    let Call::Line(line) = request.call else {
-                        return;
-                    };
-                    seen.push((request.workspace, line.clone()));
-                    let reply = if line.contains("\"panes\"") {
-                        vec![r#"{"panes":[{"name":"code","client":"decade-code"}]}"#.to_string()]
-                    } else if line.contains("\"terminal\"") {
-                        vec![r#"{"error":{"reason":"no client occupies pane terminal","message":{}}}"#.to_string()]
-                    } else {
-                        Vec::new()
-                    };
-                    let _ = request.reply.send(reply);
-                }
+                let Event::Msg(request) = event else {
+                    return;
+                };
+                let reply = match request.call {
+                    Call::Send { to, verb, payload } => {
+                        seen.push((request.workspace, json!({"to": to, verb: payload})));
+                        Ok("sent".to_string())
+                    }
+                    Call::Panes => {
+                        Ok(r#"{"panes":[{"name":"code","client":"decade-code"}]}"#.to_string())
+                    }
+                    Call::Focus(pane) => Err(format!("no pane named {pane}")),
+                    _ => Err("unexpected call".to_string()),
+                };
+                let _ = request.reply.send(reply);
             })
             .unwrap();
 
@@ -367,7 +370,15 @@ mod tests {
                     .await
                     .unwrap();
                 client.cancel().await.unwrap();
-                (names, show, panes, focus)
+                let unaddressed =
+                    ().serve(StreamableHttpClientTransport::from_uri(unaddressed))
+                        .await
+                        .unwrap();
+                let refused = unaddressed
+                    .call_tool(CallToolRequestParams::new("panes"))
+                    .await;
+                unaddressed.cancel().await.unwrap();
+                (names, show, panes, focus, refused)
             })
         });
 
@@ -377,7 +388,7 @@ mod tests {
                 .dispatch(Some(Duration::from_millis(50)), &mut seen)
                 .unwrap();
         }
-        let (names, show, panes, focus) = client.join().unwrap();
+        let (names, show, panes, focus, refused) = client.join().unwrap();
 
         assert_eq!(
             names,
@@ -391,17 +402,15 @@ mod tests {
                 "scratch.send"
             ]
         );
-        assert_eq!(seen.len(), 3);
-        assert!(seen.iter().all(|(workspace, _)| *workspace == Some(7)));
         assert_eq!(
-            serde_json::from_str::<Value>(&seen[0].1).unwrap(),
-            json!({"to": "code", "show": {"path": "src/main.rs", "line": 3}})
+            seen,
+            [(
+                7,
+                json!({"to": "code", "show": {"path": "src/main.rs", "line": 3}})
+            )]
         );
         assert_eq!(show.is_error, Some(false));
-        assert_eq!(
-            show.content[0].as_text().unwrap().text,
-            "sent code.show to decade"
-        );
+        assert_eq!(show.content[0].as_text().unwrap().text, "sent");
         assert_eq!(panes.is_error, Some(false));
         assert!(
             panes.content[0]
@@ -416,8 +425,9 @@ mod tests {
                 .as_text()
                 .unwrap()
                 .text
-                .contains("no client occupies")
+                .contains("no pane named terminal")
         );
+        assert!(refused.is_err());
     }
 
     #[test]

@@ -132,11 +132,14 @@ beside `DECADE_SOCKET`. Each workspace has its own address, ending in
 `?workspace=<id>`, and a tool call reaches only the panes of that
 workspace. Its tools are decade's own `focus` and `panes` and, for
 the code pane, `code.show`, `code.mark` and `code.clear`, each with the payload
-described above as its arguments. A tool call becomes the matching socket
-message from a built-in client named `agent`, so a pane sees `"from": "agent"`.
-decade's answer, an error line or the pane list, is the tool result; a message
-that was only forwarded answers "sent". coax passes `DECADE_MCP` to the agent
-in the ACP session's server list, so any agent coax runs sees these tools.
+described above as its arguments. decade delivers a pane verb from a tool
+call with `"from": "agent"`. decade answers `panes` with the pane list, in the
+shape of the socket's `panes` reply, and every other call with a line saying
+what it did. When decade cannot act on a call, the result is a tool error
+whose text is the reason the socket would give in `error`. decade refuses a
+call to an address without `?workspace=` as invalid parameters. coax passes
+`DECADE_MCP` to the agent in the ACP session's server list, so any agent coax
+runs sees these tools.
 
 The person may mark one pane in a workspace as its scratch pane, from the
 Ctrl bar. Two tools reach it. `scratch.open` takes `program`, optional

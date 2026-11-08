@@ -2,10 +2,11 @@ use std::path::PathBuf;
 
 use smithay::reexports::calloop::RegistrationToken;
 
-use crate::channel::{AGENT, Out, Router};
+use crate::channel::{Out, Router};
 use crate::panes::{CellRect, Layout, Pane};
 use crate::scratch::Scratch;
 use decade_channel::AgentState;
+use serde_json::Value;
 
 pub struct Workspace {
     pub id: u32,
@@ -26,6 +27,16 @@ pub struct Tab {
 
     /// Whether the tab goes once its last client has.
     pub closing: bool,
+}
+
+/// The name a pane sees in `from` on a verb sent over MCP.
+const AGENT: &str = "agent";
+
+fn pane_names(tabs: &[Tab]) -> Vec<&str> {
+    (tabs.iter())
+        .flat_map(|tab| &tab.layout.panes)
+        .map(|pane| pane.name.as_str())
+        .collect()
 }
 
 /// The app id prefix of a terminal started for one of the workspace's panes.
@@ -74,15 +85,13 @@ impl Workspace {
                 closing: false,
             })
             .collect();
-        let mut router = Router::default();
-        router.handle(AGENT, r#"{"hello":{"name":"agent"}}"#, &[]);
         Workspace {
             id,
             name,
             cwd,
             active_tab: active_tab.min(tabs.len() - 1),
             tabs,
-            router,
+            router: Router::default(),
             listener: None,
             scratch: None,
         }
@@ -90,11 +99,24 @@ impl Workspace {
 
     /// Answer one line from socket client `id`.
     pub fn channel_line(&mut self, id: usize, line: &str) -> Vec<Out> {
-        let panes: Vec<&str> = (self.tabs.iter())
-            .flat_map(|tab| &tab.layout.panes)
-            .map(|pane| pane.name.as_str())
-            .collect();
-        self.router.handle(id, line, &panes)
+        self.router.handle(id, line, &pane_names(&self.tabs))
+    }
+
+    /// The id of the client in pane `to` and the line carrying it a pane
+    /// verb from the agent, or the reason it cannot go.
+    pub fn agent_send(
+        &self,
+        to: &str,
+        verb: String,
+        payload: Value,
+    ) -> Result<(usize, String), String> {
+        let panes = pane_names(&self.tabs);
+        self.router.send(AGENT, to, verb, payload, &panes)
+    }
+
+    /// Every pane in tab order and the name of the client occupying it.
+    pub fn pane_list(&self) -> Vec<decade_channel::Pane> {
+        self.router.panes(&pane_names(&self.tabs))
     }
 
     /// The layout of the active tab.
@@ -364,5 +386,32 @@ mod tests {
         workspace.remove_tab(1);
         assert_eq!(workspace.agent_state(), None);
         assert!(workspace.router.occupant("terminal2").is_none());
+    }
+
+    #[test]
+    fn a_verb_from_the_agent_reaches_the_pane_occupant_from_agent() {
+        let mut workspace =
+            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.channel_line(
+            4,
+            r#"{"hello": {"name": "code-pane", "pane": "terminal2"}}"#,
+        );
+        let show = serde_json::json!({"path": "a.rs"});
+        let (client, line) = workspace
+            .agent_send("terminal2", "show".into(), show)
+            .unwrap();
+        assert_eq!(client, 4);
+        assert_eq!(line, r#"{"from":"agent","show":{"path":"a.rs"}}"#);
+        let refused = workspace.agent_send("terminal", "show".into(), Value::Null);
+        assert_eq!(refused, Err("no client occupies pane terminal".to_string()));
+        let panes: Vec<_> = (workspace.pane_list().into_iter())
+            .map(|pane| (pane.name, pane.client))
+            .collect();
+        let occupant = Some("code-pane".to_string());
+        assert_eq!(
+            panes,
+            [("terminal".into(), None), ("terminal2".into(), occupant)]
+        );
     }
 }

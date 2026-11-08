@@ -2,12 +2,12 @@ use std::io::{self, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Command;
 
-use decade_channel::AgentState;
+use decade_channel::{AgentState, Reply};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{Interest, Mode as CalloopMode, PostAction};
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
-use crate::channel::{AGENT, Out};
+use crate::channel::Out;
 use crate::lines::Lines;
 use crate::mcp;
 use crate::scratch::{self, Launch};
@@ -90,44 +90,38 @@ impl State {
     }
 
     pub(super) fn mcp_request(&mut self, request: mcp::Request) {
-        let Some(workspace) = request.workspace.and_then(|id| self.workspace_index(id)) else {
-            let reason = match request.workspace {
-                Some(id) => format!("workspace {id} is closed"),
-                None => "the MCP address names no workspace".to_string(),
-            };
-            let _ = request.reply.send(vec![error_line(&reason)]);
-            return;
+        let answer = match self.workspace_index(request.workspace) {
+            Some(workspace) => self.mcp_call(workspace, request.call),
+            None => Err(format!("workspace {} is closed", request.workspace)),
         };
-        let line = match request.call {
-            mcp::Call::Line(line) => line,
-            mcp::Call::ScratchOpen(launch) => {
-                let reply = self
-                    .scratch_open(workspace, launch)
-                    .unwrap_or_else(|reason| error_line(&reason));
-                let _ = request.reply.send(vec![reply]);
-                return;
-            }
+        let _ = request.reply.send(answer);
+    }
+
+    fn mcp_call(&mut self, workspace: usize, call: mcp::Call) -> Result<String, String> {
+        let shown = &self.workspaces[workspace];
+        let (to, verb, payload) = match call {
+            mcp::Call::Send { to, verb, payload } => (to, verb, payload),
             mcp::Call::ScratchSend { verb, payload } => {
-                let Some(pane) = self.workspaces[workspace].scratch_pane() else {
-                    let _ = request.reply.send(vec![error_line(NO_SCRATCH)]);
-                    return;
-                };
-                let mut message = serde_json::Map::new();
-                message.insert("to".to_string(), pane.into());
-                message.insert(verb, payload);
-                serde_json::Value::Object(message).to_string()
+                let to = shown.scratch_pane().ok_or(NO_SCRATCH)?;
+                (to.to_string(), verb, payload)
             }
+            mcp::Call::Focus(pane) => {
+                shown
+                    .by_name(&pane)
+                    .ok_or_else(|| format!("no pane named {pane}"))?;
+                self.focus_named(workspace, &pane);
+                return Ok(format!("focused pane {pane}"));
+            }
+            mcp::Call::Panes => {
+                let panes = Reply::Panes(shown.pane_list());
+                return Ok(serde_json::to_string(&panes).unwrap());
+            }
+            mcp::Call::ScratchOpen(launch) => return self.scratch_open(workspace, launch),
         };
-        let mut reply = Vec::new();
-        for out in self.workspaces[workspace].channel_line(AGENT, &line) {
-            match out {
-                Out::Line(to, text) if to == AGENT => reply.push(text),
-                Out::Line(to, text) => self.channel_send(to, &text),
-                Out::Focus(pane) => self.focus_named(workspace, &pane),
-                Out::Status { .. } => {}
-            }
-        }
-        let _ = request.reply.send(reply);
+        let sent = format!("sent {verb} to pane {to}");
+        let (client, line) = shown.agent_send(&to, verb, payload)?;
+        self.channel_send(client, &line);
+        Ok(sent)
     }
 
     /// Start the program in the workspace's scratch pane, or ask the
@@ -308,8 +302,4 @@ impl State {
             self.channel_disconnected(to);
         }
     }
-}
-
-fn error_line(reason: &str) -> String {
-    serde_json::json!({ "error": { "reason": reason } }).to_string()
 }
