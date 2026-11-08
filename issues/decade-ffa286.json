@@ -1,0 +1,30 @@
+{
+  "id": "decade-ffa286",
+  "title": "Spawning a child is written four times and the pane variable is set in two places",
+  "body": "`launch`, `spawn_pane_tab`, `spawn_terminal` and `start_scratch` in `compositor.rs` each end with the same `match cmd.spawn() { Ok(child) => self.children.push(child), Err(error) => eprintln!(..) }`. `command()` sets `DECADE_WORKSPACE`, `DECADE_SOCKET`, `DECADE_MCP` and `WAYLAND_DISPLAY`; `ghostty()` and the non-terminal branch of `start_scratch` each set `DECADE_PANE` on top of that. `spawn_terminal(workspace, pane_name, cwd)` looks the pane up again with `by_name` to store the pid, while all five callers read the name and cwd from that pane just before. Both terminal spawners call `ghostty.current_dir(cwd)` over the `current_dir` that `command()` already set.\n\n`add_workspace` hard-codes the pane name `\"terminal\"` to spawn the first terminal, while the restore loop in `run` spawns a terminal for every pane with a `cwd`. Those are the same rule.\n\n`scratch::find_program` returns the resolved path and `scratch_open` throws it away; `start_scratch` then runs the bare program name, so PATH is searched twice.\n\n## Proposal\n\n- `command(workspace, program, pane: Option<&str>)` sets every `DECADE_*` variable.\n- `spawn(&mut self, Command, what: &str) -> Option<u32>` pushes the child or logs the error.\n- `spawn_terminal(workspace, tab, id)` reads the name and cwd from the pane.\n- `start_workspace(index)` listens on the socket and spawns every pane with a `cwd` plus its `saved_tabs`, serving both `run` and `add_workspace`.\n- `find_program` returns `Result<(), String>`, or stores the path on `Launch` for `start_scratch` to run.",
+  "type": "chore",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "simplification"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T07:39:08.693657659Z",
+  "updated_at": "2026-11-08T07:39:08.693657659Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e2173eb",
+      "branch": "sessions"
+    },
+    "closed": null
+  }
+}
