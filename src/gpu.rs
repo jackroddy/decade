@@ -88,12 +88,4 @@ impl Gpu {
             .map_err(|error| error.to_string())?;
         buffer.export().map_err(|error| error.to_string())
     }
-
-    pub fn allocate_linear(&mut self, width: u32, height: u32) -> Result<Dmabuf, String> {
-        let buffer = self
-            .allocator
-            .create_buffer(width, height, Fourcc::Xrgb8888, &[Modifier::Linear])
-            .map_err(|error| error.to_string())?;
-        buffer.export().map_err(|error| error.to_string())
-    }
 }

@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags};
 use smithay::backend::allocator::dmabuf::Dmabuf;
-use smithay::backend::allocator::{Buffer as _, Fourcc, Modifier};
 use smithay::backend::input::{
     Axis as InputAxis, AxisRelativeDirection, AxisSource, ButtonState, KeyState,
 };
@@ -101,19 +100,19 @@ use crate::panes::{
     Layout, Pane,
 };
 use crate::picker::{self, Grid, Picker};
+use crate::pool::Pool;
 use crate::save;
 use crate::scratch::{self, Launch};
 use crate::settings::{self, Settings};
 use crate::text::Font;
 use crate::wire::{
     self, BTN_LEFT, CAPS_LOCK, Decoder, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT, NUM_LOCK,
-    OUTBOX_RETRY, Outbox, Plane, SCALE, Selection, ServerMessage, ViewerMessage,
+    OUTBOX_RETRY, Outbox, SCALE, Selection, ServerMessage, ViewerMessage,
 };
 use crate::workspace::{self, Workspace};
 use decade_channel::AgentState;
 
 const REFRESH_MILLIHERTZ: i32 = 60_000;
-const POOL_SIZE: usize = 3;
 const KEY_C: u32 = 46;
 const KEY_V: u32 = 47;
 const KEY_X: u32 = 45;
@@ -254,11 +253,7 @@ struct Viewer {
     logical: (u32, u32),
     scale: u32,
 
-    /// The formats the viewer's host imports, once `formats` has arrived.
-    formats: Option<Vec<(Fourcc, Modifier)>>,
-    linear: bool,
-    pool: Vec<Slot>,
-    next_buffer: u32,
+    pool: Pool,
     ready: bool,
     wants_frame: bool,
     keys: Vec<u32>,
@@ -283,13 +278,6 @@ struct Offered {
 pub struct ViewerOffer {
     viewer: usize,
     serial: u32,
-}
-
-struct Slot {
-    id: u32,
-    dmabuf: Dmabuf,
-    size: Size<i32, Physical>,
-    lent: bool,
 }
 
 struct Scroll {
@@ -746,10 +734,7 @@ impl State {
                 welcomed: false,
                 logical: (0, 0),
                 scale: SCALE,
-                formats: None,
-                linear: false,
-                pool: Vec::new(),
-                next_buffer: 0,
+                pool: Pool::new(),
                 ready: false,
                 wants_frame: true,
                 keys: Vec::new(),
@@ -1199,14 +1184,7 @@ impl State {
             }
             ViewerMessage::Formats { formats } => {
                 if let Some(viewer) = self.viewers.get_mut(&id) {
-                    let formats = formats
-                        .iter()
-                        .filter_map(|format| {
-                            let code = Fourcc::try_from(format.format).ok()?;
-                            Some((code, Modifier::from(format.modifier)))
-                        })
-                        .collect();
-                    viewer.formats = Some(formats);
+                    viewer.pool.set_formats(&formats);
                 }
             }
             ViewerMessage::Resize {
@@ -1223,27 +1201,14 @@ impl State {
             }
             ViewerMessage::BufferFailed { id: buffer } => {
                 if let Some(viewer) = self.viewers.get_mut(&id) {
-                    viewer.linear = true;
-                    viewer.pool.retain(|slot| slot.id != buffer);
+                    viewer.pool.failed(buffer, &mut viewer.outbox);
                     viewer.ready = true;
                     viewer.wants_frame = true;
                 }
-                self.send(id, ServerMessage::Forget { id: buffer });
             }
             ViewerMessage::Release { id: buffer, .. } => {
-                let size = self.size;
-                let mut forget = None;
-                if let Some(viewer) = self.viewers.get_mut(&id)
-                    && let Some(index) = viewer.pool.iter().position(|slot| slot.id == buffer)
-                {
-                    viewer.pool[index].lent = false;
-                    if viewer.pool[index].size != size {
-                        viewer.pool.remove(index);
-                        forget = Some(buffer);
-                    }
-                }
-                if let Some(buffer) = forget {
-                    self.send(id, ServerMessage::Forget { id: buffer });
+                if let Some(viewer) = self.viewers.get_mut(&id) {
+                    viewer.pool.release(buffer, self.size, &mut viewer.outbox);
                 }
             }
             ViewerMessage::Ready => {
@@ -1492,7 +1457,7 @@ impl State {
             .viewers
             .iter()
             .filter(|(_, viewer)| {
-                viewer.welcomed && viewer.ready && viewer.wants_frame && viewer.formats.is_some()
+                viewer.welcomed && viewer.ready && viewer.wants_frame && viewer.pool.has_formats()
             })
             .map(|(&id, _)| id)
             .collect();
@@ -1502,81 +1467,16 @@ impl State {
     }
 
     fn render_to(&mut self, id: usize) {
-        let size = self.size;
         let Some(viewer) = self.viewers.get_mut(&id) else {
             return;
         };
-        let free = viewer
-            .pool
-            .iter()
-            .position(|slot| !slot.lent && slot.size == size);
-        let index = match free {
-            Some(index) => index,
-            None => {
-                let current = viewer.pool.iter().filter(|slot| slot.size == size).count();
-                if current >= POOL_SIZE {
-                    return;
-                }
-                let (width, height) = (size.w as u32, size.h as u32);
-                let formats = viewer.formats.as_deref().unwrap_or_default();
-                let allocated = if viewer.linear || formats.is_empty() {
-                    self.gpu.allocate_linear(width, height)
-                } else {
-                    match self.gpu.allocate(width, height, formats) {
-                        Ok(dmabuf) => Ok(dmabuf),
-                        Err(error) => {
-                            eprintln!(
-                                "decade: allocating a frame buffer failed, so decade falls back to LINEAR: {error}"
-                            );
-                            viewer.linear = true;
-                            self.gpu.allocate_linear(width, height)
-                        }
-                    }
-                };
-                let dmabuf = match allocated {
-                    Ok(dmabuf) => dmabuf,
-                    Err(error) => {
-                        eprintln!("decade: allocating a frame buffer failed: {error}");
-                        return;
-                    }
-                };
-                let buffer = viewer.next_buffer;
-                viewer.next_buffer += 1;
-                let planes = dmabuf
-                    .handles()
-                    .zip(dmabuf.offsets())
-                    .zip(dmabuf.strides())
-                    .filter_map(|((fd, offset), stride)| {
-                        Some(Plane {
-                            fd: fd.try_clone_to_owned().ok()?,
-                            offset,
-                            stride,
-                        })
-                    })
-                    .collect();
-                let format = dmabuf.format();
-                let message = ServerMessage::Buffer {
-                    id: buffer,
-                    width,
-                    height,
-                    format: format.code as u32,
-                    modifier: format.modifier.into(),
-                    planes,
-                };
-                if viewer.outbox.push_server_message(message).is_err() {
-                    return;
-                }
-                viewer.pool.push(Slot {
-                    id: buffer,
-                    dmabuf,
-                    size,
-                    lent: false,
-                });
-                viewer.pool.len() - 1
-            }
+        let Some((buffer, mut dmabuf)) =
+            viewer
+                .pool
+                .slot(self.size, &mut self.gpu, &mut viewer.outbox)
+        else {
+            return;
         };
-        let mut dmabuf = viewer.pool[index].dmabuf.clone();
-        let buffer = viewer.pool[index].id;
         let workspace = viewer.workspace;
         let workspace = self
             .workspaces
@@ -1597,7 +1497,7 @@ impl State {
         let Some(viewer) = self.viewers.get_mut(&id) else {
             return;
         };
-        viewer.pool[index].lent = true;
+        viewer.pool.lend(buffer);
         viewer.ready = false;
         viewer.wants_frame = false;
         let _ = viewer
@@ -2067,20 +1967,8 @@ impl State {
     }
 
     fn forget_stale(&mut self) {
-        let size = self.size;
         for viewer in self.viewers.values_mut() {
-            let stale: Vec<u32> = viewer
-                .pool
-                .iter()
-                .filter(|slot| !slot.lent && slot.size != size)
-                .map(|slot| slot.id)
-                .collect();
-            viewer.pool.retain(|slot| slot.lent || slot.size == size);
-            for buffer in stale {
-                let _ = viewer
-                    .outbox
-                    .push_server_message(ServerMessage::Forget { id: buffer });
-            }
+            viewer.pool.forget_stale(self.size, &mut viewer.outbox);
         }
     }
 
