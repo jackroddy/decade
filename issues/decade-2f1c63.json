@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-08T20:34:37.401678067Z",
   "defer_until": null,
   "created_at": "2026-11-08T07:39:08.724853627Z",
-  "updated_at": "2026-11-08T20:19:37.401678067Z",
+  "updated_at": "2026-11-08T20:22:35.676659992Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "e84f40f7",
+      "at": "2026-11-08T20:22:35.676659212Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "What landed in bf80ab9, against the proposal:\n\n- `Workspace::add_pane(tab, base, cwd) -> id` as proposed. It returns only the id, since neither caller used the name. `add_tab` keeps its own code, since it builds a new `Layout` rather than splitting one.\n- `Workspace::forget_pane` was already in place from c577da4, so removal needed no change.\n- The rule became `Workspace::keeps_empty(&Pane)` plus `State::prune(workspace, tab, id)`. `prune` stays on `State` because removing a pane also relayouts, refocuses and finishes closing tabs, which reach viewers and clients.\n- `close_pane` keeps its own test. Closing an empty pane removes it unless it is pinned and not the scratch pane, which is not the prune rule: an empty scratch pane goes when closed by hand.\n- `toplevel_destroyed` still compares `scratch.pane` with the pane's name by field, because it holds the pane mutably there.\n- No `Pane::pinned()` method: `pinned` is already a plain field since 99e533a.\n\nThe `State` fields the decade-003057 note left here (`workspaces`, `next_workspace`, `unplaced`, `sidebar_open`) stay plain fields. `unplaced` is a list of toplevels waiting for a pane and `sidebar_open` is a frame setting, so they do not belong with the workspace list. A struct around `workspaces` and `next_workspace` would take only `add_workspace` and `workspace_index` off `State`, and both also start children and listeners.",
+      "commit": "bf80ab9",
+      "branch": "simplify"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e2173eb",
