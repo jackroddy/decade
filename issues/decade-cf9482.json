@@ -1,0 +1,30 @@
+{
+  "id": "decade-cf9482",
+  "title": "Panes move into the kit and hold content ids",
+  "body": "`panes.rs` holds the split tree, tabs, pane bars, drop zones and zoom, and each pane tab is a `Client` holding a smithay `ToplevelSurface`, its app id, pid and terminal-tab flag. Pinned panes wait on an app id. Hit testing and the drag state machine sit partly in `panes.rs` and partly in `compositor/input.rs`.\n\n## Proposal\n\nPanes move into the kit. A pane tab holds an opaque content id. decade keeps a map from id to its Wayland client and everything decade-specific about it: app id, pid, pinned app id, terminal tab, scratch mark and agent state. The kit lays out panes and emits their chrome plus a `Shape::Content { id, rect }` per visible content. decade's backend draws the client's surface there.\n\nThe kit takes pointer and key events in its own types and returns actions: focus a pane, resize, move, close, switch tab, or input for a content id at a pane-local point. decade forwards the last to the client.\n\n## Open: what decade's Wayland handling needs from panes\n\nEach of these works today and has to keep working. The review should check each one against the content-id design:\n\n- configure: a client is told its size from its pane's rect, and again on every relayout\n- hidden tabs: clients in a tab not shown get no frame callbacks\n- keyboard focus follows the focused pane and its shown tab\n- pinned panes: an empty pinned pane waits for a client with its app id\n- pane tabs of terminals started by decade, matched by app id\n- the drag ghost and the picker draw client surfaces scaled down\n- popups and subsurfaces position relative to their toplevel's pane\n- restore: a saved layout comes back with its panes before any client has connected\n\nAlso open: whether the kit's input types cover what `compositor/input.rs` does with modifiers and the Ctrl bar.\n\nBlocked on the drawing seam, and on Jack's sign-off of the design.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-4a4e0f",
+  "blocked_by": [
+    "decade-1f139f"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-08T22:30:49.645299748Z",
+  "updated_at": "2026-11-08T22:30:49.645299748Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "6bcc95b",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
