@@ -12,18 +12,17 @@ use smithay::backend::renderer::utils::draw_render_elements;
 use smithay::backend::renderer::{Bind, Color32F, Frame, Renderer};
 use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
 
-use crate::draw::{Element, Face, Paint, Scene, Shrink};
-use crate::frame::{self, fit};
-use crate::palette::{self, ACCENT, Rgba};
+use crate::draw::{Element, Paint, Scene, Shrink};
+use crate::frame;
+use crate::palette::{ACCENT, Rgba};
 use crate::panes::{BACKGROUND, Chrome, Layout};
 use crate::picker::{Grid, Picker};
 use crate::settings::Settings;
 use crate::workspace::Workspace;
 
 use super::input::Drag;
-use super::{State, send_frames_surface_tree};
+use super::{Overlay, State, send_frames_surface_tree};
 
-const CLOSE_ICON: char = '\u{f0156}';
 const SCRIM: Rgba = [0.0, 0.0, 0.0, 0.35];
 
 impl State {
@@ -35,8 +34,8 @@ impl State {
         workspace: usize,
     ) -> Result<(Option<OwnedFd>, bool), String> {
         let current = self.current();
-        let picker_grid =
-            (workspace == current && self.picker.is_some()).then(|| self.picker_grid());
+        let picking = matches!(self.overlay, Some(Overlay::Picker { .. }));
+        let picker_grid = (workspace == current && picking).then(|| self.picker_grid());
         let frame = picker_grid.is_none().then(|| self.frame(workspace));
         let State {
             gpu,
@@ -49,24 +48,17 @@ impl State {
             bar,
             hover,
             pointer,
-            menu,
-            panel,
-            picker,
+            overlay,
             settings,
             rounded,
             ..
         } = self;
         let layout = workspaces[workspace].layout();
         let scratch = workspaces[workspace].scratch_pane();
-        let (menu, panel, drag, picker) = if workspace == current {
-            (
-                menu.as_ref(),
-                panel.as_ref(),
-                drag.as_ref(),
-                picker.as_ref(),
-            )
+        let (overlay, drag) = if workspace == current {
+            (overlay.as_ref(), drag.as_ref())
         } else {
-            (None, None, None, None)
+            (None, None)
         };
         let chrome = if workspace == current {
             Chrome {
@@ -104,27 +96,31 @@ impl State {
             let top = (size.h / 7).min((size.h - box_size.h).max(0));
             ((size.w - box_size.w) / 2, top).into()
         };
-        if let Some(menu) = menu {
-            let mut scene = Scene::new(&paint.text.menu);
-            let box_size = menu.draw(&mut scene, &paint.text.menu);
-            paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
+        match overlay {
+            Some(Overlay::Menu(menu)) => {
+                let mut scene = Scene::new(&paint.text.menu);
+                let box_size = menu.draw(&mut scene, &paint.text.menu);
+                paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
+            }
+            Some(Overlay::Panel(panel)) => {
+                let mut scene = Scene::new(&paint.text.menu);
+                let box_size = panel.draw(&mut scene, &paint.text.menu, settings);
+                paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
+            }
+            Some(Overlay::Picker { picker, .. }) => {
+                if let Some(grid) = &picker_grid {
+                    paint_picker(
+                        &mut paint,
+                        &mut elements,
+                        (picker, grid),
+                        (workspaces, current),
+                        pointer,
+                    );
+                }
+            }
+            None => {}
         }
-        if let Some(panel) = panel {
-            let mut scene = Scene::new(&paint.text.menu);
-            let box_size = panel.draw(&mut scene, &paint.text.menu, settings);
-            paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
-        }
-        if let (Some(picker), Some(grid)) = (picker, &picker_grid) {
-            paint_picker(
-                &mut paint,
-                &mut elements,
-                (picker, grid),
-                (workspaces, current),
-                size,
-                pointer,
-            );
-        }
-        if menu.is_some() || panel.is_some() || picker.is_some() {
+        if overlay.is_some() {
             let mut scrim = Scene::new(&paint.text.chrome);
             scrim.rect(0, 0, size.w, size.h, SCRIM);
             paint.scene(&mut elements, &scrim, Point::default(), None);
@@ -328,92 +324,18 @@ fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, layout: &Layout
     }
 }
 
+/// Draw the picker's grid with a thumbnail of each workspace's panes in
+/// its cell.
 fn paint_picker(
     paint: &mut Paint,
     elements: &mut Vec<Element>,
     (picker, grid): (&Picker, &Grid),
     (workspaces, current): (&[Workspace], usize),
-    size: Size<i32, Physical>,
     pointer: Point<i32, Physical>,
 ) {
-    let cell_height = paint.text.chrome.cell_height;
-    let (menu_width, menu_height) = (
-        paint.text.menu.cell_width as i32,
-        paint.text.menu.cell_height as i32,
-    );
-    let mut over = Scene::new(&paint.text.chrome);
-    let mut under = Scene::new(&paint.text.chrome);
-    let line = over.line_width();
-    let label_width = |text: &str| text.chars().count() as i32 * menu_width;
-    let drop_target = picker.dragging.and_then(|_| grid.cell_at(pointer));
+    let (over, under) = picker.draw(grid, workspaces, current, pointer, paint.text);
     let mut surfaces = Vec::new();
-    for (i, cell) in grid.cells.iter().enumerate() {
-        let (outline, stroke) = if drop_target == Some(i) {
-            (palette::CYAN, line)
-        } else if picker.selected == i {
-            (ACCENT, line * 2)
-        } else {
-            (palette::MUTED, line)
-        };
-        for ring in 1..=stroke / line {
-            over.box_lines(
-                cell.loc.x - line * ring,
-                cell.loc.y - line * ring,
-                cell.size.w + line * ring * 2,
-                cell.size.h + line * ring * 2,
-                outline,
-            );
-        }
-        under.rect(
-            cell.loc.x,
-            cell.loc.y,
-            cell.size.w,
-            cell.size.h,
-            palette::DARK_BACKGROUND,
-        );
-        let room = (cell.size.w / menu_width).max(1) as usize;
-        let label_y = cell.loc.y + cell.size.h + (grid.label - menu_height) / 2;
-        let Some(workspace) = workspaces.get(i) else {
-            let text = fit("+ New workspace", room);
-            let x = cell.loc.x + (cell.size.w - label_width(&text)) / 2;
-            let y = cell.loc.y + (cell.size.h - menu_height) / 2;
-            over.text_px(x, y, &text, Face::Menu, palette::FOREGROUND);
-            continue;
-        };
-        let confirming = picker.confirming == Some(workspace.id);
-        let label = if confirming {
-            "close? x again".to_string()
-        } else if workspace.closing() {
-            format!("{} closing", workspace.name)
-        } else if i == current {
-            format!("● {}", workspace.name)
-        } else {
-            workspace.name.clone()
-        };
-        let label = fit(&label, room);
-        let label_color = if confirming {
-            palette::RED
-        } else {
-            palette::FOREGROUND
-        };
-        let x = cell.loc.x + (cell.size.w - label_width(&label)) / 2;
-        over.text_px(x, label_y, &label, Face::Menu, label_color);
-        let button = grid.close_button(i, cell_height as i32);
-        let icon_color = if confirming {
-            palette::RED
-        } else {
-            palette::LIGHT_FOREGROUND
-        };
-        let icon_x = button.loc.x + (button.size.w - menu_width) / 2;
-        let icon_y = button.loc.y + (button.size.h - menu_height) / 2;
-        over.text_px(
-            icon_x,
-            icon_y,
-            &CLOSE_ICON.to_string(),
-            Face::Menu,
-            icon_color,
-        );
-
+    for (cell, workspace) in grid.cells.iter().zip(workspaces) {
         let layout = workspace.layout();
 
         // the cell shows the pane area, not the top bar and sidebar, so
@@ -448,13 +370,6 @@ fn paint_picker(
             }));
         }
     }
-    let hint = fit(
-        "tab move · enter show · esc close · x close",
-        (size.w / menu_width).max(1) as usize,
-    );
-    let hint_y = size.h - (cell_height as i32 * 2 + menu_height) / 2;
-    let hint_x = (size.w - label_width(&hint)) / 2;
-    over.text_px(hint_x, hint_y, &hint, Face::Menu, palette::LIGHT_FOREGROUND);
     paint.scene(elements, &over, Point::default(), None);
     elements.extend(surfaces);
     paint.scene(elements, &under, Point::default(), None);

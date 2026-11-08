@@ -131,9 +131,7 @@ impl State {
             }
         }
         if self.active == Some(id) {
-            self.menu = None;
-            self.panel = None;
-            self.close_picker();
+            self.close_overlay();
             let next = self.welcomed().next();
             self.set_active(next);
         }

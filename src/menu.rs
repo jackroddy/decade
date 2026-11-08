@@ -6,6 +6,7 @@ use crate::apps::App;
 use crate::draw::{Face, Scene};
 use crate::frame::fit;
 use crate::palette;
+use crate::settings::Settings;
 use crate::text::Font;
 
 /// The width in cells of the palette, the New workspace browser and the settings panel.
@@ -35,20 +36,40 @@ pub enum MenuKey {
     Char(char),
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+/// What the palette, the settings panel and the workspace picker ask the
+/// compositor to do.
+#[derive(Clone, PartialEq, Debug)]
 pub enum Action {
     Launch(Vec<String>),
     Settings,
     NewWorkspace(PathBuf),
     CloseWorkspace(u32),
-    CloseTab { workspace: u32, tab: usize },
+    CloseTab {
+        workspace: u32,
+        tab: usize,
+    },
+    ShowWorkspace(u32),
+
+    /// Open the palette at New workspace.
+    StartNewWorkspace,
+    MoveWorkspace {
+        from: usize,
+        to: usize,
+    },
+    ChangeSettings(Settings),
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+/// The result of a key or a click in an overlay.
+#[derive(Clone, PartialEq, Debug)]
 pub enum Outcome {
     Open,
     Close,
+
+    /// Close the overlay, then run the action.
     Run(Action),
+
+    /// Run the action and leave the overlay open.
+    Apply(Action),
 }
 
 pub struct Row {

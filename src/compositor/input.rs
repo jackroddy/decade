@@ -8,13 +8,12 @@ use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::{Logical, Physical, Point, SERIAL_COUNTER};
 
-use crate::menu::{Action, MenuKey, Outcome};
-use crate::panel::{Panel, PanelOutcome};
+use crate::menu::{MenuKey, Outcome};
 use crate::panes;
 use crate::panes::{BarButton, Boundary, Direction, Drop};
 use crate::wire::{BTN_LEFT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
 
-use super::State;
+use super::{Overlay, State};
 
 const KEY_C: u32 = 46;
 const KEY_V: u32 = 47;
@@ -57,10 +56,12 @@ impl State {
 
     pub(super) fn pointer_moved(&mut self, location: Point<f64, Logical>, time: u32) {
         self.pointer = location;
-        if self.picker.is_some() {
+        if matches!(self.overlay, Some(Overlay::Picker { .. })) {
             let point = self.pointer.to_physical(self.scale).to_i32_round();
-            let ids: Vec<u32> = self.workspaces.iter().map(|known| known.id).collect();
-            if self.picker.as_mut().unwrap().motion(point, &ids) {
+            let ids = self.workspace_ids();
+            if let Some(Overlay::Picker { picker, .. }) = &mut self.overlay
+                && picker.motion(point, &ids)
+            {
                 self.request_redraw();
             }
             return;
@@ -111,19 +112,19 @@ impl State {
     }
 
     pub(super) fn pointer_button(&mut self, button: u32, pressed: bool, time: u32) {
-        if self.picker.is_some() {
+        if matches!(self.overlay, Some(Overlay::Picker { .. })) {
             if button == BTN_LEFT {
                 let point = self.pointer.to_physical(self.scale).to_i32_round();
-                let ids: Vec<u32> = self.workspaces.iter().map(|known| known.id).collect();
-                let grid = self.picker_grid();
-                let cell_height = self.text.chrome.cell_height as i32;
-                let picker = self.picker.as_mut().unwrap();
+                let (ids, grid) = (self.workspace_ids(), self.picker_grid());
+                let Some(Overlay::Picker { picker, .. }) = &mut self.overlay else {
+                    return;
+                };
                 let outcome = if pressed {
-                    picker.press(point, &ids, &grid, cell_height)
+                    picker.press(point, &ids, &grid)
                 } else {
                     picker.release(point, &ids, &grid)
                 };
-                self.picker_outcome(outcome);
+                self.act(outcome);
             }
             return;
         }
@@ -198,7 +199,7 @@ impl State {
         } else {
             KeyState::Released
         };
-        let palette = self.menu.is_some() || self.panel.is_some() || self.picker.is_some();
+        let palette = self.overlay.is_some();
         let restartable = self
             .layout()
             .pane(self.layout().focused)
@@ -382,48 +383,15 @@ impl State {
                 let focused = self.layout().focused;
                 self.restart_pane(self.current(), focused);
             }
-            Key::Menu(key) if self.picker.is_some() => {
-                let ids: Vec<u32> = self.workspaces.iter().map(|known| known.id).collect();
-                let columns = self.picker_grid().columns;
-                let outcome = self.picker.as_mut().unwrap().key(key, &ids, columns);
-                self.picker_outcome(outcome);
-            }
             Key::Menu(key) => {
-                if let Some(panel) = &mut self.panel {
-                    let before = self.settings;
-                    match panel.key(key, &mut self.settings) {
-                        PanelOutcome::Open => {}
-                        PanelOutcome::Close => self.panel = None,
-                        PanelOutcome::Changed => self.settings_changed(before),
-                    }
-                } else {
-                    let outcome = self.menu.as_mut().map(|menu| menu.key(key));
-                    match outcome {
-                        Some(Outcome::Open) | None => {}
-                        Some(Outcome::Close) => self.menu = None,
-                        Some(Outcome::Run(Action::Launch(argv))) => {
-                            self.menu = None;
-                            self.launch(&argv);
-                        }
-                        Some(Outcome::Run(Action::NewWorkspace(cwd))) => {
-                            self.menu = None;
-                            self.new_workspace(cwd);
-                        }
-                        Some(Outcome::Run(Action::CloseWorkspace(id))) => {
-                            self.menu = None;
-                            self.close_workspace(id);
-                        }
-                        Some(Outcome::Run(Action::CloseTab { workspace, tab })) => {
-                            self.menu = None;
-                            self.close_tab(workspace, tab);
-                        }
-                        Some(Outcome::Run(Action::Settings)) => {
-                            self.menu = None;
-                            self.panel = Some(Panel::new());
-                        }
-                    }
-                }
-                self.request_redraw();
+                let (ids, grid) = (self.workspace_ids(), self.picker_grid());
+                let outcome = match &mut self.overlay {
+                    Some(Overlay::Menu(menu)) => menu.key(key),
+                    Some(Overlay::Panel(panel)) => panel.key(key, &self.settings),
+                    Some(Overlay::Picker { picker, .. }) => picker.key(key, &ids, &grid),
+                    None => Outcome::Open,
+                };
+                self.act(outcome);
             }
             Key::Swallow => {}
         }

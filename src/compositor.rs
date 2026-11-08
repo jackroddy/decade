@@ -65,10 +65,10 @@ use crate::files;
 use crate::frame::{self, Hit};
 use crate::gpu::Gpu;
 use crate::mcp;
-use crate::menu::Menu;
+use crate::menu::{Action, Menu, Outcome};
 use crate::panel::Panel;
 use crate::panes::{self as panes, BarButton, CellRect, Layout, Pane};
-use crate::picker::{self, Grid, Picker};
+use crate::picker::{Grid, Picker};
 use crate::save::{self, TerminalTab};
 use crate::settings::{self, Settings};
 use crate::text::Text;
@@ -83,6 +83,18 @@ const REFRESH_MILLIHERTZ: i32 = 60_000;
 const PICKER_TICK: Duration = Duration::from_millis(500);
 const SAVE_DELAY: Duration = Duration::from_secs(1);
 const SAVE_EVERY: Duration = Duration::from_secs(60);
+
+/// The box or grid drawn over the workspace that takes the keys while it is open.
+enum Overlay {
+    Menu(Menu),
+    Panel(Panel),
+    Picker {
+        picker: Picker,
+
+        /// The timer that sends frame callbacks to hidden workspaces.
+        tick: Option<RegistrationToken>,
+    },
+}
 
 pub struct State {
     repeat: Repeat,
@@ -119,13 +131,8 @@ pub struct State {
     next_workspace: u32,
     unplaced: Vec<ToplevelSurface>,
     rounded: GlesPixelProgram,
-    menu: Option<Menu>,
-    picker: Option<Picker>,
+    overlay: Option<Overlay>,
     sidebar_open: bool,
-
-    /// The timer that sends frame callbacks to hidden workspaces while the picker is open.
-    picker_tick: Option<RegistrationToken>,
-    panel: Option<Panel>,
     settings: Settings,
     settings_path: Option<PathBuf>,
 
@@ -213,11 +220,8 @@ pub fn run() {
         next_workspace: 0,
         workspaces: Vec::new(),
         unplaced: Vec::new(),
-        menu: None,
-        picker: None,
+        overlay: None,
         sidebar_open: true,
-        picker_tick: None,
-        panel: None,
         settings,
         settings_path,
         save_path: save::path(),
@@ -709,24 +713,32 @@ impl State {
         )
     }
 
+    fn workspace_ids(&self) -> Vec<u32> {
+        self.workspaces.iter().map(|known| known.id).collect()
+    }
+
     fn open_picker(&mut self) {
-        if self.picker.is_some() {
+        if matches!(self.overlay, Some(Overlay::Picker { .. })) {
             return;
         }
-        self.picker = Some(Picker::new(self.current()));
         let tick =
             self.loop_handle
                 .insert_source(Timer::from_duration(PICKER_TICK), |_, _, state| {
                     state.tick_hidden();
                     TimeoutAction::ToDuration(PICKER_TICK)
                 });
-        self.picker_tick = tick.ok();
+        self.overlay = Some(Overlay::Picker {
+            picker: Picker::new(self.current()),
+            tick: tick.ok(),
+        });
         self.tick_hidden();
     }
 
-    fn close_picker(&mut self) {
-        self.picker = None;
-        if let Some(token) = self.picker_tick.take() {
+    fn close_overlay(&mut self) {
+        if let Some(Overlay::Picker {
+            tick: Some(token), ..
+        }) = self.overlay.take()
+        {
             self.loop_handle.remove(token);
         }
         self.request_redraw();
@@ -751,32 +763,41 @@ impl State {
         self.request_redraw();
     }
 
-    fn picker_outcome(&mut self, outcome: picker::Outcome) {
+    fn act(&mut self, outcome: Outcome) {
         match outcome {
-            picker::Outcome::Open => {}
-            picker::Outcome::Close => self.close_picker(),
-            picker::Outcome::Show(id) => {
-                self.close_picker();
-                self.show_on_active(id);
+            Outcome::Open => {}
+            Outcome::Close => self.close_overlay(),
+            Outcome::Run(action) => {
+                self.close_overlay();
+                self.run_action(action);
             }
-            picker::Outcome::New => {
-                self.close_picker();
-                self.open_palette();
-                if let Some(menu) = &mut self.menu {
-                    menu.start_new_workspace();
-                }
-            }
-            picker::Outcome::CloseWorkspace(id) => self.close_workspace(id),
-            picker::Outcome::Move { from, to } => {
+            Outcome::Apply(action) => self.run_action(action),
+        }
+        if let Some(Overlay::Picker { picker, .. }) = &mut self.overlay {
+            picker.clamp(self.workspaces.len() + 1);
+        }
+        self.request_redraw();
+    }
+
+    fn run_action(&mut self, action: Action) {
+        match action {
+            Action::Launch(argv) => self.launch(&argv),
+            Action::Settings => self.overlay = Some(Overlay::Panel(Panel::new())),
+            Action::NewWorkspace(cwd) => self.new_workspace(cwd),
+            Action::CloseWorkspace(id) => self.close_workspace(id),
+            Action::CloseTab { workspace, tab } => self.close_tab(workspace, tab),
+            Action::ShowWorkspace(id) => self.show_on_active(id),
+            Action::StartNewWorkspace => self.start_new_workspace(),
+            Action::MoveWorkspace { from, to } => {
                 let moved = self.workspaces.remove(from);
                 self.workspaces.insert(to, moved);
                 self.send_workspace_list();
             }
+            Action::ChangeSettings(settings) => {
+                let before = std::mem::replace(&mut self.settings, settings);
+                self.settings_changed(before);
+            }
         }
-        if let Some(picker) = &mut self.picker {
-            picker.selected = picker.selected.min(self.workspaces.len());
-        }
-        self.request_redraw();
     }
 
     fn workspace_shown(&mut self) {
@@ -861,12 +882,7 @@ impl State {
                     self.clear_agents(index);
                 }
             }
-            Hit::New => {
-                self.open_palette();
-                if let Some(menu) = &mut self.menu {
-                    menu.start_new_workspace();
-                }
-            }
+            Hit::New => self.start_new_workspace(),
             Hit::Palette => self.open_palette(),
             Hit::Sidebar => self.toggle_sidebar(),
             Hit::Tab(tab) => self.show_tab(tab),
@@ -876,17 +892,18 @@ impl State {
     }
 
     fn open_palette(&mut self) {
-        self.panel = None;
         let shown = &self.workspaces[self.current()];
         let (id, name, tab) = (shown.id, shown.name.clone(), shown.active_tab);
-        self.menu = Some(Menu::new(
-            apps::installed(),
-            workspace::home(),
-            id,
-            &name,
-            tab,
-        ));
-        self.request_redraw();
+        let menu = Menu::new(apps::installed(), workspace::home(), id, &name, tab);
+        self.close_overlay();
+        self.overlay = Some(Overlay::Menu(menu));
+    }
+
+    fn start_new_workspace(&mut self) {
+        self.open_palette();
+        if let Some(Overlay::Menu(menu)) = &mut self.overlay {
+            menu.start_new_workspace();
+        }
     }
 
     fn forget_stale(&mut self) {
