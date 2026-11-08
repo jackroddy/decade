@@ -249,6 +249,10 @@ impl Workspace {
 mod tests {
     use super::*;
 
+    fn at_home() -> Workspace {
+        Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA)
+    }
+
     #[test]
     fn a_taken_name_gets_the_first_free_count() {
         assert_eq!(unique_name("decade", ["foam"].into_iter()), "decade");
@@ -287,8 +291,7 @@ mod tests {
 
     #[test]
     fn pane_names_stay_unique_across_tabs() {
-        let mut workspace =
-            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let mut workspace = at_home();
         let (second, name) = workspace.add_tab(crate::panes::tests::AREA);
         assert_eq!((second, name.as_str()), (1, "terminal2"));
         let (_, name) = workspace.add_tab(crate::panes::tests::AREA);
@@ -302,8 +305,7 @@ mod tests {
 
     #[test]
     fn an_added_pane_takes_a_free_name() {
-        let mut workspace =
-            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let mut workspace = at_home();
         workspace.add_tab(crate::panes::tests::AREA);
         let id = workspace.add_pane(0, "terminal", Some(PathBuf::from("/tmp")));
         let pane = workspace.tabs[0].layout.pane(id).unwrap();
@@ -314,8 +316,7 @@ mod tests {
 
     #[test]
     fn an_empty_pane_is_kept_while_it_is_pinned_or_the_scratch_pane() {
-        let mut workspace =
-            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let mut workspace = at_home();
         assert!(!workspace.keeps_empty(&workspace.layout().panes[0]));
         workspace.toggle_scratch("terminal");
         assert!(workspace.keeps_empty(&workspace.layout().panes[0]));
@@ -326,8 +327,7 @@ mod tests {
 
     #[test]
     fn a_closing_tab_with_no_client_is_closed_and_the_workspace_closes_with_its_last_tab() {
-        let mut workspace =
-            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let mut workspace = at_home();
         workspace.add_tab(crate::panes::tests::AREA);
         assert_eq!(workspace.closed_tabs().count(), 0);
         workspace.tabs[1].closing = true;
@@ -339,8 +339,7 @@ mod tests {
 
     #[test]
     fn removing_the_active_last_tab_makes_the_one_before_it_active() {
-        let mut workspace =
-            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let mut workspace = at_home();
         workspace.add_tab(crate::panes::tests::AREA);
         workspace.add_tab(crate::panes::tests::AREA);
         workspace.active_tab = 2;
@@ -354,8 +353,7 @@ mod tests {
 
     #[test]
     fn removing_the_tab_that_holds_the_scratch_pane_leaves_no_scratch_pane() {
-        let mut workspace =
-            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let mut workspace = at_home();
         workspace.add_tab(crate::panes::tests::AREA);
         workspace.toggle_scratch("terminal2");
         workspace.remove_tab(1);
@@ -364,8 +362,7 @@ mod tests {
 
     #[test]
     fn marking_a_pane_scratch_unmarks_the_one_before_it() {
-        let mut workspace =
-            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let mut workspace = at_home();
         workspace.add_tab(crate::panes::tests::AREA);
         workspace.toggle_scratch("terminal");
         assert_eq!(workspace.scratch_pane(), Some("terminal"));
@@ -377,8 +374,7 @@ mod tests {
 
     #[test]
     fn a_pane_that_goes_takes_its_clients_claim_and_agent_state_with_it() {
-        let mut workspace =
-            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let mut workspace = at_home();
         workspace.add_tab(crate::panes::tests::AREA);
         workspace.channel_line(1, r#"{"hello": {"name": "coax", "pane": "terminal2"}}"#);
         workspace.channel_line(1, r#"{"status": {"state": "working"}}"#);
@@ -390,8 +386,7 @@ mod tests {
 
     #[test]
     fn a_verb_from_the_agent_reaches_the_pane_occupant_from_agent() {
-        let mut workspace =
-            Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let mut workspace = at_home();
         workspace.add_tab(crate::panes::tests::AREA);
         workspace.channel_line(
             4,

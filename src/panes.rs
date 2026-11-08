@@ -1518,10 +1518,7 @@ pub(crate) mod tests {
     fn an_unpinned_pane_no_longer_waits_for_its_window() {
         let mut layout = three_anchors();
         layout.unpin(0);
-        let font = crate::text::Font::load(14.0);
-        let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, Chrome::default());
-        let texts = texts(&scene);
+        let texts = drawn_texts(&layout, Chrome::default());
         assert!(!texts.iter().any(|text| text == "waiting for decade.chat"));
         assert!(texts.iter().any(|text| text == "waiting for decade.code"));
     }
@@ -1611,6 +1608,13 @@ pub(crate) mod tests {
         assert_eq!(layout.pane(1).unwrap().rect.rows, terminal - 2);
     }
 
+    fn drawn_texts(layout: &Layout, chrome: Chrome) -> Vec<String> {
+        let font = crate::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, chrome);
+        texts(&scene)
+    }
+
     fn texts(scene: &Scene) -> Vec<String> {
         scene
             .shapes
@@ -1627,10 +1631,7 @@ pub(crate) mod tests {
         let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.panes[0].cwd = Some(PathBuf::from("/home/jack"));
         layout.pin(0, "decade.w0.terminal".to_string());
-        let font = crate::text::Font::load(14.0);
-        let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, Chrome::default());
-        let texts = texts(&scene);
+        let texts = drawn_texts(&layout, Chrome::default());
         assert!(texts.iter().any(|text| text == "shell exited"));
         assert!(texts.iter().any(|text| text == "restart"));
     }
@@ -1661,10 +1662,7 @@ pub(crate) mod tests {
         let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.pin(0, "org.gnome.Nautilus".to_string());
         assert!(!layout.panes[0].restartable());
-        let font = crate::text::Font::load(14.0);
-        let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, Chrome::default());
-        let texts = texts(&scene);
+        let texts = drawn_texts(&layout, Chrome::default());
         assert!(
             texts
                 .iter()
@@ -1676,14 +1674,11 @@ pub(crate) mod tests {
     #[test]
     fn an_empty_scratch_pane_says_it_is_the_scratch_pane() {
         let layout = Layout::new(AREA, "terminal".to_string());
-        let font = crate::text::Font::load(14.0);
-        let mut scene = Scene::new(&font);
         let chrome = Chrome {
             scratch: Some("terminal"),
             ..Chrome::default()
         };
-        layout.draw(&mut scene, chrome);
-        let texts = texts(&scene);
+        let texts = drawn_texts(&layout, chrome);
         assert!(texts.iter().any(|text| text == "agents show things here"));
         assert!(!texts.iter().any(|text| text == "no client"));
     }

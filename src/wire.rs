@@ -1357,33 +1357,38 @@ mod tests {
         ]
     }
 
-    fn encode_viewer(messages: Vec<ViewerMessage>) -> (Vec<u8>, Vec<OwnedFd>) {
+    type Encode<T> = fn(T, &mut Vec<u8>, &mut Vec<OwnedFd>) -> Result<(), Error>;
+
+    fn encode<T>(messages: Vec<T>, encode_one: Encode<T>) -> (Vec<u8>, Vec<OwnedFd>) {
         let mut bytes = Vec::new();
         let mut fds = Vec::new();
         for message in messages {
-            message.encode(&mut bytes, &mut fds).unwrap();
+            encode_one(message, &mut bytes, &mut fds).unwrap();
         }
         (bytes, fds)
     }
 
-    fn encode_server(messages: Vec<ServerMessage>) -> (Vec<u8>, Vec<OwnedFd>) {
-        let mut bytes = Vec::new();
-        let mut fds = Vec::new();
-        for message in messages {
-            message.encode(&mut bytes, &mut fds).unwrap();
-        }
-        (bytes, fds)
-    }
-
-    fn drain_viewer(decoder: &mut Decoder, out: &mut Vec<String>) {
-        while let Some(message) = decoder.next_viewer_message().unwrap() {
-            out.push(format!("{message:?}"));
-        }
-    }
-
-    fn drain_server(decoder: &mut Decoder, out: &mut Vec<String>) {
-        while let Some(message) = decoder.next_server_message().unwrap() {
-            out.push(format!("{message:?}"));
+    /// Check that `messages` decode with `next` however their bytes split in two.
+    fn decode_split_anywhere<T: fmt::Debug>(
+        messages: fn() -> Vec<T>,
+        encode_one: Encode<T>,
+        next: fn(&mut Decoder) -> Result<Option<T>, Error>,
+    ) {
+        let len = encode(messages(), encode_one).0.len();
+        for split in 0..=len {
+            let messages = messages();
+            let expected = debug(&messages);
+            let (bytes, fds) = encode(messages, encode_one);
+            let mut decoder = Decoder::new();
+            fds.into_iter().for_each(|fd| decoder.push_fd(fd));
+            let mut decoded = Vec::new();
+            for part in [&bytes[..split], &bytes[split..]] {
+                decoder.push_bytes(part);
+                while let Some(message) = next(&mut decoder).unwrap() {
+                    decoded.push(format!("{message:?}"));
+                }
+            }
+            assert_eq!(decoded, expected, "split at {split}");
         }
     }
 
@@ -1404,65 +1409,21 @@ mod tests {
     // included, matches the originals exactly
 
     #[test]
-    fn every_viewer_message_survives_encoding_and_decoding() {
-        let messages = viewer_messages();
-        let expected = debug(&messages);
-        let (bytes, fds) = encode_viewer(messages);
-        let mut decoder = Decoder::new();
-        decoder.push_bytes(&bytes);
-        fds.into_iter().for_each(|fd| decoder.push_fd(fd));
-        let mut decoded = Vec::new();
-        drain_viewer(&mut decoder, &mut decoded);
-        assert_eq!(decoded, expected);
-    }
-
-    #[test]
-    fn every_server_message_survives_encoding_and_decoding() {
-        let messages = server_messages();
-        let expected = debug(&messages);
-        let (bytes, fds) = encode_server(messages);
-        let mut decoder = Decoder::new();
-        decoder.push_bytes(&bytes);
-        fds.into_iter().for_each(|fd| decoder.push_fd(fd));
-        let mut decoded = Vec::new();
-        drain_server(&mut decoder, &mut decoded);
-        assert_eq!(decoded, expected);
-    }
-
-    #[test]
     fn viewer_messages_decode_when_the_bytes_split_at_any_offset() {
-        let len = encode_viewer(viewer_messages()).0.len();
-        for split in 0..=len {
-            let messages = viewer_messages();
-            let expected = debug(&messages);
-            let (bytes, fds) = encode_viewer(messages);
-            let mut decoder = Decoder::new();
-            fds.into_iter().for_each(|fd| decoder.push_fd(fd));
-            let mut decoded = Vec::new();
-            decoder.push_bytes(&bytes[..split]);
-            drain_viewer(&mut decoder, &mut decoded);
-            decoder.push_bytes(&bytes[split..]);
-            drain_viewer(&mut decoder, &mut decoded);
-            assert_eq!(decoded, expected, "split at {split}");
-        }
+        decode_split_anywhere(
+            viewer_messages,
+            ViewerMessage::encode,
+            Decoder::next_viewer_message,
+        );
     }
 
     #[test]
     fn server_messages_decode_when_the_bytes_split_at_any_offset() {
-        let len = encode_server(server_messages()).0.len();
-        for split in 0..=len {
-            let messages = server_messages();
-            let expected = debug(&messages);
-            let (bytes, fds) = encode_server(messages);
-            let mut decoder = Decoder::new();
-            fds.into_iter().for_each(|fd| decoder.push_fd(fd));
-            let mut decoded = Vec::new();
-            decoder.push_bytes(&bytes[..split]);
-            drain_server(&mut decoder, &mut decoded);
-            decoder.push_bytes(&bytes[split..]);
-            drain_server(&mut decoder, &mut decoded);
-            assert_eq!(decoded, expected, "split at {split}");
-        }
+        decode_split_anywhere(
+            server_messages,
+            ServerMessage::encode,
+            Decoder::next_server_message,
+        );
     }
 
     #[test]
@@ -1471,26 +1432,29 @@ mod tests {
         let raw: Vec<i32> = planes.iter().map(|fd| fd.as_raw_fd()).collect();
         let fence = fd();
         let fence_raw = fence.as_raw_fd();
-        let (bytes, _) = encode_server(vec![
-            ServerMessage::Buffer {
-                id: 1,
-                width: 1,
-                height: 1,
-                format: 0,
-                modifier: 0,
-                planes: (0..3)
-                    .map(|_| Plane {
-                        fd: fd(),
-                        offset: 0,
-                        stride: 4,
-                    })
-                    .collect(),
-            },
-            ServerMessage::Frame {
-                id: 1,
-                fence: Some(fd()),
-            },
-        ]);
+        let (bytes, _) = encode(
+            vec![
+                ServerMessage::Buffer {
+                    id: 1,
+                    width: 1,
+                    height: 1,
+                    format: 0,
+                    modifier: 0,
+                    planes: (0..3)
+                        .map(|_| Plane {
+                            fd: fd(),
+                            offset: 0,
+                            stride: 4,
+                        })
+                        .collect(),
+                },
+                ServerMessage::Frame {
+                    id: 1,
+                    fence: Some(fd()),
+                },
+            ],
+            ServerMessage::encode,
+        );
         let mut decoder = Decoder::new();
         decoder.push_bytes(&bytes);
         planes.into_iter().for_each(|fd| decoder.push_fd(fd));
@@ -1510,37 +1474,24 @@ mod tests {
     }
 
     #[test]
-    fn a_complete_message_whose_fds_have_not_arrived_is_an_error() {
-        let (bytes, _) = encode_viewer(vec![ViewerMessage::Request {
-            selection: Selection::Clipboard,
-            serial: 1,
-            mime: "text/plain".into(),
-            fd: fd(),
-        }]);
-        let mut decoder = Decoder::new();
-        decoder.push_bytes(&bytes);
-        assert!(matches!(
-            decoder.next_viewer_message(),
-            Err(Error::MissingFds)
-        ));
-    }
-
-    #[test]
     fn a_buffer_with_fewer_fds_queued_than_planes_is_an_error() {
-        let (bytes, mut fds) = encode_server(vec![ServerMessage::Buffer {
-            id: 1,
-            width: 1,
-            height: 1,
-            format: 0,
-            modifier: 0,
-            planes: (0..3)
-                .map(|_| Plane {
-                    fd: fd(),
-                    offset: 0,
-                    stride: 4,
-                })
-                .collect(),
-        }]);
+        let (bytes, mut fds) = encode(
+            vec![ServerMessage::Buffer {
+                id: 1,
+                width: 1,
+                height: 1,
+                format: 0,
+                modifier: 0,
+                planes: (0..3)
+                    .map(|_| Plane {
+                        fd: fd(),
+                        offset: 0,
+                        stride: 4,
+                    })
+                    .collect(),
+            }],
+            ServerMessage::encode,
+        );
         fds.pop();
         let mut decoder = Decoder::new();
         decoder.push_bytes(&bytes);
@@ -1645,15 +1596,18 @@ mod tests {
 
     #[test]
     fn strings_carry_a_count_and_pad_to_a_word_with_zeros() {
-        let (bytes, _) = encode_server(vec![
-            ServerMessage::CursorShape {
-                shape: "text".into(),
-            },
-            ServerMessage::CursorShape {
-                shape: "default".into(),
-            },
-            ServerMessage::CursorShape { shape: "".into() },
-        ]);
+        let (bytes, _) = encode(
+            vec![
+                ServerMessage::CursorShape {
+                    shape: "text".into(),
+                },
+                ServerMessage::CursorShape {
+                    shape: "default".into(),
+                },
+                ServerMessage::CursorShape { shape: "".into() },
+            ],
+            ServerMessage::encode,
+        );
         let mut expected = header(16, 6, 0, 0);
         expected.extend_from_slice(&[4, 0, 0, 0]);
         expected.extend_from_slice(b"text");
@@ -1667,12 +1621,15 @@ mod tests {
 
     #[test]
     fn a_u64_is_written_low_word_first() {
-        let (bytes, _) = encode_viewer(vec![ViewerMessage::Formats {
-            formats: vec![Format {
-                format: 0,
-                modifier: 0x1122_3344_5566_7788,
+        let (bytes, _) = encode(
+            vec![ViewerMessage::Formats {
+                formats: vec![Format {
+                    format: 0,
+                    modifier: 0x1122_3344_5566_7788,
+                }],
             }],
-        }]);
+            ViewerMessage::encode,
+        );
         assert_eq!(
             &bytes[16..],
             [0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
@@ -1681,10 +1638,13 @@ mod tests {
 
     #[test]
     fn a_header_counts_the_fds_its_message_carries() {
-        let (bytes, fds) = encode_viewer(vec![ViewerMessage::Release {
-            id: 1,
-            fence: Some(fd()),
-        }]);
+        let (bytes, fds) = encode(
+            vec![ViewerMessage::Release {
+                id: 1,
+                fence: Some(fd()),
+            }],
+            ViewerMessage::encode,
+        );
         assert_eq!(bytes, [16, 0, 0, 0, 5, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
         assert_eq!(fds.len(), 1);
     }

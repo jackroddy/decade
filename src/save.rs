@@ -135,13 +135,17 @@ fn read(text: &str) -> Result<File, String> {
 }
 
 pub fn save(path: &Path, workspaces: &[Workspace], sidebar_open: bool) -> io::Result<()> {
-    let file = File {
+    let text =
+        to_text(workspaces.iter().map(saved).collect(), sidebar_open).map_err(io::Error::other)?;
+    files::write(path, &text)
+}
+
+fn to_text(workspaces: Vec<Saved>, sidebar_open: bool) -> Result<String, toml::ser::Error> {
+    toml::to_string(&File {
         version: VERSION,
         sidebar_open,
-        workspaces: workspaces.iter().map(saved).collect(),
-    };
-    let text = toml::to_string(&file).map_err(io::Error::other)?;
-    files::write(path, &text)
+        workspaces,
+    })
 }
 
 fn saved(workspace: &Workspace) -> Saved {
@@ -388,12 +392,7 @@ mod tests {
     #[test]
     fn a_saved_workspace_reads_back_with_the_same_tree_and_panes() {
         let workspace = workspace();
-        let text = toml::to_string(&File {
-            version: VERSION,
-            sidebar_open: true,
-            workspaces: vec![saved(&workspace)],
-        })
-        .unwrap();
+        let text = to_text(vec![saved(&workspace)], true).unwrap();
         let file = read(&text).unwrap();
         let back = &file.workspaces[0];
         assert_eq!(back, &saved(&workspace));
@@ -461,12 +460,7 @@ mod tests {
             .layout
             .add_transient("logs".to_string());
         workspace.active_tab = second;
-        let text = toml::to_string(&File {
-            version: VERSION,
-            sidebar_open: false,
-            workspaces: vec![saved(&workspace)],
-        })
-        .unwrap();
+        let text = to_text(vec![saved(&workspace)], false).unwrap();
         let file = read(&text).unwrap();
         assert!(!file.sidebar_open);
         let back = &file.workspaces[0];
@@ -491,12 +485,7 @@ mod tests {
     fn the_scratch_pane_reads_back_by_name() {
         let mut workspace = workspace();
         workspace.toggle_scratch("nautilus");
-        let text = toml::to_string(&File {
-            version: VERSION,
-            sidebar_open: true,
-            workspaces: vec![saved(&workspace), saved(&self::workspace())],
-        })
-        .unwrap();
+        let text = to_text(vec![saved(&workspace), saved(&self::workspace())], true).unwrap();
         let file = read(&text).unwrap();
         assert_eq!(file.workspaces[0].scratch.as_deref(), Some("nautilus"));
         assert_eq!(file.workspaces[1].scratch, None);
@@ -567,12 +556,7 @@ cwd = "/tmp"
         let mut saved = saved(&workspace());
         let tabs = vec![PathBuf::from("/tmp"), PathBuf::from("/home/jack")];
         saved.tabs[0].panes[1].tabs = tabs.clone();
-        let text = toml::to_string(&File {
-            version: VERSION,
-            sidebar_open: true,
-            workspaces: vec![saved],
-        })
-        .unwrap();
+        let text = to_text(vec![saved], true).unwrap();
         let back = &read(&text).unwrap().workspaces[0];
         let (_, restored) = back.workspace(0, crate::panes::tests::AREA).unwrap();
         let expected: Vec<TerminalTab> = tabs
