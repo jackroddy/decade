@@ -3,7 +3,7 @@
   "title": "51b88db has no changelog entry",
   "body": "The last five commits all touch `CHANGELOG.md` except 51b88db, \"Crop picker thumbnails to their cell and fit them to the pane area\". It changes how the picker draws, which is an unreleased feature from 38c02c6, so the Unreleased entry for the picker may already cover it.\n\n## Proposal\n\nRead the picker's Unreleased entry and either leave it or add one line under `### Changed`.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "simplification"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T21:16:34.870350437Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T18:44:01.308947017Z",
-  "updated_at": "2026-11-08T21:01:34.870350437Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T21:01:40.279609916Z",
+  "closed_at": "2026-11-08T21:01:40.279609916Z",
+  "close_reason": "No entry needed. The picker came after v0.1.0 (38c02c6), so 51b88db changed an unreleased feature. The Unreleased Added entry for Super+Tab already describes cells that show their panes scaled down.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "99a376f",
+      "branch": "simplify"
+    }
   }
 }
