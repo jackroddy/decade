@@ -1,10 +1,10 @@
 use std::cmp::Reverse;
 
-use crate::draw::Scene;
-use crate::palette;
-use crate::palette::Rgba;
-use crate::panes::CellRect;
-use crate::text::fit;
+use crate::server::chrome::draw::Scene;
+use crate::server::chrome::palette;
+use crate::server::chrome::palette::Rgba;
+use crate::server::chrome::text::fit;
+use crate::server::panes::CellRect;
 use decade_channel::AgentState;
 
 /// The rows above the panes that the top bar takes.

@@ -1,0 +1,11 @@
+pub(crate) mod apps;
+pub(crate) mod channel;
+pub(crate) mod children;
+pub(crate) mod chrome;
+pub(crate) mod compositor;
+pub(crate) mod mcp;
+pub(crate) mod panes;
+pub(crate) mod proc;
+pub(crate) mod save;
+pub(crate) mod scratch;
+pub(crate) mod workspace;

@@ -12,13 +12,13 @@ use smithay::backend::renderer::utils::draw_render_elements;
 use smithay::backend::renderer::{Bind, Color32F, Frame, Renderer};
 use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
 
-use crate::draw::{Element, Paint, Scene, Shrink};
-use crate::frame;
-use crate::palette::{ACCENT, Rgba};
-use crate::panes::{BACKGROUND, Chrome, Layout};
-use crate::picker::{Grid, Picker};
-use crate::settings::Settings;
-use crate::workspace::Workspace;
+use crate::server::chrome::draw::{Element, Paint, Scene, Shrink};
+use crate::server::chrome::frame;
+use crate::server::chrome::palette::{ACCENT, Rgba};
+use crate::server::chrome::picker::{Grid, Picker};
+use crate::server::chrome::settings::Settings;
+use crate::server::panes::{BACKGROUND, Chrome, Layout};
+use crate::server::workspace::Workspace;
 
 use super::input::Drag;
 use super::{Overlay, State, send_frames_surface_tree};

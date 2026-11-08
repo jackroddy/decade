@@ -8,9 +8,9 @@ use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::{Logical, Physical, Point, SERIAL_COUNTER};
 
-use crate::menu::{MenuKey, Outcome};
-use crate::panes;
-use crate::panes::{BarButton, Boundary, Direction, Drop};
+use crate::server::chrome::menu::{MenuKey, Outcome};
+use crate::server::panes;
+use crate::server::panes::{BarButton, Boundary, Direction, Drop};
 use crate::wire::{self, BTN_LEFT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
 
 use super::{Overlay, State};

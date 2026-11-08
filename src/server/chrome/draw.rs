@@ -10,9 +10,9 @@ use smithay::backend::renderer::{Color32F, Renderer};
 use smithay::render_elements;
 use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
 
-use crate::palette::Rgba;
-use crate::panes::CellRect;
-use crate::text::{Font, Text};
+use crate::server::chrome::palette::Rgba;
+use crate::server::chrome::text::{Font, Text};
+use crate::server::panes::CellRect;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Face {

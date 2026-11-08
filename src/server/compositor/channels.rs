@@ -7,10 +7,10 @@ use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{Interest, Mode as CalloopMode, PostAction};
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
-use crate::channel::Out;
 use crate::lines::Lines;
-use crate::mcp;
-use crate::scratch::{self, Launch};
+use crate::server::channel::Out;
+use crate::server::mcp;
+use crate::server::scratch::{self, Launch};
 
 use super::State;
 

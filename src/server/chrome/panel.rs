@@ -1,8 +1,8 @@
 use smithay::utils::{Physical, Size};
 
-use crate::draw::{Face, Scene};
-use crate::menu::{Action, MenuKey, Outcome, draw_box};
-use crate::settings::{KNOBS, Settings};
+use crate::server::chrome::draw::{Face, Scene};
+use crate::server::chrome::menu::{Action, MenuKey, Outcome, draw_box};
+use crate::server::chrome::settings::{KNOBS, Settings};
 
 /// The width in cells of a value between its chevrons.
 const VALUE_WIDTH: usize = 7;

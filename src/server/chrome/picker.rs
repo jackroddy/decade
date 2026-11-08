@@ -1,11 +1,11 @@
 use smithay::utils::{Physical, Point, Rectangle, Size};
 
-use crate::draw::{Face, Scene};
-use crate::menu::{Action, MenuKey, Outcome};
-use crate::palette::{self, ACCENT};
-use crate::text::Text;
-use crate::text::fit;
-use crate::workspace::Workspace;
+use crate::server::chrome::draw::{Face, Scene};
+use crate::server::chrome::menu::{Action, MenuKey, Outcome};
+use crate::server::chrome::palette::{self, ACCENT};
+use crate::server::chrome::text::Text;
+use crate::server::chrome::text::fit;
+use crate::server::workspace::Workspace;
 
 const DRAG_THRESHOLD: i32 = 8;
 

@@ -7,7 +7,7 @@ use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{Interest, Mode as CalloopMode, PostAction, RegistrationToken};
 use smithay::utils::{Physical, Point};
 
-use crate::pool::Pool;
+use super::pool::Pool;
 use crate::wire::{
     self, CAPS_LOCK, Decoder, NUM_LOCK, Outbox, SCALE, Selection, ServerMessage, ViewerMessage,
 };

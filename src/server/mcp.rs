@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use smithay::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
 
-use crate::scratch::Launch;
+use crate::server::scratch::Launch;
 
 pub struct Request {
     /// The workspace named in the address the call came in on.

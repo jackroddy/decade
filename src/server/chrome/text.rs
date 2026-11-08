@@ -8,10 +8,10 @@ use smithay::utils::{Physical, Point, Rectangle, Size};
 use swash::scale::{Render, ScaleContext, Source};
 use swash::{CacheKey, FontRef};
 
-use crate::draw::Face;
-use crate::palette::Rgba;
-use crate::panes::CellRect;
-use crate::settings::Settings;
+use crate::server::chrome::draw::Face;
+use crate::server::chrome::palette::Rgba;
+use crate::server::chrome::settings::Settings;
+use crate::server::panes::CellRect;
 
 const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 

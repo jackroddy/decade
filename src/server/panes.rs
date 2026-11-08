@@ -6,10 +6,10 @@ use smithay::wayland::shell::xdg::{
     ToplevelSurface, XdgToplevelSurfaceData, XdgToplevelSurfaceRoleAttributes,
 };
 
-use crate::draw::{Face, Scene};
-use crate::palette;
-use crate::palette::Rgba;
-use crate::text::fit;
+use crate::server::chrome::draw::{Face, Scene};
+use crate::server::chrome::palette;
+use crate::server::chrome::palette::Rgba;
+use crate::server::chrome::text::fit;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;
@@ -1486,17 +1486,19 @@ pub(crate) mod tests {
             bar: true,
             ..Chrome::default()
         };
-        let font = crate::text::Font::load(14.0);
+        let font = crate::server::chrome::text::Font::load(14.0);
         let mut drawn = Scene::new(&font);
         layout.draw(&mut drawn, chrome);
         let waiting = drawn.shapes.iter().any(|shape| {
-            matches!(shape, crate::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
+            matches!(shape, crate::server::chrome::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
         });
         assert!(!waiting);
         let mut ghost = Scene::new(&font);
         layout.draw_ghost(0, &mut ghost, chrome);
         let name = ghost.shapes.iter().find_map(|shape| match shape {
-            crate::draw::Shape::Text { at, text, .. } if text == "chat" => Some(*at),
+            crate::server::chrome::draw::Shape::Text { at, text, .. } if text == "chat" => {
+                Some(*at)
+            }
             _ => None,
         });
         assert_eq!(name, Some((font.cell_width as i32, 0).into()));
@@ -1558,11 +1560,13 @@ pub(crate) mod tests {
         assert_eq!(layout.drop_at(1, 30, 1), Some(Drop::Edge(Side::Above)));
         assert_eq!(layout.drop_at(1, 30, 40), Some(Drop::Edge(Side::Below)));
 
-        let font = crate::text::Font::load(14.0);
+        let font = crate::server::chrome::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
         layout.draw_drop(&mut scene, 1, (24, 20));
         let active = scene.shapes.iter().find_map(|shape| match shape {
-            crate::draw::Shape::Rect { at, color, .. } if color[3] < 1.0 => Some(*at),
+            crate::server::chrome::draw::Shape::Rect { at, color, .. } if color[3] < 1.0 => {
+                Some(*at)
+            }
             _ => None,
         });
         assert_eq!(
@@ -1609,7 +1613,7 @@ pub(crate) mod tests {
     }
 
     fn drawn_texts(layout: &Layout, chrome: Chrome) -> Vec<String> {
-        let font = crate::text::Font::load(14.0);
+        let font = crate::server::chrome::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
         layout.draw(&mut scene, chrome);
         texts(&scene)
@@ -1620,7 +1624,9 @@ pub(crate) mod tests {
             .shapes
             .iter()
             .filter_map(|shape| match shape {
-                crate::draw::Shape::Text { text, .. } => Some(text.trim().to_string()),
+                crate::server::chrome::draw::Shape::Text { text, .. } => {
+                    Some(text.trim().to_string())
+                }
                 _ => None,
             })
             .collect()
@@ -1640,7 +1646,7 @@ pub(crate) mod tests {
     fn a_long_name_on_the_ctrl_bar_is_cut_before_the_icons() {
         let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.panes[0].name = "x".repeat(200);
-        let font = crate::text::Font::load(14.0);
+        let font = crate::server::chrome::text::Font::load(14.0);
         let mut scene = Scene::new(&font);
         let chrome = Chrome {
             bar: true,

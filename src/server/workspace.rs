@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use smithay::reexports::calloop::RegistrationToken;
 
-use crate::channel::{Out, Router};
-use crate::panes::{CellRect, Layout, Pane};
-use crate::scratch::Scratch;
+use crate::server::channel::{Out, Router};
+use crate::server::panes::{CellRect, Layout, Pane};
+use crate::server::scratch::Scratch;
 use decade_channel::AgentState;
 use serde_json::Value;
 
@@ -244,7 +244,11 @@ mod tests {
     use super::*;
 
     fn at_home() -> Workspace {
-        Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA)
+        Workspace::new(
+            0,
+            PathBuf::from("/home/jack"),
+            crate::server::panes::tests::AREA,
+        )
     }
 
     #[test]
@@ -261,20 +265,24 @@ mod tests {
         let workspace = Workspace::new(
             0,
             PathBuf::from("/home/jack/projects/decade"),
-            crate::panes::tests::AREA,
+            crate::server::panes::tests::AREA,
         );
         assert_eq!(workspace.name, "decade");
     }
 
     #[test]
     fn a_workspace_at_the_root_is_named_after_the_path() {
-        let workspace = Workspace::new(0, PathBuf::from("/"), crate::panes::tests::AREA);
+        let workspace = Workspace::new(0, PathBuf::from("/"), crate::server::panes::tests::AREA);
         assert_eq!(workspace.name, "/");
     }
 
     #[test]
     fn a_new_workspace_holds_one_terminal_pane() {
-        let workspace = Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let workspace = Workspace::new(
+            0,
+            PathBuf::from("/home/jack"),
+            crate::server::panes::tests::AREA,
+        );
         let names: Vec<&str> = workspace
             .layout()
             .panes
@@ -287,9 +295,9 @@ mod tests {
     #[test]
     fn pane_names_stay_unique_across_tabs() {
         let mut workspace = at_home();
-        let (second, name) = workspace.add_tab(crate::panes::tests::AREA);
+        let (second, name) = workspace.add_tab(crate::server::panes::tests::AREA);
         assert_eq!((second, name.as_str()), (1, "terminal2"));
-        let (_, name) = workspace.add_tab(crate::panes::tests::AREA);
+        let (_, name) = workspace.add_tab(crate::server::panes::tests::AREA);
         assert_eq!(name, "terminal3");
         assert_eq!(workspace.unique_pane_name("terminal"), "terminal4");
         assert_eq!(workspace.unique_pane_name("nautilus"), "nautilus");
@@ -301,7 +309,7 @@ mod tests {
     #[test]
     fn an_added_pane_takes_a_free_name() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
         let id = workspace.add_pane(0, "terminal", Some(PathBuf::from("/tmp")));
         let pane = workspace.tabs[0].layout.pane(id).unwrap();
         assert_eq!(pane.name, "terminal3");
@@ -323,7 +331,7 @@ mod tests {
     #[test]
     fn a_closing_tab_with_no_client_is_closed_and_the_workspace_closes_with_its_last_tab() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
         assert_eq!(workspace.closed_tabs().count(), 0);
         workspace.tabs[1].closing = true;
         assert_eq!(workspace.closed_tabs().collect::<Vec<_>>(), [1]);
@@ -335,8 +343,8 @@ mod tests {
     #[test]
     fn removing_the_active_last_tab_makes_the_one_before_it_active() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::panes::tests::AREA);
-        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.active_tab = 2;
         assert!(workspace.remove_tab(2));
         assert_eq!(workspace.active_tab, 1);
@@ -349,7 +357,7 @@ mod tests {
     #[test]
     fn removing_the_tab_that_holds_the_scratch_pane_leaves_no_scratch_pane() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.toggle_scratch("terminal2");
         workspace.remove_tab(1);
         assert_eq!(workspace.scratch_pane(), None);
@@ -358,7 +366,7 @@ mod tests {
     #[test]
     fn marking_a_pane_scratch_unmarks_the_one_before_it() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.toggle_scratch("terminal");
         assert_eq!(workspace.scratch_pane(), Some("terminal"));
         workspace.toggle_scratch("terminal2");
@@ -370,7 +378,7 @@ mod tests {
     #[test]
     fn a_pane_that_goes_takes_its_clients_claim_and_agent_state_with_it() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.channel_line(1, r#"{"hello": {"name": "coax", "pane": "terminal2"}}"#);
         workspace.channel_line(1, r#"{"status": {"state": "working"}}"#);
         assert_eq!(workspace.agent_state(), Some(AgentState::Working));
@@ -382,7 +390,7 @@ mod tests {
     #[test]
     fn a_verb_from_the_agent_reaches_the_pane_occupant_from_agent() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.channel_line(
             4,
             r#"{"hello": {"name": "code-pane", "pane": "terminal2"}}"#,

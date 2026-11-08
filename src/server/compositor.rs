@@ -1,5 +1,6 @@
 mod channels;
 mod input;
+mod pool;
 mod render;
 mod selection;
 mod viewers;
@@ -58,22 +59,22 @@ use smithay::{
     delegate_xdg_shell,
 };
 
-use crate::apps;
-use crate::children::Children;
 use crate::control::{self, viewer_socket_path};
 use crate::files;
-use crate::frame::{self, Hit};
 use crate::gpu::Gpu;
-use crate::mcp;
-use crate::menu::{Action, Menu, Outcome};
-use crate::panel::Panel;
-use crate::panes::{self as panes, BarButton, CellRect, Layout, Pane};
-use crate::picker::{Grid, Picker};
-use crate::save::{self, TerminalTab};
-use crate::settings::{self, Settings};
-use crate::text::Text;
+use crate::server::apps;
+use crate::server::children::Children;
+use crate::server::chrome::frame::{self, Hit};
+use crate::server::chrome::menu::{Action, Menu, Outcome};
+use crate::server::chrome::panel::Panel;
+use crate::server::chrome::picker::{Grid, Picker};
+use crate::server::chrome::settings::{self, Settings};
+use crate::server::chrome::text::Text;
+use crate::server::mcp;
+use crate::server::panes::{self as panes, BarButton, CellRect, Layout, Pane};
+use crate::server::save::{self, TerminalTab};
+use crate::server::workspace::{self, Workspace};
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
-use crate::workspace::{self, Workspace};
 
 use input::{Drag, Repeat};
 use selection::Offered;

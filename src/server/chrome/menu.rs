@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 
 use smithay::utils::{Physical, Size};
 
-use crate::apps::App;
-use crate::draw::{Face, Scene};
-use crate::palette::{self, Rgba};
-use crate::settings::Settings;
-use crate::text::{fit, tail};
+use crate::server::apps::App;
+use crate::server::chrome::draw::{Face, Scene};
+use crate::server::chrome::palette::{self, Rgba};
+use crate::server::chrome::settings::Settings;
+use crate::server::chrome::text::{fit, tail};
 
 /// The width in cells of the palette, the New workspace browser and the settings panel.
 const WIDTH: i32 = 40;

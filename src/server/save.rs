@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::files;
-use crate::panes::{Axis, CellRect, Layout, Node, Pane};
-use crate::proc;
-use crate::workspace::Workspace;
+use crate::server::panes::{Axis, CellRect, Layout, Node, Pane};
+use crate::server::proc;
+use crate::server::workspace::Workspace;
 
 const VERSION: u32 = 2;
 
@@ -374,7 +374,7 @@ mod tests {
         let mut workspace = Workspace::new(
             2,
             PathBuf::from("/home/jack/projects/decade"),
-            crate::panes::tests::AREA,
+            crate::server::panes::tests::AREA,
         );
         let layout = workspace.layout_mut();
         let code = layout.add_transient("code".to_string());
@@ -386,7 +386,10 @@ mod tests {
     }
 
     fn first_layout(saved: &Saved) -> Layout {
-        saved.layouts(crate::panes::tests::AREA).unwrap().remove(0)
+        saved
+            .layouts(crate::server::panes::tests::AREA)
+            .unwrap()
+            .remove(0)
     }
 
     #[test]
@@ -449,13 +452,13 @@ mod tests {
     fn a_tree_naming_a_missing_pane_is_refused() {
         let mut saved = saved(&workspace());
         saved.tabs[0].panes.pop();
-        assert!(saved.layouts(crate::panes::tests::AREA).is_err());
+        assert!(saved.layouts(crate::server::panes::tests::AREA).is_err());
     }
 
     #[test]
     fn two_tabs_read_back_with_their_trees_and_the_active_tab() {
         let mut workspace = workspace();
-        let (second, _) = workspace.add_tab(crate::panes::tests::AREA);
+        let (second, _) = workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.tabs[second]
             .layout
             .add_transient("logs".to_string());
@@ -466,7 +469,7 @@ mod tests {
         let back = &file.workspaces[0];
         assert_eq!(back, &saved(&workspace));
         assert_eq!(back.active_tab, 1);
-        let layouts = back.layouts(crate::panes::tests::AREA).unwrap();
+        let layouts = back.layouts(crate::server::panes::tests::AREA).unwrap();
         let names: Vec<Vec<&str>> = layouts
             .iter()
             .map(|layout| layout.panes.iter().map(|pane| pane.name.as_str()).collect())
@@ -523,7 +526,7 @@ cwd = "/tmp"
         assert!(file.sidebar_open);
         let back = &file.workspaces[0];
         assert_eq!(back.active_tab, 0);
-        let layouts = back.layouts(crate::panes::tests::AREA).unwrap();
+        let layouts = back.layouts(crate::server::panes::tests::AREA).unwrap();
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].panes.len(), 2);
         assert_eq!(layouts[0].pane(layouts[0].focused).unwrap().name, "code");
@@ -532,11 +535,11 @@ cwd = "/tmp"
     #[test]
     fn a_pane_name_repeated_in_another_tab_is_refused() {
         let mut workspace = workspace();
-        workspace.add_tab(crate::panes::tests::AREA);
+        workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.tabs[1].layout.panes[0].name = "code".to_string();
         assert!(
             saved(&workspace)
-                .layouts(crate::panes::tests::AREA)
+                .layouts(crate::server::panes::tests::AREA)
                 .is_err()
         );
     }
@@ -558,7 +561,9 @@ cwd = "/tmp"
         saved.tabs[0].panes[1].tabs = tabs.clone();
         let text = to_text(vec![saved], true).unwrap();
         let back = &read(&text).unwrap().workspaces[0];
-        let (_, restored) = back.workspace(0, crate::panes::tests::AREA).unwrap();
+        let (_, restored) = back
+            .workspace(0, crate::server::panes::tests::AREA)
+            .unwrap();
         let expected: Vec<TerminalTab> = tabs
             .into_iter()
             .map(|cwd| TerminalTab {

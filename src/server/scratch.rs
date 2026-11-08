@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::proc;
+use crate::server::proc;
 
 /// How many parents up from a window's client to look for the program
 /// `scratch.open` started.

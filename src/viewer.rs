@@ -1,4 +1,5 @@
 mod clipboard;
+mod hypr;
 
 use std::collections::HashMap;
 use std::os::fd::{AsFd, OwnedFd};
@@ -52,11 +53,11 @@ use wayland_protocols::wp::viewporter::client::{
 };
 
 use crate::control::connect_or_start;
-use crate::hypr::{self, Hyprland};
 use crate::lines::Lines;
-use crate::palette::BACKGROUND;
+use crate::server::chrome::palette::BACKGROUND;
 use crate::wire::{self, Decoder, Format, Outbox, Plane, SCALE, ServerMessage, ViewerMessage};
 use clipboard::Clipboard;
+use hypr::Hyprland;
 
 const DEFAULT_SIZE: (u32, u32) = (1280, 800);
 

@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
-use crate::workspace::{Workspace, app_id_prefix};
+use crate::server::workspace::{Workspace, app_id_prefix};
 
 /// The programs decade started, and what each one is told about decade.
 pub struct Children {
@@ -105,7 +105,11 @@ mod tests {
             PathBuf::from("/run/user/1000"),
             Some("http://127.0.0.1:4000/mcp".to_string()),
         );
-        let workspace = Workspace::new(3, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let workspace = Workspace::new(
+            3,
+            PathBuf::from("/home/jack"),
+            crate::server::panes::tests::AREA,
+        );
         let ghostty = children.ghostty(&workspace, "logs", "logs.t2", Path::new("/tmp"));
         let pid = std::process::id();
         assert_eq!(ghostty.get_program(), "ghostty");
@@ -131,7 +135,11 @@ mod tests {
     #[test]
     fn a_program_outside_a_pane_runs_in_the_workspace_directory_with_no_pane() {
         let children = Children::new(OsString::from("wayland-9"), PathBuf::from("/run"), None);
-        let workspace = Workspace::new(0, PathBuf::from("/home/jack"), crate::panes::tests::AREA);
+        let workspace = Workspace::new(
+            0,
+            PathBuf::from("/home/jack"),
+            crate::server::panes::tests::AREA,
+        );
         let command = children.command(&workspace, "nautilus", None);
         assert_eq!(command.get_current_dir(), Some(Path::new("/home/jack")));
         assert_eq!(env(&command, "DECADE_PANE"), None);
