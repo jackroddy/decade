@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::files;
 use crate::panes::{Axis, CellRect, Layout, Node, Pane};
+use crate::proc;
 use crate::workspace::Workspace;
 
 const VERSION: u32 = 2;
@@ -226,18 +227,7 @@ fn saved_node(node: &Node, name_of: &impl Fn(usize) -> String) -> SavedNode {
 
 /// The cwd of the shell running under a ghostty.
 fn shell_cwd(ghostty: u32) -> Option<PathBuf> {
-    let tasks = std::fs::read_dir(format!("/proc/{ghostty}/task")).ok()?;
-    let shell = tasks
-        .flatten()
-        .filter_map(|task| std::fs::read_to_string(task.path().join("children")).ok())
-        .flat_map(|children| {
-            children
-                .split_whitespace()
-                .filter_map(|pid| pid.parse::<u32>().ok())
-                .collect::<Vec<_>>()
-        })
-        .next()?;
-    std::fs::read_link(format!("/proc/{shell}/cwd")).ok()
+    proc::first_child(ghostty).and_then(proc::cwd)
 }
 
 /// A terminal tab to start in a restored pane.
@@ -560,26 +550,6 @@ cwd = "/tmp"
                 .layouts(crate::panes::tests::AREA)
                 .is_err()
         );
-    }
-
-    #[test]
-    fn the_shell_cwd_is_read_from_the_first_child_of_the_process() {
-        let mut parent = std::process::Command::new("sh")
-            .args(["-c", "(cd / && sleep 5); true"])
-            .current_dir(std::env::temp_dir())
-            .spawn()
-            .unwrap();
-        let mut cwd = None;
-        for _ in 0..100 {
-            cwd = shell_cwd(parent.id());
-            if cwd.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        let _ = parent.kill();
-        let _ = parent.wait();
-        assert_eq!(cwd.as_deref(), Some(Path::new("/")));
     }
 
     #[test]

@@ -4,6 +4,8 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+use crate::proc;
+
 /// How many parents up from a window's client to look for the program
 /// `scratch.open` started.
 const ANCESTRY_DEPTH: usize = 8;
@@ -71,7 +73,7 @@ pub fn descends_from(pid: u32, ancestor: u32) -> bool {
         if pid == ancestor {
             return true;
         }
-        match parent(pid) {
+        match proc::parent(pid) {
             Some(parent) if parent > 1 => pid = parent,
             _ => return false,
         }
@@ -79,19 +81,9 @@ pub fn descends_from(pid: u32, ancestor: u32) -> bool {
     false
 }
 
-fn parent(pid: u32) -> Option<u32> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-
-    // the command name sits in parentheses and may hold spaces or ')', so
-    // the fields are read after the last ')': state, then the parent pid
-    let (_, fields) = stat.rsplit_once(')')?;
-    fields.split_whitespace().nth(1)?.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     #[test]
     fn only_a_bare_decade_program_on_the_path_passes() {
@@ -110,32 +102,17 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    fn first_child(pid: u32) -> Option<u32> {
-        let children = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).ok()?;
-        children.split_whitespace().next()?.parse().ok()
-    }
-
     #[test]
     fn a_grandchild_descends_from_the_process_that_started_it() {
         // the subshell forks sleep rather than becoming it, since a
         // command follows it
-        let mut parent = Command::new("sh")
-            .args(["-c", "(sleep 5; true) & wait"])
-            .spawn()
-            .unwrap();
-        let mut grandchild = None;
-        for _ in 0..100 {
-            grandchild = first_child(parent.id()).and_then(first_child);
-            if grandchild.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        let descends = grandchild.is_some_and(|pid| descends_from(pid, parent.id()));
-        let unrelated = descends_from(std::process::id(), parent.id());
-        let _ = parent.kill();
-        let _ = parent.wait();
-        assert!(descends);
-        assert!(!unrelated);
+        let found = proc::tests::under_shell("(sleep 5; true) & wait", |shell| {
+            let grandchild = proc::first_child(proc::first_child(shell)?)?;
+            Some((
+                descends_from(grandchild, shell),
+                descends_from(std::process::id(), shell),
+            ))
+        });
+        assert_eq!(found, Some((true, false)));
     }
 }

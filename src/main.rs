@@ -35,6 +35,8 @@ mod picker;
 #[cfg(target_os = "linux")]
 mod pool;
 #[cfg(target_os = "linux")]
+mod proc;
+#[cfg(target_os = "linux")]
 mod save;
 #[cfg(target_os = "linux")]
 mod scratch;
