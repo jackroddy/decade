@@ -3,7 +3,7 @@
   "title": "Literals that are the same knob written at several sites",
   "body": "Values that are the same number or string at several sites. Some are one knob written out more than once; others are separate knobs that happen to share a value, and the issue is deciding which.\n\n| value | sites | one knob? |\n|---|---|---|\n| `\"decade\"` as a directory or app name | `control.rs` 25 (runtime dir), `save.rs` 109 (state dir), `settings.rs` 111 (config dir), `main.rs` 72 (`viewer::run(\"decade\")`), `menu.rs` 263 (palette title) | the three directory names, yes |\n| `\"XDG_RUNTIME_DIR\"` | `control.rs` 22, `compositor.rs` 469, `hypr.rs` 22 | yes; see \"Runtime and XDG directories are computed in six places\" |\n| `\"DECADE_PANE\"` | set at `compositor.rs` 701 and 1842, read in `decade-channel` | yes on the server side |\n| 4096 read chunk | `viewer.rs` 805, `compositor.rs` 1722 | yes; see \"One non-blocking line reader for Hyprland events and channel clients\" |\n| 1000 ms | `CLOSE_TIMEOUT_MS`, the repeat-rate clamp at `compositor.rs` 394, `1000 / rate` at 2708, `poll(.., 1000)` in `script.rs`, a range cap in `settings.rs` | no, except the two repeat-rate sites |\n| 50 ms | `control::POLL`, `bar_hold_ms` and `grab_ms` defaults in `settings.rs` | no |\n| 5 ms | `OUTBOX_RETRY` in `compositor.rs`, a literal in `viewer.rs` 158 | yes; see \"The wire protocol's constants live in the clients instead of wire.rs\" |\n| 1 s | `FORMATS_WAIT`, `SAVE_DELAY` | no |\n| 24 and 40 | `frame::OPEN_WIDTH`, `picker::MIN_BUTTON`, `menu::WIDTH` | no |\n| JSON schema keys in `mcp.rs` | `\"description\"`, `\"object\"`, `\"properties\"`, `\"required\"`, `\"string\"` seven to nine times each, though `schema()` exists | a helper per field would remove them |\n\n## Proposal\n\nName the rows marked yes once each; the rest are covered by the issues cited or are separate knobs.",
   "type": "chore",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "simplification"
@@ -12,13 +12,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-08T21:24:12.111934813Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T18:44:01.264619509Z",
-  "updated_at": "2026-11-08T21:09:47.31613185Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T21:09:47.326627396Z",
+  "closed_at": "2026-11-08T21:09:47.326627396Z",
+  "close_reason": "Done in 80f88cd. files::DIR names decade's directory once. A note on this issue says why the other rows stay.",
+  "resolution": "done",
   "notes": [
     {
       "id": "cd88c992",
@@ -34,6 +34,9 @@
       "commit": "e2173eb",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "80f88cd",
+      "branch": "simplify"
+    }
   }
 }
