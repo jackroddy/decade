@@ -3,7 +3,7 @@
   "title": "A pane can be marked as the workspace's agent scratch pane",
   "body": "An agent in a workspace can reach that workspace's panes over MCP (`focus`, `panes`, `code.*` in `src/mcp.rs`), but has no place of its own to show Jack something. Jack's target is a decade-aware preview program in decade-apps that shows code previews, plots, images, diagrams and markdown. That program is a black box from decade's side and is not part of this issue.\n\n## Proposal\n\n- Jack marks one pane per workspace as its scratch pane, from the Ctrl bar.\n- An MCP tool lets an agent start a decade-aware program from decade-apps, by name, in the scratch pane, and send it content. decade refuses any other program and refuses when the workspace has no scratch pane.\n- The scratch mark is saved with the workspace.\n\n## Out of scope\n\nLetting an agent ask for a scratch pane to be created, with Jack confirming, is a later idea.\n\n## Open\n\n- How decade knows which programs are decade-aware: a list in decade's config, or what decade-apps installs.\n- The MCP tool's name and arguments.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-492261",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T23:31:39.730720662Z",
-  "updated_at": "2026-11-07T23:31:39.730720662Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-08T00:33:45.393613605Z",
+  "closed_at": "2026-11-08T00:33:45.393613605Z",
+  "close_reason": "Landed in bef1719. Programs allowed: bare decade-* names on PATH, matching how decade-apps names its binaries, instead of a config list. GUI programs (terminal: false) are placed by the Wayland client's pid or a descendant of it. Agents asking for a scratch pane to be created stays a later idea.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "bc045c7",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "bef1719",
+      "branch": "sessions"
+    }
   }
 }
