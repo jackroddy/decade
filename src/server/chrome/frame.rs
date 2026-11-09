@@ -157,7 +157,7 @@ impl Entry {
     fn card_lines(&self) -> i32 {
         let agent = self.agents.first();
         let message = agent.is_some_and(|agent| agent.message.is_some());
-        let usage = agent.and_then(usage).is_some();
+        let usage = agent.and_then(|agent| usage(agent, usize::MAX)).is_some();
         3 + message as i32 + usage as i32
     }
 
@@ -325,8 +325,9 @@ fn agent_tint(agent: Option<&Agent>) -> Rgba {
 }
 
 /// What the agent has reported of its usage: "claude-opus · 62% ctx ·
-/// 18.4k tok · $0.42", leaving out the parts not reported.
-fn usage(agent: &Agent) -> Option<String> {
+/// 18.4k tok · $0.42", leaving out the parts not reported, and the model
+/// too when the line is wider than `room`.
+fn usage(agent: &Agent, room: usize) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(model) = &agent.model {
         parts.push(model.clone());
@@ -341,7 +342,14 @@ fn usage(agent: &Agent) -> Option<String> {
     if let Some(cost) = agent.cost {
         parts.push(format!("${cost:.2}"));
     }
-    (!parts.is_empty()).then(|| parts.join(" · "))
+    if parts.is_empty() {
+        return None;
+    }
+    let line = parts.join(" · ");
+    if line.chars().count() > room && agent.model.is_some() && parts.len() > 1 {
+        parts.remove(0);
+    }
+    Some(fit(&parts.join(" · "), room))
 }
 
 /// `n` with a k or M suffix past a thousand: "512", "18.4k", "1.2M".
@@ -892,8 +900,7 @@ impl Frame {
             scene.text_px(x + 2 * cell_width, line(next), &message, Face::Chrome, DIM);
             next += 1;
         }
-        if let Some(usage) = agent.and_then(usage) {
-            let usage = fit(&usage, room.saturating_sub(2));
+        if let Some(usage) = agent.and_then(|agent| usage(agent, room.saturating_sub(2))) {
             scene.text_px(x + 2 * cell_width, line(next), &usage, Face::Chrome, MUTED);
         }
     }
@@ -1483,7 +1490,7 @@ mod tests {
     #[test]
     fn the_usage_line_gives_the_model_context_percent_tokens_and_cost() {
         let mut coax = agent("coax", Some(AgentState::Working));
-        assert_eq!(usage(&coax), None);
+        assert_eq!(usage(&coax, usize::MAX), None);
         coax.model = Some("claude-opus".to_string());
         coax.context = Some(Context {
             used: 124_000,
@@ -1495,7 +1502,7 @@ mod tests {
         });
         coax.cost = Some(0.4213);
         assert_eq!(
-            usage(&coax).as_deref(),
+            usage(&coax, usize::MAX).as_deref(),
             Some("claude-opus · 62% ctx · 18.4k tok · $0.42")
         );
     }
@@ -1508,10 +1515,29 @@ mod tests {
             output: 340_000,
         });
         coax.context = Some(Context { used: 5, limit: 0 });
-        assert_eq!(usage(&coax).as_deref(), Some("1.2M tok"));
+        assert_eq!(usage(&coax, usize::MAX).as_deref(), Some("1.2M tok"));
         coax.tokens = None;
         coax.cost = Some(3.0);
-        assert_eq!(usage(&coax).as_deref(), Some("$3.00"));
+        assert_eq!(usage(&coax, usize::MAX).as_deref(), Some("$3.00"));
+    }
+
+    #[test]
+    fn a_usage_line_too_wide_for_its_room_drops_the_model_before_cutting_the_numbers() {
+        let mut coax = agent("coax", Some(AgentState::Working));
+        coax.model = Some("claude-opus".to_string());
+        coax.tokens = Some(Tokens {
+            input: 15_000,
+            output: 3_400,
+        });
+        coax.cost = Some(0.42);
+        assert_eq!(
+            usage(&coax, 40).as_deref(),
+            Some("claude-opus · 18.4k tok · $0.42")
+        );
+        assert_eq!(usage(&coax, 20).as_deref(), Some("18.4k tok · $0.42"));
+        coax.tokens = None;
+        coax.cost = None;
+        assert_eq!(usage(&coax, 6).map(|line| line.chars().count()), Some(6));
     }
 
     #[test]
