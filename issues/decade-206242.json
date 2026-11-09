@@ -1,0 +1,30 @@
+{
+  "id": "decade-206242",
+  "title": "The chrome draws agents from the model",
+  "body": "The cards, rail popover, tab dots and state pills draw an agent state with no agent named.\n\n## Proposal\n\n- A card shows the agent's name with its state and age, then its question or activity, then a usage line such as `62% ctx · 18.4k tok`.\n- With several agents in a workspace, the card shows the most urgent with `+N more`, and the rail popover lists each one.\n- A tab's dot comes from the agents in that tab's panes. A pane whose occupant is an agent is labelled with the agent's name, not the `/proc` label.\n- A disconnected agent is dimmed and marked `disconnected`.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-179670",
+  "blocked_by": [
+    "decade-649c72"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T06:01:22.5780565Z",
+  "updated_at": "2026-11-09T06:01:22.5780565Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "da499ce",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
