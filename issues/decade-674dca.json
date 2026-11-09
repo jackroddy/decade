@@ -1,0 +1,28 @@
+{
+  "id": "decade-674dca",
+  "title": "An agent points at a pane instead of focusing it",
+  "body": "An agent can move keyboard focus with the MCP tool `focus`, and a pane program can do the same with the socket verb `focus` in `src/server/channel.rs`. Jack wants an agent to point at a pane instead, the way a person points at something and says \"look at this\", without taking focus. Nothing in decade-apps uses the `focus` verb.\n\n## Proposal\n\n- A new MCP tool `point(pane, note?)`. The pane's outline pulses in a slow, soft glow in `MAGENTA` (#A26DC9 from the Omarchy theme, restored to `palette.rs`). A note, if given, sits in a small pill on the outline's top line beside the zoom and pin tags.\n- If the pane is in another tab, that tab's pill pulses. If it is in another workspace, its sidebar card or rail tile pulses.\n- The pulse ends when Jack focuses the pane, or after about 30 s. A timer redraws only while something pulses.\n- The MCP tool `focus` and the socket verb `focus` go. `docs/protocol.md` drops the verb.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T04:13:35.45097578Z",
+  "updated_at": "2026-11-09T04:13:35.45097578Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b96ed31",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
