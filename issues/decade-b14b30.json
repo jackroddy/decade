@@ -1,0 +1,28 @@
+{
+  "id": "decade-b14b30",
+  "title": "A pane program declares what it can show, and agents show through that",
+  "body": "Agents can show things only in a pane named `code`. The MCP tools `code.show`, `code.mark` and `code.clear` in `src/server/mcp.rs` forward verbs to whatever occupies that pane, and `decade-channel`'s `code` module defines their payloads (`Show { path, line }`, `Mark { path, lines }`). Jack wants a generic \"show something\", where the program in a pane decides what it can show and highlight.\n\n## Proposal\n\n- At hello, a program declares the kinds it can show. Each kind has a name, says whether it can highlight, and names what its targets are. decade-code would declare `file`, with paths as targets and line ranges as highlights. A browser pane might declare `url`, and an image viewer `image` with no highlight.\n- The MCP tools become `show(kind, target, at?)`, `highlight(kind, target, ranges)` and `clear(kind)`. decade routes each call to the pane whose program declared that kind, or to a pane named in the call when several did. decade passes `at` and `ranges` through unread, and each kind gives them their meaning.\n- `panes` lists each pane's declared kinds, so an agent can find out what it can show.\n\n## Cost\n\n`decade-channel`'s `code` module gives way to the generic declaration, and `decade-code` in decade-apps updates to match. `decade-channel` is unreleased, so its version stays. `docs/protocol.md` changes with the hello payload.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T04:13:35.439338588Z",
+  "updated_at": "2026-11-09T04:13:35.439338588Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b96ed31",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
