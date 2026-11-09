@@ -372,7 +372,7 @@ impl Workspace {
     /// The most urgent state of the workspace's agents, or `None` when no
     /// agent has reported.
     pub fn agent_state(&self) -> Option<AgentState> {
-        self.router.statuses().map(|status| status.state).max()
+        self.router.states().max()
     }
 
     /// The name of the scratch pane, if the workspace has one.
@@ -604,8 +604,11 @@ mod tests {
     fn a_pane_that_goes_takes_its_clients_claim_and_agent_state_with_it() {
         let mut workspace = at_home();
         workspace.add_tab(crate::server::panes::tests::AREA);
-        workspace.channel_line(1, r#"{"hello": {"name": "coax", "pane": "terminal2"}}"#);
-        workspace.channel_line(1, r#"{"status": {"state": "working"}}"#);
+        workspace.channel_line(
+            1,
+            r#"{"hello": {"name": "coax", "pane": "terminal2", "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#,
+        );
+        workspace.channel_line(1, r#"{"agent": {"state": "working"}}"#);
         assert_eq!(workspace.agent_state(), Some(AgentState::Working));
         workspace.remove_tab(1);
         assert_eq!(workspace.agent_state(), None);

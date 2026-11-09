@@ -235,7 +235,7 @@ impl State {
         };
         if let Some(index) = self.workspace_index(workspace) {
             let gone = self.workspaces[index].router.clients.remove(&id);
-            if gone.is_some_and(|client| client.status.is_some()) {
+            if gone.is_some_and(|client| client.report.state.is_some()) {
                 self.request_redraw();
             }
         }
@@ -252,29 +252,20 @@ impl State {
         for out in self.workspaces[workspace].channel_line(id, line) {
             match out {
                 Out::Line(to, text) => self.channel_send(to, &text),
-                Out::Status {
-                    pane,
-                    message,
-                    raised,
-                } => self.agent_status(workspace, pane, message, raised),
+                Out::Agent { raised } => self.agent_changed(workspace, raised),
             }
         }
     }
 
-    fn agent_status(
-        &mut self,
-        workspace: usize,
-        pane: String,
-        message: Option<String>,
-        raised: bool,
-    ) {
-        let body = message.unwrap_or_else(|| format!("the agent in {pane}"));
+    fn agent_changed(&mut self, workspace: usize, raised: Option<String>) {
         let id = self.workspaces[workspace].id;
         let watched = self
             .viewers
             .values()
             .any(|viewer| viewer.welcomed && viewer.focused && viewer.workspace == id);
-        if raised && !watched {
+        if let Some(body) = raised
+            && !watched
+        {
             let title = format!("{} needs you", self.workspaces[workspace].name);
             let notify = Command::new("notify-send")
                 .args(["--app-name=decade", &title, &body])
@@ -290,10 +281,8 @@ impl State {
     /// to idle, as the person at the screen.
     pub(super) fn clear_agents(&mut self, workspace: usize) {
         for client in self.workspaces[workspace].router.clients.values_mut() {
-            if let Some(status) = &mut client.status
-                && status.state > AgentState::Working
-            {
-                status.state = AgentState::Idle;
+            if client.report.state > Some(AgentState::Working) {
+                client.report.state = Some(AgentState::Idle);
                 client.since = Instant::now();
             }
         }

@@ -69,6 +69,99 @@ pub struct Hello {
     pub pane: Option<String>,
     #[serde(default)]
     pub shows: Vec<Shows>,
+
+    /// Who the agent is, when the client is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Agent>,
+}
+
+/// The identity an agent gives in hello.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Agent {
+    pub name: String,
+    pub version: String,
+    pub session: String,
+}
+
+/// The payload of `agent`: the fields of the agent's report that changed.
+///
+/// `None` leaves a field as decade holds it, `Some(None)` clears it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgentUpdate {
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub state: Option<Option<AgentState>>,
+
+    /// What the agent is doing now.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub activity: Option<Option<String>>,
+
+    /// What the agent needs from the person.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub question: Option<Option<String>>,
+
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model: Option<Option<String>>,
+
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub context: Option<Option<Context>>,
+
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tokens: Option<Option<Tokens>>,
+
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cost: Option<Option<f64>>,
+}
+
+/// How much of its context window the agent has used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Context {
+    pub used: u64,
+    pub limit: u64,
+}
+
+/// The tokens the agent's session has read and written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tokens {
+    pub input: u64,
+    pub output: u64,
+}
+
+// serde reads a null field as the outer None, so a field that
+// is present goes through here to keep null apart from absent
+fn present<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 /// A kind of thing a program can show, such as `file` or `url`.
@@ -109,13 +202,6 @@ pub struct Clear {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Status {
-    pub state: AgentState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Welcome {
     pub pane: Option<String>,
     pub version: u32,
@@ -139,9 +225,10 @@ pub enum Reply {
 
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
-enum Request {
+enum Request<'a> {
     Hello(Hello),
-    Status(Status),
+    Agent(&'a AgentUpdate),
+    Ended {},
     Panes {},
 }
 
@@ -200,6 +287,7 @@ impl Channel {
         name: &str,
         accepts: &[&str],
         shows: &[Shows],
+        agent: Option<&Agent>,
     ) -> Option<io::Result<(Channel, Receiver<Message>)>> {
         let path = std::env::var_os("DECADE_SOCKET")?;
         let pane = std::env::var("DECADE_PANE").ok();
@@ -209,6 +297,7 @@ impl Channel {
             accepts,
             shows,
             pane.as_deref(),
+            agent,
         ))
     }
 
@@ -218,6 +307,7 @@ impl Channel {
         accepts: &[&str],
         shows: &[Shows],
         pane: Option<&str>,
+        agent: Option<&Agent>,
     ) -> io::Result<(Channel, Receiver<Message>)> {
         let stream = UnixStream::connect(path)?;
         let reader = stream.try_clone()?;
@@ -229,6 +319,7 @@ impl Channel {
             accepts: accepts.iter().map(|a| a.to_string()).collect(),
             pane: pane.map(str::to_string),
             shows: shows.to_vec(),
+            agent: agent.cloned(),
         }))?;
         Ok((channel, rx))
     }
@@ -241,12 +332,14 @@ impl Channel {
         self.write(&message)
     }
 
-    /// Report the state of the agent in the pane this client claimed.
-    pub fn status(&mut self, state: AgentState, message: Option<&str>) -> io::Result<()> {
-        self.write(&Request::Status(Status {
-            state,
-            message: message.map(str::to_string),
-        }))
+    /// Send the fields of the agent's report that changed.
+    pub fn agent(&mut self, update: &AgentUpdate) -> io::Result<()> {
+        self.write(&Request::Agent(update))
+    }
+
+    /// End the agent's session.
+    pub fn ended(&mut self) -> io::Result<()> {
+        self.write(&Request::Ended {})
     }
 
     pub fn panes(&mut self) -> io::Result<()> {
@@ -448,6 +541,7 @@ mod tests {
                 highlight: true,
             }],
             Some("code"),
+            None,
         )
         .unwrap();
         channel
@@ -478,6 +572,7 @@ mod tests {
             hello["hello"]["shows"],
             json!([{"kind": "file", "highlight": true}])
         );
+        assert!(hello["hello"].get("agent").is_none());
         let sent: Value = serde_json::from_str(&sent).unwrap();
         assert_eq!(
             sent,
@@ -511,13 +606,15 @@ mod tests {
     #[test]
     fn requests_are_written_as_one_key_objects() {
         let line = |request: Request| serde_json::to_value(request).unwrap();
+        let update = AgentUpdate {
+            state: Some(Some(AgentState::Working)),
+            ..AgentUpdate::default()
+        };
         assert_eq!(
-            line(Request::Status(Status {
-                state: AgentState::Working,
-                message: None
-            })),
-            json!({"status": {"state": "working"}})
+            line(Request::Agent(&update)),
+            json!({"agent": {"state": "working"}})
         );
+        assert_eq!(line(Request::Ended {}), json!({"ended": {}}));
         assert_eq!(line(Request::Panes {}), json!({"panes": {}}));
     }
 
@@ -534,5 +631,69 @@ mod tests {
                 version: VERSION
             }
         );
+    }
+
+    #[test]
+    fn an_agent_update_writes_set_fields_null_for_cleared_ones_and_nothing_for_the_rest() {
+        let update = AgentUpdate {
+            state: Some(Some(AgentState::Attention)),
+            question: Some(Some("which branch?".into())),
+            activity: Some(None),
+            context: Some(Some(Context {
+                used: 1200,
+                limit: 200000,
+            })),
+            tokens: Some(Some(Tokens {
+                input: 10,
+                output: 20,
+            })),
+            cost: Some(Some(0.5)),
+            ..AgentUpdate::default()
+        };
+        let value = serde_json::to_value(&update).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "state": "attention",
+                "question": "which branch?",
+                "activity": null,
+                "context": {"used": 1200, "limit": 200000},
+                "tokens": {"input": 10, "output": 20},
+                "cost": 0.5
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentUpdate>(value).unwrap(),
+            update
+        );
+        let empty: AgentUpdate = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(empty, AgentUpdate::default());
+    }
+
+    #[test]
+    fn a_hello_with_an_agent_reads_back_the_same_and_one_without_leaves_it_out() {
+        let agent = Agent {
+            name: "coax".into(),
+            version: "0.4.0".into(),
+            session: "s1".into(),
+        };
+        let hello = Hello {
+            name: "coax".into(),
+            accepts: Vec::new(),
+            pane: Some("chat".into()),
+            shows: Vec::new(),
+            agent: Some(agent.clone()),
+        };
+        let value = serde_json::to_value(&hello).unwrap();
+        assert_eq!(
+            value["agent"],
+            json!({"name": "coax", "version": "0.4.0", "session": "s1"})
+        );
+        assert_eq!(serde_json::from_value::<Hello>(value).unwrap(), hello);
+        let plain = Hello {
+            agent: None,
+            ..hello
+        };
+        assert!(serde_json::to_value(&plain).unwrap().get("agent").is_none());
     }
 }

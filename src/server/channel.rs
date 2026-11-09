@@ -2,14 +2,17 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use decade_channel::{
-    AgentState, Clear, Error, Hello, Highlight, Pane, Reply, Show, Shows, Status, VERSION, Welcome,
+    Agent, AgentState, AgentUpdate, Clear, Context, Error, Hello, Highlight, Pane, Reply, Show,
+    Shows, Tokens, VERSION, Welcome,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 /// The keys a pane verb may not take: decade's own verbs and the
 /// names decade's replies and forwarded messages use.
-const RESERVED: [&str; 6] = ["hello", "status", "panes", "welcome", "error", "from"];
+const RESERVED: [&str; 7] = [
+    "hello", "agent", "ended", "panes", "welcome", "error", "from",
+];
 
 pub struct Client {
     pub name: String,
@@ -17,22 +20,75 @@ pub struct Client {
     pub pane: Option<String>,
     pub shows: Vec<Shows>,
 
-    /// The agent state this client last reported for its pane.
-    pub status: Option<Status>,
+    /// The agent's identity from hello, until it sends `ended`.
+    pub agent: Option<Agent>,
+
+    /// What the agent has reported, every update merged.
+    pub report: Report,
 
     /// When the client said hello or its agent last changed state.
     pub since: Instant,
 }
 
+/// The fields an agent has reported and not cleared.
+#[derive(Debug, Default, PartialEq)]
+pub struct Report {
+    pub state: Option<AgentState>,
+    pub activity: Option<String>,
+    pub question: Option<String>,
+    pub model: Option<String>,
+    pub context: Option<Context>,
+    pub tokens: Option<Tokens>,
+    pub cost: Option<f64>,
+}
+
+impl Report {
+    fn merge(&mut self, update: AgentUpdate) {
+        let AgentUpdate {
+            state,
+            activity,
+            question,
+            model,
+            context,
+            tokens,
+            cost,
+        } = update;
+        if let Some(state) = state {
+            self.state = state;
+        }
+        if let Some(activity) = activity {
+            self.activity = activity;
+        }
+        if let Some(question) = question {
+            self.question = question;
+        }
+        if let Some(model) = model {
+            self.model = model;
+        }
+        if let Some(context) = context {
+            self.context = context;
+        }
+        if let Some(tokens) = tokens {
+            self.tokens = tokens;
+        }
+        if let Some(cost) = cost {
+            self.cost = cost;
+        }
+    }
+
+    /// The line shown beside the state: the question, or else the activity.
+    pub fn message(&self) -> Option<&str> {
+        self.question.as_deref().or(self.activity.as_deref())
+    }
+}
+
 pub enum Out {
     Line(usize, String),
 
-    /// A client reported its agent's state; `raised` when the pane has
-    /// just entered attention.
-    Status {
-        pane: String,
-        message: Option<String>,
-        raised: bool,
+    /// An agent's report changed; `raised` holds the text of the desktop
+    /// notification when its pane has just entered attention.
+    Agent {
+        raised: Option<String>,
     },
 }
 
@@ -45,12 +101,12 @@ pub struct Router {
 
 impl Router {
     /// Drop every client's claim on a pane that has gone, and the agent
-    /// state reported for it.
+    /// report made for it.
     pub fn release(&mut self, pane: &str) {
         for client in self.clients.values_mut() {
             if client.pane.as_deref() == Some(pane) {
                 client.pane = None;
-                client.status = None;
+                client.report = Report::default();
             }
         }
     }
@@ -63,10 +119,10 @@ impl Router {
     }
 
     /// The agent states reported in the workspace.
-    pub fn statuses(&self) -> impl Iterator<Item = &Status> {
+    pub fn states(&self) -> impl Iterator<Item = AgentState> {
         self.clients
             .values()
-            .filter_map(|client| client.status.as_ref())
+            .filter_map(|client| client.report.state)
     }
 
     /// Answer one line from client `id`, whose workspace holds `panes`.
@@ -123,39 +179,50 @@ impl Router {
                 value.clone(),
             )]
         };
+        let client = self.clients.get_mut(&id).unwrap();
+        if matches!(verb, "agent" | "ended") && client.agent.is_none() {
+            return vec![error_line(
+                id,
+                &format!("{verb} is for a client whose hello named an agent"),
+                value,
+            )];
+        }
         match verb {
-            "status" => {
-                let status: Status = match serde_json::from_value(payload) {
-                    Ok(status) => status,
+            "agent" => {
+                let update: AgentUpdate = match serde_json::from_value(payload) {
+                    Ok(update) => update,
                     Err(error) => return malformed(error),
                 };
-                let client = self.clients.get_mut(&id).unwrap();
-                let Some(pane) = client.pane.clone() else {
+                let Some(pane) = client.pane.as_deref() else {
                     return vec![error_line(
                         id,
-                        "status is for the agent in a pane, and this client claimed none",
+                        "agent is for the agent in a pane, and this client claimed none",
                         value,
                     )];
                 };
-                let attention = |status: Option<&Status>| {
-                    status.is_some_and(|status| status.state == AgentState::Attention)
-                };
-                let raised = attention(Some(&status)) && !attention(client.status.as_ref());
-                if client.status.as_ref().map(|old| old.state) != Some(status.state) {
+                let before = client.report.state;
+                client.report.merge(update);
+                let after = client.report.state;
+                if after != before {
                     client.since = Instant::now();
                 }
-                let message = status.message.clone();
-                client.status = Some(status);
-                vec![Out::Status {
-                    pane,
-                    message,
-                    raised,
-                }]
+                let raised = (after == Some(AgentState::Attention)
+                    && before != Some(AgentState::Attention))
+                .then(|| {
+                    (client.report.message())
+                        .map_or_else(|| format!("the agent in {pane}"), str::to_string)
+                });
+                vec![Out::Agent { raised }]
+            }
+            "ended" => {
+                client.agent = None;
+                client.report = Report::default();
+                vec![Out::Agent { raised: None }]
             }
             "panes" => vec![reply(id, Reply::Panes(self.panes(panes)))],
             _ => vec![error_line(
                 id,
-                "a message needs \"to\", or one of \"hello\", \"status\" and \"panes\"",
+                "a message needs \"to\", or one of \"hello\", \"agent\", \"ended\" and \"panes\"",
                 value,
             )],
         }
@@ -273,11 +340,12 @@ impl Router {
                 }
             }
         }
-        let status = self
+        let report = self
             .clients
             .remove(&id)
-            .filter(|client| client.pane == pane)
-            .and_then(|client| client.status);
+            .filter(|client| client.pane == pane && client.agent == hello.agent)
+            .map(|client| client.report)
+            .unwrap_or_default();
         self.clients.insert(
             id,
             Client {
@@ -285,7 +353,8 @@ impl Router {
                 accepts: hello.accepts,
                 pane: pane.clone(),
                 shows: hello.shows,
-                status,
+                agent: hello.agent,
+                report,
                 since: Instant::now(),
             },
         );
@@ -465,7 +534,7 @@ mod tests {
             &PANES,
         );
         r.handle(2, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
-        for verb in ["status", "error", "from"] {
+        for verb in ["agent", "ended", "error", "from"] {
             let line = format!(r#"{{"to": "code", "{verb}": {{"pane": "chat"}}}}"#);
             let out = lines(r.handle(2, &line, &PANES));
             assert_eq!(out.len(), 1);
@@ -501,7 +570,7 @@ mod tests {
                 .unwrap()
                 .starts_with("a message needs \"to\"")
         );
-        let out = lines(r.handle(1, r#"{"status": {"state": "idle"}, "panes": {}}"#, &PANES));
+        let out = lines(r.handle(1, r#"{"agent": {"state": "idle"}, "panes": {}}"#, &PANES));
         assert_eq!(
             out[0].1["error"]["reason"],
             "a message carries exactly one verb"
@@ -532,51 +601,186 @@ mod tests {
         assert!(r.occupant("chat").is_none());
     }
 
+    const COAX: &str = r#"{"hello": {"name": "coax", "pane": "chat", "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#;
+
+    fn reason(out: Vec<Out>) -> String {
+        let out = lines(out);
+        out[0].1["error"]["reason"].as_str().unwrap().to_string()
+    }
+
+    fn raised(out: &[Out]) -> Option<&str> {
+        match out {
+            [Out::Agent { raised }] => raised.as_deref(),
+            _ => panic!("expected one agent change"),
+        }
+    }
+
     #[test]
-    fn a_status_applies_to_the_pane_its_client_claimed() {
+    fn a_hello_with_an_agent_block_records_the_agent_and_one_without_does_not() {
         let mut r = Router::default();
-        r.handle(1, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
-        let out = r.handle(
+        let out = lines(r.handle(1, COAX, &PANES));
+        assert_eq!(out[0].1["welcome"]["pane"], "chat");
+        let agent = Agent {
+            name: "coax".into(),
+            version: "0.4.0".into(),
+            session: "s1".into(),
+        };
+        assert_eq!(r.clients[&1].agent, Some(agent));
+        r.handle(2, r#"{"hello": {"name": "tool"}}"#, &PANES);
+        assert!(r.clients[&2].agent.is_none());
+    }
+
+    #[test]
+    fn agent_updates_merge_and_leave_absent_fields_as_they_were() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        r.handle(
             1,
-            r#"{"status": {"state": "attention", "message": "a question"}}"#,
+            r#"{"agent": {"state": "working", "activity": "cargo test", "model": "opus", "context": {"used": 10, "limit": 100}}}"#,
             &PANES,
         );
-        assert!(matches!(
-            &out[..],
-            [Out::Status { pane, message: Some(m), raised: true }]
-                if pane == "chat" && m == "a question"
-        ));
-        let state = r.statuses().map(|status| status.state).max();
-        assert_eq!(state, Some(AgentState::Attention));
+        r.handle(
+            1,
+            r#"{"agent": {"tokens": {"input": 5, "output": 7}, "cost": 0.25}}"#,
+            &PANES,
+        );
+        let report = &r.clients[&1].report;
+        assert_eq!(report.state, Some(AgentState::Working));
+        assert_eq!(report.activity.as_deref(), Some("cargo test"));
+        assert_eq!(report.model.as_deref(), Some("opus"));
+        assert_eq!(
+            report.context,
+            Some(Context {
+                used: 10,
+                limit: 100
+            })
+        );
+        assert_eq!(
+            report.tokens,
+            Some(Tokens {
+                input: 5,
+                output: 7
+            })
+        );
+        assert_eq!(report.cost, Some(0.25));
+        assert_eq!(report.question, None);
+    }
+
+    #[test]
+    fn a_null_field_clears_it_and_the_question_is_shown_over_the_activity_while_set() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        r.handle(
+            1,
+            r#"{"agent": {"activity": "reading", "question": "which branch?"}}"#,
+            &PANES,
+        );
+        assert_eq!(r.clients[&1].report.message(), Some("which branch?"));
+        r.handle(1, r#"{"agent": {"question": null}}"#, &PANES);
+        assert_eq!(r.clients[&1].report.question, None);
+        assert_eq!(r.clients[&1].report.message(), Some("reading"));
+    }
+
+    #[test]
+    fn entering_attention_raises_with_the_question_and_staying_there_does_not() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        let out = r.handle(
+            1,
+            r#"{"agent": {"state": "attention", "question": "which branch?"}}"#,
+            &PANES,
+        );
+        assert_eq!(raised(&out), Some("which branch?"));
+        let out = r.handle(1, r#"{"agent": {"activity": "waiting"}}"#, &PANES);
+        assert_eq!(raised(&out), None);
+        r.handle(
+            1,
+            r#"{"agent": {"state": "working", "question": null, "activity": null}}"#,
+            &PANES,
+        );
+        let out = r.handle(1, r#"{"agent": {"state": "attention"}}"#, &PANES);
+        assert_eq!(raised(&out), Some("the agent in chat"));
+        assert_eq!(r.states().max(), Some(AgentState::Attention));
     }
 
     #[test]
     fn a_new_state_restarts_the_clients_clock_and_a_repeated_state_keeps_it() {
         let mut r = Router::default();
-        r.handle(1, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
-        let status = |r: &mut Router, line: &str| {
+        r.handle(1, COAX, &PANES);
+        let update = |r: &mut Router, line: &str| {
             let past = Instant::now() - Duration::from_secs(60);
             r.clients.get_mut(&1).unwrap().since = past;
             r.handle(1, line, &PANES);
             r.clients[&1].since > past
         };
-        assert!(status(&mut r, r#"{"status": {"state": "working"}}"#));
-        let repeated = r#"{"status": {"state": "working", "message": "cargo test"}}"#;
-        assert!(!status(&mut r, repeated));
-        assert!(status(&mut r, r#"{"status": {"state": "done"}}"#));
+        assert!(update(&mut r, r#"{"agent": {"state": "working"}}"#));
+        assert!(!update(&mut r, r#"{"agent": {"activity": "cargo test"}}"#));
+        assert!(!update(&mut r, r#"{"agent": {"state": "working"}}"#));
+        assert!(update(&mut r, r#"{"agent": {"state": "done"}}"#));
     }
 
     #[test]
-    fn a_status_from_a_client_without_a_pane_is_an_error() {
+    fn ended_drops_the_report_and_the_agent_and_later_updates_are_refused() {
         let mut r = Router::default();
-        r.handle(1, r#"{"hello": {"name": "tool"}}"#, &PANES);
-        let out = lines(r.handle(1, r#"{"status": {"state": "working"}}"#, &PANES));
-        assert!(
-            out[0].1["error"]["reason"]
-                .as_str()
-                .unwrap()
-                .contains("claimed none")
+        r.handle(1, COAX, &PANES);
+        r.handle(1, r#"{"agent": {"state": "working"}}"#, &PANES);
+        let out = r.handle(1, r#"{"ended": {}}"#, &PANES);
+        assert_eq!(raised(&out), None);
+        assert_eq!(r.clients[&1].report, Report::default());
+        assert!(r.clients[&1].agent.is_none());
+        assert_eq!(r.occupant("chat").unwrap().0, 1);
+        let out = r.handle(1, r#"{"agent": {"state": "working"}}"#, &PANES);
+        assert_eq!(
+            reason(out),
+            "agent is for a client whose hello named an agent"
         );
+    }
+
+    #[test]
+    fn agent_and_ended_from_a_client_whose_hello_named_no_agent_are_refused() {
+        let mut r = Router::default();
+        r.handle(1, r#"{"hello": {"name": "list", "pane": "code"}}"#, &PANES);
+        for verb in ["agent", "ended"] {
+            let line = format!(r#"{{"{verb}": {{}}}}"#);
+            assert_eq!(
+                reason(r.handle(1, &line, &PANES)),
+                format!("{verb} is for a client whose hello named an agent")
+            );
+        }
+    }
+
+    #[test]
+    fn an_agent_update_from_a_client_without_a_pane_is_an_error() {
+        let mut r = Router::default();
+        r.handle(
+            1,
+            r#"{"hello": {"name": "coax", "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#,
+            &PANES,
+        );
+        let out = r.handle(1, r#"{"agent": {"state": "working"}}"#, &PANES);
+        assert!(reason(out).contains("claimed none"));
+    }
+
+    #[test]
+    fn status_is_no_longer_decades_verb_and_goes_to_a_pane_like_any_other() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        r.handle(2, r#"{"hello": {"name": "list", "pane": "code"}}"#, &PANES);
+        let out = r.handle(1, r#"{"status": {"state": "working"}}"#, &PANES);
+        assert!(reason(out).starts_with("a message needs \"to\""));
+        let out = lines(r.handle(1, r#"{"to": "code", "status": {}}"#, &PANES));
+        assert_eq!(out, vec![(2, json!({"status": {}, "from": "coax"}))]);
+    }
+
+    #[test]
+    fn a_second_hello_keeps_the_report_only_for_the_same_pane_and_agent() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        r.handle(1, r#"{"agent": {"state": "working"}}"#, &PANES);
+        r.handle(1, COAX, &PANES);
+        assert_eq!(r.clients[&1].report.state, Some(AgentState::Working));
+        r.handle(1, &COAX.replace("s1", "s2"), &PANES);
+        assert_eq!(r.clients[&1].report.state, None);
     }
 
     const CODE: &str = r#"{"hello": {"name": "decade-code", "accepts": ["reload"], "pane": "code", "shows": [{"kind": "file", "highlight": true}]}}"#;

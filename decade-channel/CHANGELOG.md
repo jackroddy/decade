@@ -19,7 +19,12 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
   `Show`, `Highlight` and `Clear` are the payloads of the standard verbs.
   `parse` returns those verbs as `Message::Show`, `Message::Highlight` and
   `Message::Clear`. `Pane` has a `shows` field with its occupant's kinds.
-- `Hello`, `Status`, `Welcome`, `Error`, `Pane` and `AgentState` are the
-  messages a client and decade exchange. `Reply` holds the lines decade
+- `Hello`, `Welcome`, `Error`, `Pane` and `AgentState` are the messages a
+  client and decade exchange. `Reply` holds the lines decade
   writes other than forwarded verbs. decade uses these same types.
-
+- `Agent` holds the name, version and session an agent gives in hello.
+  `Channel::connect` and `Channel::from_env` take an optional
+  `Agent`. `Channel::agent` sends an `AgentUpdate`, which writes only the
+  fields that are set and writes null for a field being cleared.
+  `Channel::ended` ends the agent's session. `Context` and `Tokens` are
+  the update's context use and token counts.

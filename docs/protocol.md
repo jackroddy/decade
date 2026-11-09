@@ -31,6 +31,15 @@ still send. `shows` lists the kinds of thing the client can show, and is
 optional. Each kind has a name and says whether the client can highlight
 it. `highlight` defaults to false.
 
+A client that runs an agent adds an `agent` block with the agent's name,
+its version and the id of its session:
+
+```json
+{"hello": {"name": "coax", "pane": "chat", "agent": {"name": "coax", "version": "0.4.0", "session": "7f3a"}}}
+```
+
+A client without it is a plain pane program.
+
 When `accepts` is empty or missing, a client that lists no kinds takes
 every verb. A client that lists kinds takes only `show`, `highlight` and
 `clear`. decade answers:
@@ -45,7 +54,9 @@ Every other message before hello is answered with an error.
 
 A client may send hello again. The new hello replaces its name, its
 `accepts` list and its `shows` list. The client gives up the pane it held
-and claims the one the new hello names, if any.
+and claims the one the new hello names, if any. decade keeps the agent's
+report only when the new hello claims the same pane and names the same
+agent.
 
 ## Messages to a pane
 
@@ -67,7 +78,8 @@ payload is the business of the two clients. The three verbs below are the
 exception.
 
 A pane verb may not be one of these names, which decade keeps for its own
-messages: `hello`, `status`, `panes`, `welcome`, `error` and `from`.
+messages: `hello`, `agent`, `ended`, `panes`, `welcome`, `error` and
+`from`.
 decade answers a message to a pane that uses one with an error and
 does not forward it.
 
@@ -116,13 +128,28 @@ the kinds the occupant shows:
 {"panes": [{"name": "chat", "client": "coax", "shows": []}, {"name": "terminal", "client": null, "shows": []}, {"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}]}]}
 ```
 
-## Agent state
+## Agents
 
-A client that claimed a pane reports what the agent in that pane is doing:
+A client whose hello named an agent and claimed a pane reports on that
+agent with `agent`. Every field is optional:
 
 ```json
-{"status": {"state": "attention", "message": "which branch should this go on?"}}
+{"agent": {"state": "attention", "question": "which branch should this go on?", "model": "opus", "context": {"used": 81000, "limit": 200000}, "tokens": {"input": 120000, "output": 9000}, "cost": 1.42}}
 ```
+
+| field | value |
+|---|---|
+| `state` | one of the states below |
+| `activity` | what the agent is doing now |
+| `question` | what the agent needs from the person |
+| `model` | the model the agent runs on |
+| `context` | `used` and `limit`, the tokens of its context window in use and the window's size |
+| `tokens` | `input` and `output`, the tokens its session has read and written |
+| `cost` | what the session has cost so far, a number |
+
+decade merges each `agent` into what it holds for the client. A field the
+message leaves out keeps its value. A field set to `null` is cleared. An
+agent that has its answer sends `"question": null`.
 
 | state | meaning |
 |---|---|
@@ -131,14 +158,25 @@ A client that claimed a pane reports what the agent in that pane is doing:
 | `working` | the agent is working |
 | `idle` | an agent is present and doing nothing |
 
-`message` is optional and is shown beside the state. A state holds until
-it is replaced, either by the client that reported it or by the person at
-the screen, who can return `done` and `attention` to `idle`. Focusing the
-pane changes nothing. A pane has no agent when its client never reported,
-has disconnected, or gave the pane up with a new hello. A workspace shows the most urgent state of
-its panes, in the order of the table. When a pane enters `attention` and no
-focused viewer shows its workspace, decade raises a desktop notification.
-There is no reply. A client that claimed no pane gets an error.
+decade shows the state with the question beside it, or the activity when
+there is no question. A state holds until it is replaced, either by the
+client or by the person at the screen, who can return `done` and
+`attention` to `idle`. Focusing the pane changes nothing. A pane has no
+agent when its client never reported a state, has disconnected, or gave
+the pane up with a new hello. A workspace shows the most urgent state of
+its panes, in the order of the table. When a pane enters `attention` and
+no focused viewer shows its workspace, decade raises a desktop
+notification. Its text is the question, or else the activity.
+
+A client sends `{"ended": {}}` to end the session. decade drops the agent
+and everything it reported. decade then refuses `agent` messages from the
+client until a new hello names an agent. A dropped connection does not end the session: the agent may
+reconnect and carry on. For now decade still forgets the report when the
+connection drops.
+
+Neither message gets a reply. decade refuses both from a client whose
+hello named no agent. decade also refuses `agent` from a client that
+claimed no pane.
 
 ## Errors
 
