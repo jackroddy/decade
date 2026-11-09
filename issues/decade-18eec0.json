@@ -3,7 +3,7 @@
   "title": "The usage line drops the model name before cutting the numbers",
   "body": "The card's usage line (`usage` in `frame.rs`) reads `model · N% ctx · N tok · $N` and is cut to the card's width, so at the default font the tokens and cost are cut off first. Jack wants the numbers kept.\n\n## Proposal\n\n`usage` takes the room it has. When the whole line does not fit and a model is set, it leaves the model out, and only then cuts what is left.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-179670",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T06:53:26.572631768Z",
-  "updated_at": "2026-11-09T06:53:26.572631768Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T06:56:47.822875548Z",
+  "closed_at": "2026-11-09T06:56:47.822875548Z",
+  "close_reason": "Landed in e37ba45. `usage` takes its room and leaves the model out first.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "155cd62",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    }
   }
 }
