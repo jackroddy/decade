@@ -3,7 +3,7 @@
   "title": "Agent tracking for decade-aware agents",
   "body": "decade has no agent model. A socket client can send `status` with a state and a message. The state lives on `channel::Client` with a `since` time, and it goes away when the connection drops. Nothing records who the agent is, its session, model or usage, or its history, so the chrome shows a state with no agent behind it. Jack wants a proper agent tracking layer for decade-aware agents, over `decade-channel`. coax will adopt it in its own repository.\n\nThe pieces, in order:\n\n- the protocol and the `decade-channel` API: an agent identity in hello, merged agent updates, and an `ended` message\n- the model in `src/server/agents.rs`: agents keyed by session per workspace, kept in memory across reconnects, dropped on `ended` or after 10 minutes disconnected\n- the UI: cards, the rail popover and tab pills drawn from the model\n\nAgents live in memory only. They do not survive a server restart.",
   "type": "milestone",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T06:01:22.544362887Z",
-  "updated_at": "2026-11-09T06:01:22.544362887Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T06:56:47.839755094Z",
+  "closed_at": "2026-11-09T06:56:47.839755094Z",
+  "close_reason": "All children are closed. The protocol (896d419), the model (f025309), the chrome (155cd62) and the usage-line fix are on `dev`.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "da499ce",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    }
   }
 }
