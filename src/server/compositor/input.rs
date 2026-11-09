@@ -83,28 +83,32 @@ impl State {
             None => {}
         }
         let area = self.pane_area();
-        let hover = if column < area.column || row < area.row {
+        let in_panes = column >= area.column && row >= area.row;
+
+        // the popover lies over the panes, and is shown
+        // only while frame_hover holds a tile
+        let hover = if !in_panes || self.frame_hover.is_some() {
             let (x, y) = self.pointer_px();
             self.frame(current).hover(x, y)
         } else {
             None
         };
+        let on_popover = in_panes && hover.is_some();
         if hover != self.frame_hover {
             self.frame_hover = hover;
             self.request_redraw();
         }
         if self.bar {
-            let hover = self
-                .layout()
-                .bar_hit(column, row)
-                .filter(|&(_, button)| button != BarButton::Name);
+            let hover = (self.layout().bar_hit(column, row))
+                .filter(|&(_, button)| button != BarButton::Name && !on_popover);
             if hover != self.hover {
                 self.hover = hover;
                 self.request_redraw();
             }
         }
         let pointer = self.seat.get_pointer().unwrap();
-        let focus = self.pane_under_pointer().and_then(|id| {
+        let under = self.pane_under_pointer().filter(|_| !on_popover);
+        let focus = under.and_then(|id| {
             let pane = self.layout().pane(id)?;
             let (origin, _) = self.client_geometry(pane);
             pane.toplevel()

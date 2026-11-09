@@ -502,6 +502,19 @@ impl Frame {
 
     /// What a click at pixel `x`, `y` does.
     pub fn hit(&self, x: i32, y: i32) -> Option<Hit> {
+        if let Some(Popover {
+            entry,
+            at: (left, top),
+            size: (width, height),
+        }) = self.popover()
+        {
+            // from the rail's edge, so the pointer keeps the
+            // popover while it crosses the gap to it
+            let rail = CLOSED_WIDTH.min(self.columns) as i32 * self.cell.0;
+            if (rail.min(left)..left + width).contains(&x) && (top..top + height).contains(&y) {
+                return Some(Hit::Show(self.entries[entry].id));
+            }
+        }
         let (column, row) = ((x / self.cell.0) as u32, (y / self.cell.1) as u32);
         if row < TOP {
             return if column < NAME_COLUMN {
@@ -1047,6 +1060,34 @@ mod tests {
         frame.hover = Some(Hit::Show(2));
         frame.open = true;
         assert!(frame.popover().is_none());
+    }
+
+    #[test]
+    fn the_hover_stays_on_a_tile_while_the_pointer_is_on_its_popover_or_the_gap_before_it() {
+        let mut frame = frame(false);
+        let (inside, beyond) = ((200, 45), (5 * 8 + 6 + 34 * 8, 45));
+        assert_eq!(frame.hover(inside.0, inside.1), None);
+        frame.hover = Some(Hit::Show(2));
+        assert_eq!(frame.hover(inside.0, inside.1), Some(Hit::Show(2)));
+        assert_eq!(frame.hover(5 * 8 + 3, 45), Some(Hit::Show(2)));
+        assert_eq!(frame.hover(beyond.0, beyond.1), None);
+    }
+
+    #[test]
+    fn a_click_on_a_popover_shows_its_workspace() {
+        let mut frame = frame(false);
+        frame.hover = Some(Hit::Show(0));
+        let Popover {
+            at: (left, top),
+            size: (width, height),
+            ..
+        } = frame.popover().unwrap();
+        assert_eq!(frame.hit(left, top), Some(Hit::Show(0)));
+        assert_eq!(
+            frame.hit(left + width - 1, top + height - 1),
+            Some(Hit::Show(0))
+        );
+        assert_eq!(frame.hit(left + width, top), None);
     }
 
     #[test]
