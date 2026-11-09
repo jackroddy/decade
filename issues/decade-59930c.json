@@ -3,7 +3,7 @@
   "title": "A project's .decade/config.toml lays out its workspace",
   "body": "A new workspace starts with one terminal in its directory (`Workspace::new` in `src/server/workspace.rs`). Jack wants a project to be able to describe its own layout.\n\nSince this was filed, a workspace holds tabs, each its own split tree. A pane can hold several windows as pane tabs, and one pane per workspace can be marked as the agent scratch pane. `workspaces.toml` (version 2, `src/server/save.rs`) already records all of these for restore.\n\n## Proposal\n\n- A project directory may hold `.decade/config.toml`, with a version key. It describes the workspace's tabs, each with its split tree and ratios. For each pane it gives a name and either a command or a plain shell, plus an optional cwd relative to the project, optional pane tabs, whether it is pinned, and whether it is the scratch pane.\n- A new workspace for that directory starts from the template. Without one it gets a single terminal.\n- The template runs commands from the project directory, so decade asks before using a template it has not seen. It remembers the answer by path and content hash, so a changed file asks again.\n- \"Save layout as template\" in the palette writes the current workspace into the project's file.\n\n## Open\n\n- Whether a global default template in `~/.config/decade` comes later.\n- Whether the template format shares structs with `workspaces.toml`, or stays a separate, hand-written format.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": "decade-da02e3",
@@ -15,16 +15,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T21:20:58.879907536Z",
-  "updated_at": "2026-11-08T21:17:01.613527097Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T03:12:01.510670369Z",
+  "closed_at": "2026-11-09T03:12:01.510670369Z",
+  "close_reason": "Jack decided against project layout files on 2026-11-08, after seeing a proposal for the format, the trust prompt and a \"Save layout as template\" row. A new workspace keeps starting with one terminal.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "d1be0b5",
       "branch": "sessions"
     },
-    "closed": null
+    "closed": {
+      "commit": "b96ed31",
+      "branch": "dev"
+    }
   }
 }
