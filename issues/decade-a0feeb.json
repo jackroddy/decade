@@ -3,7 +3,7 @@
   "title": "Hover stays drawn after the pointer leaves the viewer's window",
   "body": "The viewer protocol in `wire.rs` sends pointer motion, buttons and scroll, but no message for the pointer leaving the viewer's window. `State.frame_hover` is cleared only by motion outside the chrome or by `toggle_sidebar`. If the pointer leaves the window while it is over a tile or a pill, the hover state and any popover stay drawn until the pointer next moves inside the window.\n\n## Proposal\n\nThe viewer sends a pointer-leave message when its window loses the pointer, and the server clears `frame_hover` and the pane bar's hover on it.\n\n## Cost\n\nA new message in the viewer protocol, which is unreleased.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": "decade-30d5e3",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T23:38:05.195582214Z",
-  "updated_at": "2026-11-08T23:38:05.195582214Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T01:18:57.077933724Z",
+  "closed_at": "2026-11-09T01:18:57.077933724Z",
+  "close_reason": "Landed in 47f17fa. `ViewerMessage::PointerLeft`, opcode 18, reaches `State::pointer_left`, which clears both hovers.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "b25d04d",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "47f17fa",
+      "branch": "dev"
+    }
   }
 }
