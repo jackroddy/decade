@@ -3,7 +3,7 @@
   "title": "Header and sidebar redesign",
   "body": "The top bar and sidebar in `src/server/chrome/frame.rs` show little: a one-row bar with numbered tabs and agent counts, and a 24-column sidebar of state glyphs and names. Jack picked a design from a mockup canvas that combines two of its variants.\n\nThe pieces:\n\n- open sidebar: a card per workspace with its name, tab count, short path, git branch, agent state with how long it has held, and the agent's message\n- closed sidebar: a 5-column rail of workspace initials with state dots, and the card as a popover on hover\n- top bar: two rows, tabs named by the focused pane's title with a state dot each, the focused window's title, and buttons that show the next workspace in a state\n- polish: rounded pills and hover states on the top bar\n\nThe layout stays on the chrome cell grid. Pixel drawing through `Scene::rect`, `rounded` and `text_px` is fine inside it.",
   "type": "milestone",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T21:58:48.927778308Z",
-  "updated_at": "2026-11-08T21:58:48.927778308Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T01:19:02.561871649Z",
+  "closed_at": "2026-11-09T01:19:02.561871649Z",
+  "close_reason": "All seven children are closed. The cards, bold weight, two-row top bar and rail with hover are on `dev`, the last in 47f17fa.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "b142ad7",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "47f17fa",
+      "branch": "dev"
+    }
   }
 }
