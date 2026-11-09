@@ -2,9 +2,9 @@
   "slug": "linear-frames-do-not-render",
   "text": "On Jack's GPU the server cannot render into a linear XRGB8888 dmabuf: binding it fails with 'Failed to bind Framebuffer', and GBM reports the buffer's modifier as INVALID. So decade script (src/script.rs) offers the GPU's render formats and reads frames back through the renderer (copy_framebuffer) instead of mapping a linear buffer. Found by trial on 2026-11-07.",
   "created_at": "2026-11-08T07:22:33.567875364Z",
-  "updated_at": "2026-11-08T07:22:33.567875364Z",
+  "updated_at": "2026-11-09T20:40:46.625159397Z",
   "stamp": {
-    "commit": "e2173eb",
-    "branch": "sessions"
+    "commit": "e37ba45",
+    "branch": "dev"
   }
 }
