@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use decade_channel::{
-    Agent, AgentState, AgentUpdate, Clear, Context, Error, Hello, Highlight, Pane, Reply, Show,
-    Shows, Tokens, VERSION, Welcome,
+    AgentUpdate, Clear, Error, Hello, Highlight, Pane, Reply, Show, Shows, VERSION, Welcome,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+
+use crate::server::agents::Agents;
 
 /// The keys a pane verb may not take: decade's own verbs and the
 /// names decade's replies and forwarded messages use.
@@ -20,66 +21,8 @@ pub struct Client {
     pub pane: Option<String>,
     pub shows: Vec<Shows>,
 
-    /// The agent's identity from hello, until it sends `ended`.
-    pub agent: Option<Agent>,
-
-    /// What the agent has reported, every update merged.
-    pub report: Report,
-
-    /// When the client said hello or its agent last changed state.
-    pub since: Instant,
-}
-
-/// The fields an agent has reported and not cleared.
-#[derive(Debug, Default, PartialEq)]
-pub struct Report {
-    pub state: Option<AgentState>,
-    pub activity: Option<String>,
-    pub question: Option<String>,
-    pub model: Option<String>,
-    pub context: Option<Context>,
-    pub tokens: Option<Tokens>,
-    pub cost: Option<f64>,
-}
-
-impl Report {
-    fn merge(&mut self, update: AgentUpdate) {
-        let AgentUpdate {
-            state,
-            activity,
-            question,
-            model,
-            context,
-            tokens,
-            cost,
-        } = update;
-        if let Some(state) = state {
-            self.state = state;
-        }
-        if let Some(activity) = activity {
-            self.activity = activity;
-        }
-        if let Some(question) = question {
-            self.question = question;
-        }
-        if let Some(model) = model {
-            self.model = model;
-        }
-        if let Some(context) = context {
-            self.context = context;
-        }
-        if let Some(tokens) = tokens {
-            self.tokens = tokens;
-        }
-        if let Some(cost) = cost {
-            self.cost = cost;
-        }
-    }
-
-    /// The line shown beside the state: the question, or else the activity.
-    pub fn message(&self) -> Option<&str> {
-        self.question.as_deref().or(self.activity.as_deref())
-    }
+    /// The session of the agent named in hello, until it sends `ended`.
+    pub session: Option<String>,
 }
 
 pub enum Out {
@@ -93,21 +36,30 @@ pub enum Out {
 }
 
 /// The socket clients of one workspace, by client id, holding only
-/// those that have said hello.
+/// those that have said hello, and the workspace's agents.
 #[derive(Default)]
 pub struct Router {
     pub clients: HashMap<usize, Client>,
+    pub agents: Agents,
 }
 
 impl Router {
-    /// Drop every client's claim on a pane that has gone, and the agent
-    /// report made for it.
+    /// Drop every client's and agent's claim on a pane that has gone.
     pub fn release(&mut self, pane: &str) {
         for client in self.clients.values_mut() {
             if client.pane.as_deref() == Some(pane) {
                 client.pane = None;
-                client.report = Report::default();
             }
+        }
+        self.agents.release(pane);
+    }
+
+    /// Forget client `id`, whose connection has dropped, and mark its
+    /// agent disconnected at `now`.
+    pub fn disconnect(&mut self, id: usize, now: Instant) {
+        let session = self.clients.remove(&id).and_then(|client| client.session);
+        if let Some(session) = session {
+            self.agents.detach(&session, now);
         }
     }
 
@@ -116,13 +68,6 @@ impl Router {
             .iter()
             .find(|(_, client)| client.pane.as_deref() == Some(pane))
             .map(|(id, client)| (*id, client))
-    }
-
-    /// The agent states reported in the workspace.
-    pub fn states(&self) -> impl Iterator<Item = AgentState> {
-        self.clients
-            .values()
-            .filter_map(|client| client.report.state)
     }
 
     /// Answer one line from client `id`, whose workspace holds `panes`.
@@ -180,7 +125,9 @@ impl Router {
             )]
         };
         let client = self.clients.get_mut(&id).unwrap();
-        if matches!(verb, "agent" | "ended") && client.agent.is_none() {
+        let session = client.session.clone();
+        let agent = session.as_deref().and_then(|s| self.agents.get_mut(s));
+        if matches!(verb, "agent" | "ended") && agent.is_none() {
             return vec![error_line(
                 id,
                 &format!("{verb} is for a client whose hello named an agent"),
@@ -200,23 +147,16 @@ impl Router {
                         value,
                     )];
                 };
-                let before = client.report.state;
-                client.report.merge(update);
-                let after = client.report.state;
-                if after != before {
-                    client.since = Instant::now();
-                }
-                let raised = (after == Some(AgentState::Attention)
-                    && before != Some(AgentState::Attention))
-                .then(|| {
-                    (client.report.message())
+                let agent = agent.unwrap();
+                let raised = agent.update(update, Instant::now()).then(|| {
+                    (agent.report.message())
                         .map_or_else(|| format!("the agent in {pane}"), str::to_string)
                 });
                 vec![Out::Agent { raised }]
             }
             "ended" => {
-                client.agent = None;
-                client.report = Report::default();
+                client.session = None;
+                self.agents.end(&session.unwrap());
                 vec![Out::Agent { raised: None }]
             }
             "panes" => vec![reply(id, Reply::Panes(self.panes(panes)))],
@@ -340,12 +280,22 @@ impl Router {
                 }
             }
         }
-        let report = self
-            .clients
-            .remove(&id)
-            .filter(|client| client.pane == pane && client.agent == hello.agent)
-            .map(|client| client.report)
-            .unwrap_or_default();
+        let now = Instant::now();
+        let session = hello.agent.as_ref().map(|agent| agent.session.clone());
+        let before = self.clients.remove(&id).and_then(|client| client.session);
+        if let Some(before) = before
+            && Some(&before) != session.as_ref()
+        {
+            self.agents.detach(&before, now);
+        }
+        if let Some(identity) = hello.agent {
+            for client in self.clients.values_mut() {
+                if client.session == session {
+                    client.session = None;
+                }
+            }
+            self.agents.attach(identity, pane.clone(), now);
+        }
         self.clients.insert(
             id,
             Client {
@@ -353,9 +303,7 @@ impl Router {
                 accepts: hello.accepts,
                 pane: pane.clone(),
                 shows: hello.shows,
-                agent: hello.agent,
-                report,
-                since: Instant::now(),
+                session,
             },
         );
         out.push(reply(
@@ -412,6 +360,8 @@ fn reply(id: usize, reply: Reply) -> Out {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::agents::Report;
+    use decade_channel::{AgentState, Context, Tokens};
     use std::time::Duration;
 
     const PANES: [&str; 3] = ["chat", "terminal", "code"];
@@ -603,6 +553,10 @@ mod tests {
 
     const COAX: &str = r#"{"hello": {"name": "coax", "pane": "chat", "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#;
 
+    fn report(r: &Router) -> &Report {
+        &r.agents.list[0].report
+    }
+
     fn reason(out: Vec<Out>) -> String {
         let out = lines(out);
         out[0].1["error"]["reason"].as_str().unwrap().to_string()
@@ -620,14 +574,21 @@ mod tests {
         let mut r = Router::default();
         let out = lines(r.handle(1, COAX, &PANES));
         assert_eq!(out[0].1["welcome"]["pane"], "chat");
-        let agent = Agent {
-            name: "coax".into(),
-            version: "0.4.0".into(),
-            session: "s1".into(),
-        };
-        assert_eq!(r.clients[&1].agent, Some(agent));
+        assert_eq!(r.clients[&1].session.as_deref(), Some("s1"));
+        let agent = &r.agents.list[0];
+        assert_eq!(
+            (
+                agent.name.as_str(),
+                agent.version.as_str(),
+                agent.session.as_str()
+            ),
+            ("coax", "0.4.0", "s1")
+        );
+        assert_eq!(agent.pane.as_deref(), Some("chat"));
+        assert!(agent.connected);
         r.handle(2, r#"{"hello": {"name": "tool"}}"#, &PANES);
-        assert!(r.clients[&2].agent.is_none());
+        assert!(r.clients[&2].session.is_none());
+        assert_eq!(r.agents.list.len(), 1);
     }
 
     #[test]
@@ -644,7 +605,7 @@ mod tests {
             r#"{"agent": {"tokens": {"input": 5, "output": 7}, "cost": 0.25}}"#,
             &PANES,
         );
-        let report = &r.clients[&1].report;
+        let report = report(&r);
         assert_eq!(report.state, Some(AgentState::Working));
         assert_eq!(report.activity.as_deref(), Some("cargo test"));
         assert_eq!(report.model.as_deref(), Some("opus"));
@@ -675,10 +636,10 @@ mod tests {
             r#"{"agent": {"activity": "reading", "question": "which branch?"}}"#,
             &PANES,
         );
-        assert_eq!(r.clients[&1].report.message(), Some("which branch?"));
+        assert_eq!(report(&r).message(), Some("which branch?"));
         r.handle(1, r#"{"agent": {"question": null}}"#, &PANES);
-        assert_eq!(r.clients[&1].report.question, None);
-        assert_eq!(r.clients[&1].report.message(), Some("reading"));
+        assert_eq!(report(&r).question, None);
+        assert_eq!(report(&r).message(), Some("reading"));
     }
 
     #[test]
@@ -700,7 +661,7 @@ mod tests {
         );
         let out = r.handle(1, r#"{"agent": {"state": "attention"}}"#, &PANES);
         assert_eq!(raised(&out), Some("the agent in chat"));
-        assert_eq!(r.states().max(), Some(AgentState::Attention));
+        assert_eq!(r.agents.states().max(), Some(AgentState::Attention));
     }
 
     #[test]
@@ -709,9 +670,9 @@ mod tests {
         r.handle(1, COAX, &PANES);
         let update = |r: &mut Router, line: &str| {
             let past = Instant::now() - Duration::from_secs(60);
-            r.clients.get_mut(&1).unwrap().since = past;
+            r.agents.list[0].since = past;
             r.handle(1, line, &PANES);
-            r.clients[&1].since > past
+            r.agents.list[0].since > past
         };
         assert!(update(&mut r, r#"{"agent": {"state": "working"}}"#));
         assert!(!update(&mut r, r#"{"agent": {"activity": "cargo test"}}"#));
@@ -726,8 +687,8 @@ mod tests {
         r.handle(1, r#"{"agent": {"state": "working"}}"#, &PANES);
         let out = r.handle(1, r#"{"ended": {}}"#, &PANES);
         assert_eq!(raised(&out), None);
-        assert_eq!(r.clients[&1].report, Report::default());
-        assert!(r.clients[&1].agent.is_none());
+        assert!(r.agents.list.is_empty());
+        assert!(r.clients[&1].session.is_none());
         assert_eq!(r.occupant("chat").unwrap().0, 1);
         let out = r.handle(1, r#"{"agent": {"state": "working"}}"#, &PANES);
         assert_eq!(
@@ -773,14 +734,95 @@ mod tests {
     }
 
     #[test]
-    fn a_second_hello_keeps_the_report_only_for_the_same_pane_and_agent() {
+    fn a_second_hello_with_a_new_session_leaves_the_first_agent_disconnected() {
         let mut r = Router::default();
         r.handle(1, COAX, &PANES);
         r.handle(1, r#"{"agent": {"state": "working"}}"#, &PANES);
         r.handle(1, COAX, &PANES);
-        assert_eq!(r.clients[&1].report.state, Some(AgentState::Working));
+        assert_eq!(r.agents.list.len(), 1);
+        assert_eq!(report(&r).state, Some(AgentState::Working));
         r.handle(1, &COAX.replace("s1", "s2"), &PANES);
-        assert_eq!(r.clients[&1].report.state, None);
+        let sessions: Vec<_> = (r.agents.list.iter())
+            .map(|agent| (agent.session.as_str(), agent.connected))
+            .collect();
+        assert_eq!(sessions, [("s2", true)]);
+    }
+
+    #[test]
+    fn a_dropped_connection_keeps_the_agent_disconnected_with_its_report() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        r.handle(1, r#"{"agent": {"state": "attention"}}"#, &PANES);
+        let dropped = Instant::now();
+        r.disconnect(1, dropped);
+        assert!(r.occupant("chat").is_none());
+        let agent = &r.agents.list[0];
+        assert!(!agent.connected);
+        assert_eq!(agent.last_seen, dropped);
+        assert_eq!(agent.report.state, Some(AgentState::Attention));
+        assert_eq!(r.agents.states().max(), Some(AgentState::Attention));
+    }
+
+    #[test]
+    fn a_reconnect_with_the_same_session_reattaches_and_keeps_the_history() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        r.handle(
+            1,
+            r#"{"agent": {"state": "working", "model": "opus"}}"#,
+            &PANES,
+        );
+        r.handle(1, r#"{"agent": {"state": "attention"}}"#, &PANES);
+        r.disconnect(1, Instant::now());
+        r.handle(2, COAX, &PANES);
+        r.handle(2, r#"{"agent": {"state": "working"}}"#, &PANES);
+        assert_eq!(r.agents.list.len(), 1);
+        let agent = &r.agents.list[0];
+        assert!(agent.connected);
+        assert_eq!(agent.report.model.as_deref(), Some("opus"));
+        let states: Vec<_> = agent.history.iter().map(|(state, _)| *state).collect();
+        assert_eq!(
+            states,
+            [
+                Some(AgentState::Working),
+                Some(AgentState::Attention),
+                Some(AgentState::Working)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_reconnect_that_claims_another_pane_moves_the_agent_there() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        r.handle(1, r#"{"agent": {"state": "done"}}"#, &PANES);
+        r.disconnect(1, Instant::now());
+        r.handle(2, &COAX.replace("\"chat\"", "\"code\""), &PANES);
+        assert_eq!(r.agents.list.len(), 1);
+        assert_eq!(r.agents.list[0].pane.as_deref(), Some("code"));
+        assert_eq!(report(&r).state, Some(AgentState::Done));
+        assert_eq!(r.occupant("code").unwrap().0, 2);
+    }
+
+    #[test]
+    fn a_second_client_naming_a_connected_session_takes_the_agent_over() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        r.handle(2, &COAX.replace("\"chat\"", "\"code\""), &PANES);
+        assert!(r.clients[&1].session.is_none());
+        r.disconnect(1, Instant::now());
+        assert!(r.agents.list[0].connected);
+        assert_eq!(r.agents.list[0].pane.as_deref(), Some("code"));
+    }
+
+    #[test]
+    fn a_pane_that_goes_clears_the_agents_pane_and_keeps_the_agent() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &PANES);
+        r.handle(1, r#"{"agent": {"state": "working"}}"#, &PANES);
+        r.release("chat");
+        assert_eq!(r.agents.list[0].pane, None);
+        assert_eq!(report(&r).state, Some(AgentState::Working));
     }
 
     const CODE: &str = r#"{"hello": {"name": "decade-code", "accepts": ["reload"], "pane": "code", "shows": [{"kind": "file", "highlight": true}]}}"#;

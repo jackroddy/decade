@@ -209,9 +209,7 @@ impl State {
             |workspace: &Workspace| (workspace.point.as_ref()).map(|point| point.pulse(now));
         let entries = (self.workspaces.iter().enumerate())
             .map(|(i, workspace)| {
-                let urgent = (workspace.router.clients.values())
-                    .filter_map(|client| Some((client.report.state?, client)))
-                    .max_by_key(|(state, _)| *state);
+                let urgent = workspace.router.agents.urgent();
                 frame::Entry {
                     id: workspace.id,
                     name: workspace.name.clone(),
@@ -219,9 +217,9 @@ impl State {
                     path: frame::short_path(&workspace.cwd, &home),
                     branch: workspace.branch.clone(),
                     state: urgent.map(|(state, _)| state),
-                    age: urgent.map_or(Duration::ZERO, |(_, client)| client.since.elapsed()),
+                    age: urgent.map_or(Duration::ZERO, |(_, agent)| agent.since.elapsed()),
                     message: urgent
-                        .and_then(|(_, client)| client.report.message())
+                        .and_then(|(_, agent)| agent.report.message())
                         .map(str::to_string),
                     current: i == shown,
                     pulse: pulse(workspace).filter(|_| i != shown),
@@ -238,11 +236,11 @@ impl State {
                 let names: Vec<_> = (tab.layout.panes.iter())
                     .map(|pane| pane.name.as_str())
                     .collect();
-                let state = (shown.router.clients.values())
-                    .filter(|client| {
-                        (client.pane.as_deref()).is_some_and(|pane| names.contains(&pane))
+                let state = (shown.router.agents.list.iter())
+                    .filter(|agent| {
+                        (agent.pane.as_deref()).is_some_and(|pane| names.contains(&pane))
                     })
-                    .filter_map(|client| client.report.state)
+                    .filter_map(|agent| agent.report.state)
                     .max();
                 let label = tab.layout.pane(tab.layout.focused);
                 frame::Tab {

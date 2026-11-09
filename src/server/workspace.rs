@@ -302,7 +302,7 @@ impl Workspace {
     }
 
     /// Drop what the workspace keeps about a pane that has gone: its
-    /// client's claim, its agent state, its scratch mark and a point at it.
+    /// client's and agent's claim, its scratch mark and a point at it.
     pub fn forget_pane(&mut self, name: &str) {
         self.router.release(name);
         if self.scratch_pane() == Some(name) {
@@ -372,7 +372,7 @@ impl Workspace {
     /// The most urgent state of the workspace's agents, or `None` when no
     /// agent has reported.
     pub fn agent_state(&self) -> Option<AgentState> {
-        self.router.states().max()
+        self.router.agents.states().max()
     }
 
     /// The name of the scratch pane, if the workspace has one.
@@ -601,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pane_that_goes_takes_its_clients_claim_and_agent_state_with_it() {
+    fn a_pane_that_goes_takes_its_clients_claim_and_leaves_its_agent_without_a_pane() {
         let mut workspace = at_home();
         workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.channel_line(
@@ -611,7 +611,8 @@ mod tests {
         workspace.channel_line(1, r#"{"agent": {"state": "working"}}"#);
         assert_eq!(workspace.agent_state(), Some(AgentState::Working));
         workspace.remove_tab(1);
-        assert_eq!(workspace.agent_state(), None);
+        assert_eq!(workspace.agent_state(), Some(AgentState::Working));
+        assert_eq!(workspace.router.agents.list[0].pane, None);
         assert!(workspace.router.occupant("terminal2").is_none());
     }
 

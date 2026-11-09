@@ -1,3 +1,4 @@
+mod agents;
 mod apps;
 mod channel;
 mod children;

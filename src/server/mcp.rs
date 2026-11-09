@@ -49,6 +49,7 @@ pub enum Call {
         note: Option<String>,
     },
     Panes,
+    Agents,
     ScratchOpen(Launch),
 }
 
@@ -149,6 +150,11 @@ fn tools() -> Vec<Tool> {
             schema(json!({"type": "object", "properties": {}})),
         ),
         Tool::new(
+            "agents",
+            "List the agents in this workspace: each one's name, pane, state, seconds in that state, question, activity, model, context use, tokens, cost and whether it is connected",
+            schema(json!({"type": "object", "properties": {}})),
+        ),
+        Tool::new(
             "point",
             "Draw the user's eye to a pane without moving keyboard focus: its outline pulses for up to 30 seconds, until the user focuses it or the next point",
             schema(json!({
@@ -233,6 +239,7 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
             Ok(kind_call("clear", pane, payload.kind.clone(), payload))
         }
         "panes" => Ok(Call::Panes),
+        "agents" => Ok(Call::Agents),
         "point" => {
             let Point { pane, note } = parse(name, arguments)?;
             Ok(Call::Point { pane, note })
@@ -282,7 +289,8 @@ impl ServerHandler for Decade {
                  show things. scratch.open starts a program whose name begins with decade- in \
                  it, replacing the program there, and scratch.send sends that program a message. \
                  Both fail when the workspace has no scratch pane. point draws the user's eye \
-                 to a pane without taking keyboard focus.",
+                 to a pane without taking keyboard focus. agents lists the agents in the \
+                 workspace with what each last reported.",
             )
     }
 
@@ -436,6 +444,7 @@ mod tests {
                 "highlight",
                 "clear",
                 "panes",
+                "agents",
                 "point",
                 "scratch.open",
                 "scratch.send"
@@ -499,6 +508,7 @@ mod tests {
             panic!("a string is not a payload");
         };
         assert!(reason.starts_with("scratch.send: invalid type: string"));
+        assert!(matches!(call_for("agents", Map::new()), Ok(Call::Agents)));
         let missing = call_for("point", Map::new());
         assert_eq!(missing.err().unwrap(), "point: missing field `pane`");
         assert_eq!(

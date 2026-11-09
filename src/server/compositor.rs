@@ -260,8 +260,13 @@ pub fn run() {
     });
     let ages = Timer::from_duration(AGE_EVERY);
     let _ = handle.insert_source(ages, |_, _, state| {
+        let now = Instant::now();
+        let mut expired = false;
+        for shown in &mut state.workspaces {
+            expired |= shown.router.agents.expire(now);
+        }
         let reported = (state.workspaces.iter()).any(|shown| shown.agent_state().is_some());
-        if state.sidebar_open && reported {
+        if expired || state.sidebar_open && reported {
             state.request_redraw();
         }
         TimeoutAction::ToDuration(AGE_EVERY)

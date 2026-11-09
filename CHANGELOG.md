@@ -58,13 +58,20 @@ command line and what the tool writes.
   done, working or idle), an activity, a question, the model, context
   use, token counts and cost. decade merges each message into what it
   holds. A field left out keeps its value. A field set to null is
-  cleared. A client sends `ended` to end the session. A state holds until
-  its client or the person at the screen replaces it, and goes when the
-  client disconnects. decade shows the question beside the state, or the
-  activity when there is no question. A pane entering attention
-  raises a desktop notification unless a focused viewer shows its
-  workspace. `decade-channel` gains `AgentState`, `Agent`, `AgentUpdate`,
-  `Channel::agent` and `Channel::ended`.
+  cleared. A state holds until its client or the person at the screen
+  replaces it. decade shows the question beside the state, or the
+  activity when there is no question. A pane entering attention raises a
+  desktop notification unless a focused viewer shows its workspace.
+  decade keeps each workspace's agents in memory, by session. When an
+  agent's connection drops, decade keeps its report and its last 32 state
+  changes and marks it disconnected. A later hello that names the session
+  attaches to the agent again and moves it to the pane that hello claims.
+  decade drops an agent 10 minutes after it disconnects, or at once when
+  its client sends `ended`. The MCP tool `agents` lists the workspace's
+  agents with their pane, state, age, question, activity, model, context
+  use, tokens, cost and whether each is connected. `decade-channel` gains
+  `AgentState`, `Agent`, `AgentUpdate`, `Channel::agent` and
+  `Channel::ended`.
 - Super+Tab opens a picker with a cell for each workspace, showing its
   panes scaled down, and a last cell for a new workspace. Super+Tab, Tab,
   the arrow keys or Ctrl+H/J/K/L move between cells. Enter or a click

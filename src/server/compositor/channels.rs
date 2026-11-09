@@ -3,7 +3,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Command;
 use std::time::Instant;
 
-use decade_channel::{AgentState, Reply};
+use decade_channel::Reply;
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{Interest, Mode as CalloopMode, PostAction};
 use smithay::wayland::shell::xdg::ToplevelSurface;
@@ -122,6 +122,10 @@ impl State {
                 self.request_redraw();
                 return Ok(format!("pointing at pane {pane}"));
             }
+            mcp::Call::Agents => {
+                let agents = shown.router.agents.listing(Instant::now());
+                return Ok(agents.to_string());
+            }
             mcp::Call::Panes => {
                 let panes = Reply::Panes(shown.pane_list());
                 return Ok(serde_json::to_string(&panes).unwrap());
@@ -234,10 +238,7 @@ impl State {
             return;
         };
         if let Some(index) = self.workspace_index(workspace) {
-            let gone = self.workspaces[index].router.clients.remove(&id);
-            if gone.is_some_and(|client| client.report.state.is_some()) {
-                self.request_redraw();
-            }
+            self.workspaces[index].router.disconnect(id, Instant::now());
         }
     }
 
@@ -280,12 +281,10 @@ impl State {
     /// Return every agent in the workspace that is done or needs attention
     /// to idle, as the person at the screen.
     pub(super) fn clear_agents(&mut self, workspace: usize) {
-        for client in self.workspaces[workspace].router.clients.values_mut() {
-            if client.report.state > Some(AgentState::Working) {
-                client.report.state = Some(AgentState::Idle);
-                client.since = Instant::now();
-            }
-        }
+        self.workspaces[workspace]
+            .router
+            .agents
+            .clear(Instant::now());
         self.request_redraw();
     }
 

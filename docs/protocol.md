@@ -54,9 +54,9 @@ Every other message before hello is answered with an error.
 
 A client may send hello again. The new hello replaces its name, its
 `accepts` list and its `shows` list. The client gives up the pane it held
-and claims the one the new hello names, if any. decade keeps the agent's
-report only when the new hello claims the same pane and names the same
-agent.
+and claims the one the new hello names, if any. A hello that names the
+session of an agent the workspace holds attaches to that agent, as
+described under Agents.
 
 ## Messages to a pane
 
@@ -147,7 +147,7 @@ agent with `agent`. Every field is optional:
 | `tokens` | `input` and `output`, the tokens its session has read and written |
 | `cost` | what the session has cost so far, a number |
 
-decade merges each `agent` into what it holds for the client. A field the
+decade merges each `agent` into what it holds for the agent. A field the
 message leaves out keeps its value. A field set to `null` is cleared. An
 agent that has its answer sends `"question": null`.
 
@@ -161,18 +161,27 @@ agent that has its answer sends `"question": null`.
 decade shows the state with the question beside it, or the activity when
 there is no question. A state holds until it is replaced, either by the
 client or by the person at the screen, who can return `done` and
-`attention` to `idle`. Focusing the pane changes nothing. A pane has no
-agent when its client never reported a state, has disconnected, or gave
-the pane up with a new hello. A workspace shows the most urgent state of
-its panes, in the order of the table. When a pane enters `attention` and
-no focused viewer shows its workspace, decade raises a desktop
-notification. Its text is the question, or else the activity.
+`attention` to `idle`. Focusing the pane changes nothing. A workspace
+shows the most urgent state of its agents, in the order of the table.
+When a pane enters `attention` and no focused viewer shows its workspace,
+decade raises a desktop notification. Its text is the question, or else
+the activity.
+
+decade keeps each workspace's agents by session, in memory only. When a
+client's connection drops, decade keeps its agent with everything it
+reported and marks it disconnected. A later hello in the same workspace
+that names the same session attaches to that agent again. The agent keeps
+its report and its last 32 state changes. It moves to the pane the new
+hello claims. decade checks once a minute and drops an agent that has
+been disconnected for 10 minutes or more. A hello that names a new
+session in a pane where a disconnected agent was left replaces that
+agent. When a pane goes, its agent stays without a pane. When a second
+client names a session another client holds, the session moves to the
+second client.
 
 A client sends `{"ended": {}}` to end the session. decade drops the agent
-and everything it reported. decade then refuses `agent` messages from the
-client until a new hello names an agent. A dropped connection does not end the session: the agent may
-reconnect and carry on. For now decade still forgets the report when the
-connection drops.
+and everything it reported at once. decade then refuses `agent` messages
+from the client until a new hello names an agent.
 
 Neither message gets a reply. decade refuses both from a client whose
 hello named no agent. decade also refuses `agent` from a client that
@@ -195,11 +204,11 @@ Agents do not use this socket. decade is also an MCP server, over streamable
 HTTP at the address in `DECADE_MCP`, which every program decade starts gets
 beside `DECADE_SOCKET`. Each workspace has its own address, ending in
 `?workspace=<id>`, and a tool call reaches only the panes of that workspace.
-Its tools are `panes`, `point`, `show`, `highlight`, `clear`, `scratch.open`
-and `scratch.send`. decade delivers a pane verb from a tool call with
-`"from": "agent"`. decade answers `panes` with the pane list, in the shape
-of the socket's `panes` reply, and every other call with a line saying what
-it did. When decade cannot act on a call, the result is a tool error whose
+Its tools are `panes`, `agents`, `point`, `show`, `highlight`, `clear`,
+`scratch.open` and `scratch.send`. decade delivers a pane verb from a tool
+call with `"from": "agent"`. decade answers `panes` with the pane list, in the shape
+of the socket's `panes` reply, `agents` with the agent list below, and
+every other call with a line saying what it did. When decade cannot act on a call, the result is a tool error whose
 text is the reason the socket would give in `error`. decade refuses a call
 to an address without `?workspace=` as invalid parameters. coax passes
 `DECADE_MCP` to the agent in the ACP session's server list, so any agent
@@ -211,6 +220,17 @@ sends the verb to that pane, whose occupant must show the kind. Without it,
 decade sends the verb to the one pane whose occupant shows the kind. decade
 refuses the call when several panes show the kind and when none does. In
 the second case the error lists the kinds the workspace's panes show.
+
+`agents` takes no arguments. decade answers with the workspace's agents in
+the order they first said hello:
+
+```json
+{"agents": [{"name": "coax", "pane": "chat", "state": "attention", "age": 90, "question": "which branch?", "activity": null, "model": "opus", "context": {"used": 81000, "limit": 200000}, "tokens": {"input": 120000, "output": 9000}, "cost": 1.42, "connected": false}]}
+```
+
+`age` is the number of seconds the agent has held its state. The other
+fields are the ones the agent last reported, null when unset, and
+`connected` says whether a client holds its session.
 
 `point` takes `pane` and an optional `note`. decade pulses the pane's
 outline in magenta and puts the note on its top edge. Keyboard focus stays
