@@ -145,13 +145,17 @@ impl Workspace {
         self.branch_read = Some(now);
     }
 
-    /// Read again what runs in each tab's focused pane, where it was last
-    /// read long enough before `now`.
+    /// Read again what runs in each pane of the active tab and in each
+    /// other tab's focused pane, where it was last read long enough
+    /// before `now`.
     pub fn refresh_running(&mut self, now: Instant, home: &Path) {
-        for tab in &mut self.tabs {
+        for (index, tab) in self.tabs.iter_mut().enumerate() {
             let focused = tab.layout.focused;
-            if let Some(pane) = tab.layout.pane_mut(focused) {
-                pane.refresh_running(now, home);
+            let active = index == self.active_tab;
+            for pane in &mut tab.layout.panes {
+                if active || pane.id == focused {
+                    pane.refresh_running(now, home);
+                }
             }
         }
     }

@@ -91,8 +91,10 @@ command line and what the tool writes.
   Super+Shift+Return, splits the focused pane along its longer side; a pane
   made that way closes when its client exits.
 - Holding Ctrl alone for 50 ms shows a bar over the top row of each pane
-  with its name and buttons to pin, zoom and close it. Dragging the outline
-  between two panes resizes them.
+  with its name and buttons to pin, zoom and close it. The focused pane's
+  name is bold. A button under the pointer sits on a rounded square. The
+  close button's square is red. Dragging the outline between two panes
+  resizes them.
 - Pinning a pane makes it an anchor for its program's app id. An anchor
   stays as an empty slot, saying what it waits for, when its client goes,
   and takes it back when it returns. A pinned terminal whose shell exits
@@ -158,8 +160,10 @@ command line and what the tool writes.
   a terminal as a new tab of the focused pane. The terminal starts in the
   pane's directory, or in the workspace's when the pane has none.
   Super+Shift+[ and Super+Shift+] show the previous and next tab. A pane
-  with more than one tab shows a row of labels at its top. A click on a
-  label shows that tab. When a tab's program exits, decade shows the tab
+  with more than one tab shows a row of rounded pills at its top. Each pill
+  shows what runs in its tab, by the same rule as the top bar's pills.
+  decade cuts the labels when the pills would not fit. A click on a pill
+  shows that tab. When a tab's program exits, decade shows the tab
   beside it. The x on the Ctrl bar closes the tab shown. decade saves the
   directory of each terminal tab and starts those terminals again.
 
@@ -200,11 +204,12 @@ command line and what the tool writes.
   delay" and "Grab animation" is now "Drag pickup time".
 - A pane whose shell exited keeps its normal background and shows a larger
   restart button.
-- The Ctrl bar's icons share one size and stay dark on the focused bar. The
-  pin is filled when pinned and outlined when not.
+- The Ctrl bar's icons share one size. The pin is filled when pinned and
+  outlined when not.
 - The gaps between panes match the margin at the edge of the pane area.
   Unfocused outlines are brighter. A pinned pane shows a pin on its top
-  edge, and a zoomed pane shows a zoom tag there.
+  edge, and a zoomed pane shows a zoom tag there. Each tag is a small
+  rounded pill in the outline's colour.
 
 ## [0.1.0] - 2026-11-05
 

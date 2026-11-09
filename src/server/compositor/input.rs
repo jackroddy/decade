@@ -26,6 +26,7 @@ impl State {
         if self.bar != show {
             self.bar = show;
             self.hover = None;
+            self.tab_hover = None;
             self.request_redraw();
         }
     }
@@ -105,6 +106,12 @@ impl State {
                 self.hover = hover;
                 self.request_redraw();
             }
+        } else {
+            let tab_hover = self.layout().tab_hit(column, row).filter(|_| !on_popover);
+            if tab_hover != self.tab_hover {
+                self.tab_hover = tab_hover;
+                self.request_redraw();
+            }
         }
         let pointer = self.seat.get_pointer().unwrap();
         let under = self.pane_under_pointer().filter(|_| !on_popover);
@@ -127,9 +134,10 @@ impl State {
     }
 
     pub(super) fn pointer_left(&mut self) {
-        if self.frame_hover.is_some() || self.hover.is_some() {
+        if self.frame_hover.is_some() || self.hover.is_some() || self.tab_hover.is_some() {
             self.frame_hover = None;
             self.hover = None;
+            self.tab_hover = None;
             self.request_redraw();
         }
     }
@@ -483,6 +491,7 @@ impl State {
 
     fn start_pane_drag(&mut self, id: usize) {
         self.hover = None;
+        self.tab_hover = None;
         self.focus(id);
         let pointer = self.pointer.to_physical(self.scale).to_i32_round();
         let grab = pointer - self.pane_origin(id);

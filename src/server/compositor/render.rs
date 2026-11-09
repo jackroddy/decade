@@ -56,6 +56,7 @@ impl State {
             drag,
             bar,
             hover,
+            tab_hover,
             pointer,
             overlay,
             settings,
@@ -78,6 +79,7 @@ impl State {
                 },
                 bar: *bar,
                 hover: *hover,
+                tab_hover: *tab_hover,
             }
         } else {
             Chrome {

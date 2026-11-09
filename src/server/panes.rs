@@ -20,10 +20,13 @@ const OUTLINE: Rgba = palette::MUTED;
 const FOCUS: Rgba = palette::ACCENT;
 const DROP: Rgba = palette::CYAN;
 const BAR: Rgba = palette::LIGHTER_BACKGROUND;
-const BAR_FOCUSED: Rgba = palette::ACCENT;
-const BAR_FOCUSED_TEXT: Rgba = palette::DARK_BACKGROUND;
+const RESTART: Rgba = palette::ACCENT;
+const RESTART_TEXT: Rgba = palette::DARK_BACKGROUND;
 const HOVER: Rgba = palette::SELECTION;
-const CLOSE_HOVER: Rgba = palette::RED;
+const CLOSE_HOVER: Rgba = palette::DARK_RED;
+const CLOSE_HOVER_ICON: Rgba = palette::LIGHT_RED;
+const SHOWN_TAB: Rgba = palette::SELECTION;
+const TAG_TEXT: Rgba = palette::DARK_BACKGROUND;
 const UNPINNED: Rgba = palette::MUTED;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 
@@ -38,6 +41,13 @@ const UNZOOM_ICON: char = '\u{f0294}';
 const CLOSE_ICON: char = '\u{f0156}';
 const SCRATCH_ICON: char = '\u{f0093}';
 const UNSCRATCHED_ICON: char = '\u{f0096}';
+
+// the sizes below are in pixels at 18 px rows, for `Scene::scaled`
+const PILL_RADIUS: i32 = 4;
+const BUTTON_INSET: i32 = 2;
+const TAG_PADDING: i32 = 4;
+const TAG_INSET: i32 = 2;
+const TAG_GAP: i32 = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CellRect {
@@ -108,9 +118,58 @@ pub struct Client {
 
     /// Whether decade started the client as a terminal tab of the pane.
     pub terminal_tab: bool,
+
+    /// What the client runs, as last read, and when it was read.
+    running: Option<(Instant, Option<String>)>,
 }
 
 impl Client {
+    pub fn new(
+        toplevel: ToplevelSurface,
+        app_id: Option<String>,
+        pid: Option<u32>,
+        terminal_tab: bool,
+    ) -> Client {
+        Client {
+            toplevel,
+            app_id,
+            pid,
+            terminal_tab,
+            running: None,
+        }
+    }
+
+    /// The client's pid, when it is a ghostty decade started for the
+    /// pane whose ghostty is `pane_pid`.
+    fn terminal(&self, pane_pid: Option<u32>) -> Option<u32> {
+        let pid = self.pid?;
+        (self.terminal_tab || pane_pid == Some(pid)).then_some(pid)
+    }
+
+    /// Read what the client runs again if it is a terminal and it was
+    /// last read `RUNNING_EVERY` or more before `now`.
+    fn refresh_running(&mut self, pane_pid: Option<u32>, now: Instant, home: &Path) {
+        let Some(ghostty) = self.terminal(pane_pid) else {
+            return;
+        };
+        if let Some((read, _)) = self.running
+            && now.duration_since(read) < RUNNING_EVERY
+        {
+            return;
+        }
+        self.running = Some((now, running(ghostty, home)));
+    }
+
+    /// What the client runs: a terminal's program as last read, or the
+    /// last part of another client's app id.
+    fn running_label(&self, pane_pid: Option<u32>) -> Option<String> {
+        if self.terminal(pane_pid).is_some() {
+            return self.running.as_ref()?.1.clone();
+        }
+        let app_id = self.app_id.as_deref()?;
+        Some(app_id.rsplit('.').next().unwrap_or(app_id).to_string())
+    }
+
     /// The client's title, or the last part of its app id.
     fn label(&self) -> Option<String> {
         let title = toplevel_data(self.toplevel.wl_surface(), |data| data.title.clone());
@@ -163,10 +222,6 @@ pub struct Pane {
 
     /// The ghostty decade started for the pane.
     pub pid: Option<u32>,
-
-    /// What the shown terminal runs, as last read, with the pid of its
-    /// ghostty and when it was read.
-    running: Option<(u32, Instant, Option<String>)>,
 }
 
 impl Pane {
@@ -180,43 +235,41 @@ impl Pane {
         client_area(self.rect, self.clients.len())
     }
 
-    /// The pid of the shown client, when it is a ghostty decade started.
-    fn shown_terminal(&self) -> Option<u32> {
-        let client = self.clients.get(self.shown)?;
-        let pid = client.pid?;
-        (client.terminal_tab || self.pid == Some(pid)).then_some(pid)
-    }
-
-    /// Read what the shown terminal runs again if it was last read
-    /// `RUNNING_EVERY` or more before `now`, or under another ghostty.
+    /// Read again what the clients whose labels are drawn run: every
+    /// client when the pane shows its tabs, or else the shown one.
     pub fn refresh_running(&mut self, now: Instant, home: &Path) {
-        let Some(ghostty) = self.shown_terminal() else {
-            return;
-        };
-        if let Some((pid, read, _)) = self.running
-            && pid == ghostty
-            && now.duration_since(read) < RUNNING_EVERY
-        {
-            return;
+        let pane_pid = self.pid;
+        if self.clients.len() > 1 {
+            for client in &mut self.clients {
+                client.refresh_running(pane_pid, now, home);
+            }
+        } else if let Some(client) = self.clients.get_mut(self.shown) {
+            client.refresh_running(pane_pid, now, home);
         }
-        self.running = Some((ghostty, now, running(ghostty, home)));
     }
 
-    /// What runs in the pane: the shown terminal's program as last read,
-    /// or the last part of the shown client's app id, or the pane's name.
+    /// What runs in the pane: what its shown client runs, or the pane's
+    /// name.
     pub fn running_label(&self) -> String {
-        let read = match (self.shown_terminal(), &self.running) {
-            (Some(ghostty), Some((pid, _, label))) if ghostty == *pid => label.clone(),
-            (Some(_), _) => None,
-            (None, _) => {
-                let app_id = self
-                    .clients
-                    .get(self.shown)
-                    .and_then(|c| c.app_id.as_deref());
-                app_id.map(|app_id| app_id.rsplit('.').next().unwrap_or(app_id).to_string())
-            }
-        };
-        read.unwrap_or_else(|| self.name.clone())
+        let shown = self.clients.get(self.shown);
+        shown
+            .and_then(|client| client.running_label(self.pid))
+            .unwrap_or_else(|| self.name.clone())
+    }
+
+    /// The label of each tab: what its client runs, or the tab's number.
+    fn tab_labels(&self) -> Vec<String> {
+        (self.clients.iter().enumerate())
+            .map(|(index, client)| {
+                (client.running_label(self.pid)).unwrap_or_else(|| (index + 1).to_string())
+            })
+            .collect()
+    }
+
+    /// The start column and width of each tab's pill on the strip.
+    fn tab_pills(&self, inner: CellRect, labels: &[String]) -> Vec<(u32, u32)> {
+        let lengths: Vec<usize> = labels.iter().map(|label| label.chars().count()).collect();
+        tab_pills(inner.column, inner.columns, &lengths)
     }
 
     /// The shown client's title, or the last part of its app id.
@@ -276,7 +329,6 @@ impl Pane {
             app_id: None,
             cwd: None,
             pid: None,
-            running: None,
         }
     }
 }
@@ -355,6 +407,9 @@ pub struct Chrome<'a> {
 
     /// The bar button under the pointer.
     pub hover: Option<(usize, BarButton)>,
+
+    /// The pane and index of the tab under the pointer.
+    pub tab_hover: Option<(usize, usize)>,
 }
 
 pub struct Layout {
@@ -669,7 +724,7 @@ impl Layout {
                 if inner.is_empty() || row != inner.row {
                     return None;
                 }
-                let index = tab_at(inner, pane.clients.len(), column)?;
+                let index = tab_at(&pane.tab_pills(inner, &pane.tab_labels()), column)?;
                 Some((pane.id, index))
             })
     }
@@ -689,7 +744,16 @@ impl Layout {
             let scratched = chrome.scratch == Some(pane.name.as_str());
             self.draw_outline(scene, pane, outline, scratched);
             draw_waiting(scene, pane, pane.rect.inner(), scratched);
-            draw_strip(scene, pane, pane.rect.inner(), pane.id == self.focused);
+            let hover = (chrome.tab_hover)
+                .filter(|&(id, _)| id == pane.id)
+                .map(|(_, index)| index);
+            draw_strip(
+                scene,
+                pane,
+                pane.rect.inner(),
+                pane.id == self.focused,
+                hover,
+            );
         }
     }
 
@@ -718,6 +782,8 @@ impl Layout {
         let (width, _) = scene.px(rect.columns, 0);
         let line_y = y + top;
         let text_y = line_y + line / 2 - cell_height / 2;
+        let (padding, radius) = (scene.scaled(TAG_PADDING), scene.scaled(PILL_RADIUS));
+        let height = cell_height - 2 * scene.scaled(TAG_INSET);
         let mut end = x + width - right - cell_width * 2;
         let pinned = pane.pinned;
         let zoomed = self.zoom == Some(pane.id);
@@ -734,10 +800,11 @@ impl Layout {
             if start - cell_width < x + left + cell_width {
                 break;
             }
-            let gap = cell_width / 2;
-            scene.rect(start - gap, line_y, end - start + gap * 2, line, BACKGROUND);
-            scene.text_px(start, text_y, &text, face, color);
-            end = start - cell_width;
+            let size = (end - start + padding * 2, height);
+            let pill_y = line_y + line / 2 - height / 2;
+            scene.rounded(start - padding, pill_y, size, radius, color, color);
+            scene.text_px(start, text_y, &text, face, TAG_TEXT);
+            end = start - padding * 2 - scene.scaled(TAG_GAP);
         }
     }
 
@@ -763,7 +830,7 @@ impl Layout {
         };
         let scratched = chrome.scratch == Some(pane.name.as_str());
         draw_waiting(scene, pane, inner, scratched);
-        draw_strip(scene, pane, inner, pane.id == self.focused);
+        draw_strip(scene, pane, inner, pane.id == self.focused, None);
         if chrome.bar {
             self.draw_bar(scene, pane, inner, chrome);
         }
@@ -776,15 +843,16 @@ impl Layout {
         let scratched = chrome.scratch == Some(pane.name.as_str());
         let (start, row, width) = (inner.column, inner.row, inner.columns);
         let focused = pane.id == self.focused;
-        let (bg, fg) = if focused {
-            (BAR_FOCUSED, BAR_FOCUSED_TEXT)
+        let (fg, face) = if focused {
+            (FOREGROUND, Face::ChromeBold)
         } else {
-            (BAR, DIM)
+            (DIM, Face::Chrome)
         };
-        scene.fill(CellRect { rows: 1, ..inner }, bg);
+        scene.fill(CellRect { rows: 1, ..inner }, BAR);
         let buttons = bar_buttons(start, width);
         let room = buttons[0].1.saturating_sub(start + 2) as usize;
-        scene.text(start + 1, row, &fit(&pane.name, room), fg);
+        let (name_x, y) = scene.px(start + 1, row);
+        scene.text_px(name_x, y, &fit(&pane.name, room), face, fg);
         let pinned = pane.pinned;
         let zoomed = self.zoom == Some(pane.id);
         for (button, x) in buttons {
@@ -807,24 +875,20 @@ impl Layout {
                 BarButton::Close => (CLOSE_ICON, fg),
                 BarButton::Name => continue,
             };
-            let color = match chrome.hover {
-                Some((id, hovered)) if id == pane.id && hovered == button => {
-                    let hover = if button == BarButton::Close {
-                        CLOSE_HOVER
-                    } else {
-                        HOVER
-                    };
-                    let cell = CellRect {
-                        column: x,
-                        row,
-                        columns: BUTTON_WIDTH,
-                        rows: 1,
-                    };
-                    scene.fill(cell, hover);
-                    FOREGROUND
-                }
+            let hovered = chrome.hover == Some((pane.id, button));
+            let color = match button {
+                BarButton::Close if hovered => CLOSE_HOVER_ICON,
+                _ if hovered => FOREGROUND,
                 _ => color,
             };
+            if hovered {
+                let background = if button == BarButton::Close {
+                    CLOSE_HOVER
+                } else {
+                    HOVER
+                };
+                draw_button_hover(scene, x + 1, row, background);
+            }
             scene.icon(x + 1, row, icon, color);
         }
     }
@@ -844,37 +908,79 @@ impl Layout {
     }
 }
 
-/// The row of tab labels at the top of a pane with more than one client.
-fn draw_strip(scene: &mut Scene, pane: &Pane, inner: CellRect, focused: bool) {
+/// The row of tab pills at the top of a pane with more than one client,
+/// with the tab at `hover` under the pointer.
+fn draw_strip(
+    scene: &mut Scene,
+    pane: &Pane,
+    inner: CellRect,
+    focused: bool,
+    hover: Option<usize>,
+) {
     if pane.clients.len() < 2 || inner.is_empty() {
         return;
     }
     scene.fill(CellRect { rows: 1, ..inner }, BAR);
-    let cells = tab_cells(inner.column, inner.columns, pane.clients.len());
-    for (index, (client, (column, width))) in pane.clients.iter().zip(cells).enumerate() {
-        let color = if index == pane.shown {
-            let (bg, fg) = if focused {
-                (BAR_FOCUSED, BAR_FOCUSED_TEXT)
-            } else {
-                (HOVER, FOREGROUND)
-            };
-            let cell = CellRect {
-                column,
-                row: inner.row,
-                columns: width,
-                rows: 1,
-            };
-            scene.fill(cell, bg);
-            fg
-        } else {
-            DIM
+    let labels = pane.tab_labels();
+    let pills = pane.tab_pills(inner, &labels);
+    let (cell_width, cell_height) = scene.cell();
+    let radius = scene.scaled(PILL_RADIUS);
+    for (index, (label, (column, width))) in labels.iter().zip(pills).enumerate() {
+        let shown = index == pane.shown;
+        let (x, y) = scene.px(column, inner.row);
+        if shown || hover == Some(index) {
+            let size = (width as i32 * cell_width, cell_height);
+            scene.rounded(x, y, size, radius, SHOWN_TAB, SHOWN_TAB);
+        }
+        let (color, face) = match (shown, focused) {
+            (true, true) => (FOREGROUND, Face::ChromeBold),
+            (true, false) => (FOREGROUND, Face::Chrome),
+            (false, _) => (DIM, Face::Chrome),
         };
         if width > 2 {
-            let label = client.label().unwrap_or_else(|| (index + 1).to_string());
-            let label = fit(&label, width as usize - 2);
-            scene.text(column + 1, inner.row, &label, color);
+            let label = fit(label, width as usize - 2);
+            scene.text_px(x + cell_width, y, &label, face, color);
         }
     }
+}
+
+/// A rounded square behind the bar icon in the cell at `column`.
+fn draw_button_hover(scene: &mut Scene, column: u32, row: u32, color: Rgba) {
+    let (cell_width, cell_height) = scene.cell();
+    let (x, y) = scene.px(column, row);
+    let inset = scene.scaled(BUTTON_INSET);
+    let side = cell_height - 2 * inset;
+    let left = x + cell_width / 2 - side / 2;
+    let radius = scene.scaled(PILL_RADIUS);
+    scene.rounded(left, y + inset, (side, side), radius, color, color);
+}
+
+/// The start column and width of each tab pill on a strip `columns` wide
+/// from `column`, for labels `lengths` characters long: each label with a
+/// column either side and a column between pills, every label cut to the
+/// longest length that fits. When no length fits, the tabs share the strip
+/// in equal cells.
+fn tab_pills(column: u32, columns: u32, lengths: &[usize]) -> Vec<(u32, u32)> {
+    let gaps = (lengths.len() as u32).saturating_sub(1);
+    let width = |length: usize, cut: u32| (length as u32).min(cut) + 2;
+    let fits = |cut: u32| lengths.iter().map(|&n| width(n, cut)).sum::<u32>() + gaps <= columns;
+    let longest = lengths.iter().copied().max().unwrap_or(0) as u32;
+    let Some(cut) = (1..=longest.max(1)).rev().find(|&cut| fits(cut)) else {
+        return tab_cells(column, columns, lengths.len()).collect();
+    };
+    let mut start = column;
+    (lengths.iter())
+        .map(|&length| {
+            let pill = (start, width(length, cut));
+            start += pill.1 + 1;
+            pill
+        })
+        .collect()
+}
+
+/// The index of the pill among `pills` that holds `column`.
+fn tab_at(pills: &[(u32, u32)], column: u32) -> Option<usize> {
+    (pills.iter()).position(|&(start, width)| column >= start && column < start + width)
 }
 
 /// The start column and width of each of `count` tab labels sharing a row
@@ -891,11 +997,6 @@ fn tab_cells(column: u32, columns: u32, count: usize) -> impl Iterator<Item = (u
         };
         (start, end - start)
     })
-}
-
-fn tab_at(inner: CellRect, count: usize, column: u32) -> Option<usize> {
-    tab_cells(inner.column, inner.columns, count)
-        .position(|(start, width)| column >= start && column < start + width)
 }
 
 /// The cells a pane's client fills: inside the outline, below the tab
@@ -962,8 +1063,8 @@ fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool
             columns: button.len() as u32,
             rows: 3,
         };
-        scene.fill(rect, BAR_FOCUSED);
-        scene.text(column, top + 3, button, BAR_FOCUSED_TEXT);
+        scene.fill(rect, RESTART);
+        scene.text(column, top + 3, button, RESTART_TEXT);
         return;
     }
     scene.fill(inner, PANE);
@@ -1827,22 +1928,87 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_click_on_the_strip_picks_the_tab_whose_label_holds_the_column() {
-        let inner = CellRect {
-            column: 1,
-            row: 1,
-            columns: 10,
-            rows: 5,
-        };
-        let cells: Vec<(u32, u32)> = tab_cells(inner.column, inner.columns, 3).collect();
-        assert_eq!(cells, [(1, 3), (4, 3), (7, 4)]);
-        assert_eq!(tab_at(inner, 3, 1), Some(0));
-        assert_eq!(tab_at(inner, 3, 4), Some(1));
-        assert_eq!(tab_at(inner, 3, 10), Some(2));
-        assert_eq!(tab_at(inner, 3, 11), None);
-        assert_eq!(tab_at(inner, 3, 0), None);
+    fn tab_pills_are_as_wide_as_their_labels_and_a_click_between_them_picks_none() {
+        let pills = tab_pills(1, 40, &[4, 3, 6]);
+        assert_eq!(pills, [(1, 6), (8, 5), (14, 8)]);
+        assert_eq!(tab_at(&pills, 0), None);
+        assert_eq!(tab_at(&pills, 1), Some(0));
+        assert_eq!(tab_at(&pills, 6), Some(0));
+        assert_eq!(tab_at(&pills, 7), None);
+        assert_eq!(tab_at(&pills, 8), Some(1));
+        assert_eq!(tab_at(&pills, 21), Some(2));
+        assert_eq!(tab_at(&pills, 22), None);
         let layout = three_anchors();
         assert_eq!(layout.tab_hit(2, 1), None);
+    }
+
+    #[test]
+    fn tab_labels_are_cut_to_the_longest_length_that_fits_every_pill() {
+        let pills = tab_pills(0, 20, &[10, 3, 10]);
+        assert_eq!(pills, [(0, 6), (7, 5), (13, 6)]);
+        let (start, width) = pills[2];
+        assert!(start + width <= 20);
+    }
+
+    #[test]
+    fn tabs_too_many_for_a_pill_each_share_the_strip_in_equal_cells() {
+        let pills = tab_pills(1, 10, &[5, 5, 5]);
+        assert_eq!(pills, [(1, 3), (4, 3), (7, 4)]);
+        assert_eq!(tab_at(&pills, 10), Some(2));
+    }
+
+    fn rounded(scene: &Scene) -> Vec<(i32, i32, i32, i32, Rgba)> {
+        (scene.shapes.iter())
+            .filter_map(|shape| match shape {
+                crate::server::chrome::draw::Shape::Rounded { at, size, fill, .. } => {
+                    Some((at.x, at.y, size.w, size.h, *fill))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_hovered_close_button_is_a_dark_red_square_inside_its_cell() {
+        let layout = Layout::new(AREA, "terminal".to_string());
+        let font = crate::server::chrome::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        let chrome = Chrome {
+            bar: true,
+            hover: Some((0, BarButton::Close)),
+            ..Chrome::default()
+        };
+        layout.draw_bars(&mut scene, chrome);
+        let (cell_width, cell_height) = scene.cell();
+        let inner = layout.panes[0].rect.inner();
+        let close = bar_buttons(inner.column, inner.columns)[3].1;
+        let [(x, y, width, height, fill)] = rounded(&scene)[..] else {
+            panic!("one hover square");
+        };
+        assert_eq!(fill, CLOSE_HOVER);
+        assert_eq!(width, height);
+        assert!(height < cell_height);
+        let (left, top) = scene.px(close, inner.row);
+        assert!(x >= left && x + width <= left + BUTTON_WIDTH as i32 * cell_width);
+        assert!(y > top && y + height < top + cell_height);
+    }
+
+    #[test]
+    fn a_zoomed_pinned_pane_has_two_tags_on_its_top_line_in_its_outline_colour() {
+        let mut layout = Layout::new(AREA, "terminal".to_string());
+        layout.pin(0, "decade.terminal".to_string());
+        layout.toggle_zoom(0);
+        let font = crate::server::chrome::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, Chrome::default());
+        let tags = rounded(&scene);
+        assert_eq!(tags.len(), 2);
+        let (_, cell_height) = scene.cell();
+        let line_y = cell_height / 2;
+        for (_, y, _, height, fill) in tags {
+            assert_eq!(fill, FOCUS);
+            assert!(y < line_y && y + height > line_y);
+        }
     }
 
     #[test]

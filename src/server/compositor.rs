@@ -148,6 +148,9 @@ pub struct State {
     bar: bool,
     hover: Option<(usize, BarButton)>,
 
+    /// The pane and index of the pane tab under the pointer.
+    tab_hover: Option<(usize, usize)>,
+
     /// The top bar or sidebar item under the pointer.
     frame_hover: Option<Hit>,
     ctrl_timer: Option<RegistrationToken>,
@@ -235,6 +238,7 @@ pub fn run() {
         drag: None,
         bar: false,
         hover: None,
+        tab_hover: None,
         frame_hover: None,
         ctrl_timer: None,
         scale,
@@ -819,6 +823,7 @@ impl State {
         self.drag = None;
         self.bar = false;
         self.hover = None;
+        self.tab_hover = None;
         self.relayout_all();
         let focused = self.layout().focused;
         self.focus(focused);
@@ -1320,12 +1325,7 @@ impl CompositorHandler for State {
                 }
             };
             if let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane_mut(id) {
-                pane.add_client(panes::Client {
-                    toplevel,
-                    app_id,
-                    pid,
-                    terminal_tab,
-                });
+                pane.add_client(panes::Client::new(toplevel, app_id, pid, terminal_tab));
             }
             self.configure(workspace, tab, id);
 

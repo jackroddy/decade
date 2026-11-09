@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::server::chrome::draw::{Face, Scene};
+use crate::server::chrome::draw::{Face, Scene, scaled};
 use crate::server::chrome::palette;
 use crate::server::chrome::palette::Rgba;
 use crate::server::chrome::text::{fit, tail};
@@ -35,8 +35,7 @@ const DIM: Rgba = palette::LIGHT_FOREGROUND;
 const MUTED: Rgba = palette::MUTED;
 const SHADOW: Rgba = [0.0, 0.0, 0.0, 0.4];
 
-/// The row height, in pixels, that the card sizes below are given at.
-const MOCKUP_ROW: i32 = 18;
+// the sizes below are in pixels at 18 px rows, for `scaled`
 const CARD_INSET: i32 = 6;
 const CARD_GAP: i32 = 6;
 const CARD_PADDING: i32 = 4;
@@ -460,10 +459,10 @@ impl Frame {
         })
     }
 
-    /// `px`, a length given at `MOCKUP_ROW` rows, scaled to the chrome's
-    /// cell height.
+    /// `px`, a length given at 18 px rows, scaled to the chrome's cell
+    /// height.
     fn scaled(&self, px: i32) -> i32 {
-        (px * self.cell.1 + MOCKUP_ROW / 2) / MOCKUP_ROW
+        scaled(px, self.cell.1)
     }
 
     /// The left edge and width of every card in the open sidebar.

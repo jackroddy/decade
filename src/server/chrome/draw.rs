@@ -14,6 +14,15 @@ use crate::server::chrome::palette::Rgba;
 use crate::server::chrome::text::{Font, Text};
 use crate::server::panes::CellRect;
 
+/// The row height, in pixels, that chrome sizes given to `scaled` are
+/// given at.
+const MOCKUP_ROW: i32 = 18;
+
+/// `px`, a length given at `MOCKUP_ROW` rows, scaled to `cell_height`.
+pub fn scaled(px: i32, cell_height: i32) -> i32 {
+    (px * cell_height + MOCKUP_ROW / 2) / MOCKUP_ROW
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Face {
     Chrome,
@@ -64,6 +73,11 @@ impl Scene {
 
     pub fn cell(&self) -> (i32, i32) {
         (self.cell_width, self.cell_height)
+    }
+
+    /// `px`, a length given at `MOCKUP_ROW` rows, scaled to the cell height.
+    pub fn scaled(&self, px: i32) -> i32 {
+        scaled(px, self.cell_height)
     }
 
     pub fn line_width(&self) -> i32 {
