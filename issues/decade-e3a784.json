@@ -8,14 +8,15 @@
   "labels": [],
   "parent": "decade-da02e3",
   "blocked_by": [
-    "decade-0a5770"
+    "decade-0a5770",
+    "decade-4a4e0f"
   ],
   "related": [],
   "assignee": null,
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.965791301Z",
-  "updated_at": "2026-11-09T20:40:40.835394796Z",
+  "updated_at": "2026-11-09T20:40:40.84580428Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
