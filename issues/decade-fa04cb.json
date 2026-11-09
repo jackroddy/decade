@@ -3,26 +3,29 @@
   "title": "The focused pane is outlined in cyan",
   "body": "The focused pane's outline is `ACCENT` (`FOCUS` in `src/server/panes.rs`), and pane drop zones during a drag are `CYAN` (`DROP`). Jack wants the focus outline in cyan.\n\n## Proposal\n\n`FOCUS` becomes `CYAN`, and `DROP` becomes `ACCENT`, so a drop zone does not look like a focused pane. Anything else that marks the focused pane in `ACCENT` follows to `CYAN`. The sidebar's branch names stay `CYAN`, since they are text and not outlines.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/913b1d2c",
-  "lease_expires": "2026-11-09T04:32:37.201935555Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T04:13:35.462226955Z",
-  "updated_at": "2026-11-09T04:17:37.201935555Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T04:18:13.772949321Z",
+  "closed_at": "2026-11-09T04:18:13.772949321Z",
+  "close_reason": "Landed in 8df33c4. `FOCUS` is `CYAN` and `DROP` is `ACCENT` in `panes.rs`.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "b96ed31",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8df33c4",
+      "branch": "dev"
+    }
   }
 }
