@@ -1,7 +1,7 @@
 {
   "id": "decade-a365b0",
   "title": "A point redraws every viewer at 30 fps",
-  "body": "While a `point` is active, a 33 ms timer in `src/server/compositor.rs` (`PULSE_EVERY`, `start_pulse`) requests a redraw, and every viewer redraws at about 30 frames a second, not only the viewer showing the pulsing pane, pill, card or tile. The pulse lasts up to 30 s.\n\n## Proposal\n\nRedraw only the viewers whose shown workspace draws the pulse: the pointed pane's workspace, and any viewer whose sidebar or rail shows that workspace's card or tile. A viewer with the sidebar closed and another workspace shown still draws the rail tile, so it still redraws.",
+  "body": "While a `point` is active, a 33 ms timer in `src/server/compositor.rs` (`PULSE_EVERY`, `start_pulse`) requests a redraw, and every viewer redraws at about 30 frames a second for up to 30 s. Every viewer does draw the pulse somewhere: the sidebar or the rail lists every workspace, so a viewer that does not show the pointed pane still shows its card or tile.\n\n## Proposal\n\nKeep 30 frames a second for a viewer that shows the pointed pane's outline or its tab pill. A viewer that only shows the card or tile redraws at a lower rate, around 10 frames a second, which is enough for a slow fade on a small shape.",
   "type": "chore",
   "status": "open",
   "priority": 4,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T20:40:53.740443217Z",
-  "updated_at": "2026-11-09T20:40:53.740443217Z",
+  "updated_at": "2026-11-09T20:41:01.491961102Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
