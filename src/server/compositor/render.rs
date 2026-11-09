@@ -12,6 +12,7 @@ use smithay::backend::renderer::utils::draw_render_elements;
 use smithay::backend::renderer::{Bind, Color32F, Frame, Renderer};
 use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
 
+use crate::server::agents;
 use crate::server::chrome::draw::{Element, Paint, Scene, Shrink};
 use crate::server::chrome::frame;
 use crate::server::chrome::palette::{ACCENT, Rgba};
@@ -44,6 +45,7 @@ impl State {
                 }
             }
             self.workspaces[workspace].refresh_running(now, &workspace::home());
+            self.workspaces[workspace].name_agents();
         }
         let frame = picker_grid.is_none().then(|| self.frame(workspace));
         let State {
@@ -208,22 +210,17 @@ impl State {
         let pulse =
             |workspace: &Workspace| (workspace.point.as_ref()).map(|point| point.pulse(now));
         let entries = (self.workspaces.iter().enumerate())
-            .map(|(i, workspace)| {
-                let urgent = workspace.router.agents.urgent();
-                frame::Entry {
-                    id: workspace.id,
-                    name: workspace.name.clone(),
-                    tabs: workspace.tabs.len(),
-                    path: frame::short_path(&workspace.cwd, &home),
-                    branch: workspace.branch.clone(),
-                    state: urgent.map(|(state, _)| state),
-                    age: urgent.map_or(Duration::ZERO, |(_, agent)| agent.since.elapsed()),
-                    message: urgent
-                        .and_then(|(_, agent)| agent.report.message())
-                        .map(str::to_string),
-                    current: i == shown,
-                    pulse: pulse(workspace).filter(|_| i != shown),
-                }
+            .map(|(i, workspace)| frame::Entry {
+                id: workspace.id,
+                name: workspace.name.clone(),
+                tabs: workspace.tabs.len(),
+                path: frame::short_path(&workspace.cwd, &home),
+                branch: workspace.branch.clone(),
+                agents: (workspace.router.agents.list.iter())
+                    .map(|agent| card_agent(agent, now))
+                    .collect(),
+                current: i == shown,
+                pulse: pulse(workspace).filter(|_| i != shown),
             })
             .collect();
         let shown = &self.workspaces[shown];
@@ -238,7 +235,8 @@ impl State {
                     .collect();
                 let state = (shown.router.agents.list.iter())
                     .filter(|agent| {
-                        (agent.pane.as_deref()).is_some_and(|pane| names.contains(&pane))
+                        agent.connected
+                            && (agent.pane.as_deref()).is_some_and(|pane| names.contains(&pane))
                     })
                     .filter_map(|agent| agent.report.state)
                     .max();
@@ -269,6 +267,32 @@ impl State {
         );
         frame.hover = hover;
         frame
+    }
+}
+
+/// The agent as its workspace's card and popover show it at `now`.
+fn card_agent(agent: &agents::Agent, now: Instant) -> frame::Agent {
+    let dim = match (agent.connected, agent.pane.is_some()) {
+        (_, false) => Some(frame::Dim::NoPane),
+        (false, true) => Some(frame::Dim::Disconnected),
+        (true, true) => None,
+    };
+    let since = if dim.is_some() {
+        agent.last_seen
+    } else {
+        agent.since
+    };
+    let report = &agent.report;
+    frame::Agent {
+        name: agent.name.clone(),
+        state: report.state,
+        age: now.saturating_duration_since(since),
+        message: report.message().map(str::to_string),
+        model: report.model.clone(),
+        context: report.context,
+        tokens: report.tokens,
+        cost: report.cost,
+        dim,
     }
 }
 

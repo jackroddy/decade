@@ -7,7 +7,7 @@ use crate::server::chrome::palette;
 use crate::server::chrome::palette::Rgba;
 use crate::server::chrome::text::{fit, tail};
 use crate::server::panes::CellRect;
-use decade_channel::AgentState;
+use decade_channel::{AgentState, Context, Tokens};
 
 /// The rows above the panes that the top bar takes.
 const TOP: u32 = 2;
@@ -19,6 +19,9 @@ const NAME_COLUMN: u32 = 3;
 const DIAMOND: char = '◆';
 const MENU: char = '≡';
 const DOT: char = '●';
+
+/// The mark of a dim agent.
+const DIM_MARK: char = '○';
 
 /// The columns at the right of the top bar that open the palette.
 const MENU_WIDTH: u32 = 5;
@@ -90,6 +93,41 @@ pub struct Tab {
     pub pulse: Option<f32>,
 }
 
+/// An agent of a workspace, as its card and popover show it.
+pub struct Agent {
+    pub name: String,
+    pub state: Option<AgentState>,
+
+    /// How long a live agent has held `state`, or how long ago a dim one
+    /// was last seen.
+    pub age: Duration,
+
+    /// The question, or else the activity.
+    pub message: Option<String>,
+    pub model: Option<String>,
+    pub context: Option<Context>,
+    pub tokens: Option<Tokens>,
+    pub cost: Option<f64>,
+
+    /// Why the agent is drawn dim, or `None` for a live agent.
+    pub dim: Option<Dim>,
+}
+
+/// Why an agent is drawn dim.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Dim {
+    Disconnected,
+    NoPane,
+}
+
+impl Agent {
+    /// The agent's state when it is live, which is all that counts toward
+    /// urgency.
+    fn live_state(&self) -> Option<AgentState> {
+        self.state.filter(|_| self.dim.is_none())
+    }
+}
+
 pub struct Entry {
     pub id: u32,
     pub name: String,
@@ -98,16 +136,39 @@ pub struct Entry {
     /// The workspace's directory, shortened by `short_path`.
     pub path: String,
     pub branch: Option<String>,
-    pub state: Option<AgentState>,
 
-    /// How long the agent has held `state`.
-    pub age: Duration,
-    pub message: Option<String>,
+    /// The workspace's agents, the one its card shows first once
+    /// `Frame::new` has ordered them.
+    pub agents: Vec<Agent>,
     pub current: bool,
 
     /// How far the pulse of the workspace's point is toward its peak, when
     /// the workspace is not the one shown.
     pub pulse: Option<f32>,
+}
+
+impl Entry {
+    /// The state of the agent the card shows, when that agent is live.
+    fn state(&self) -> Option<AgentState> {
+        self.agents.first().and_then(Agent::live_state)
+    }
+
+    /// The lines of the card's text.
+    fn card_lines(&self) -> i32 {
+        let agent = self.agents.first();
+        let message = agent.is_some_and(|agent| agent.message.is_some());
+        let usage = agent.and_then(usage).is_some();
+        3 + message as i32 + usage as i32
+    }
+
+    /// The lines of the popover's text: two for the workspace, each
+    /// agent's state and message, and the hint.
+    fn popover_lines(&self) -> i32 {
+        let agents: i32 = (self.agents.iter())
+            .map(|agent| 1 + agent.message.is_some() as i32)
+            .sum();
+        3 + agents.max(1)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -233,12 +294,62 @@ fn tab_count(tabs: usize) -> String {
     }
 }
 
-/// A workspace's state line in a card: "! needs you · 4m" or "· no agent".
-fn state_line(entry: &Entry) -> String {
-    let (glyph, _) = mark(entry.state);
-    match entry.state {
-        Some(state) => format!("{glyph} {} · {}", label(state), age(entry.age)),
-        None => format!("{glyph} no agent"),
+/// An agent's state line: "! coax needs you · 4m", with " +N" after it
+/// for `others` agents not shown, or "· no agent" for `None`.
+fn state_line(agent: Option<&Agent>, others: usize) -> String {
+    let Some(agent) = agent else {
+        return format!("{} no agent", mark(None).0);
+    };
+    let name = &agent.name;
+    let line = match (agent.dim, agent.state) {
+        (Some(Dim::NoPane), _) => format!("{DIM_MARK} {name} no pane"),
+        (Some(Dim::Disconnected), _) => {
+            format!("{DIM_MARK} {name} disconnected · {}", age(agent.age))
+        }
+        (None, Some(state)) => {
+            let (glyph, _) = mark(Some(state));
+            format!("{glyph} {name} {} · {}", label(state), age(agent.age))
+        }
+        (None, None) => format!("{} {name}", mark(None).0),
+    };
+    match others {
+        0 => line,
+        others => format!("{line} +{others}"),
+    }
+}
+
+/// The colour of an agent's state line: its state's, or `MUTED` when it
+/// is dim.
+fn agent_tint(agent: Option<&Agent>) -> Rgba {
+    tint(agent.and_then(Agent::live_state))
+}
+
+/// What the agent has reported of its usage: "claude-opus · 62% ctx ·
+/// 18.4k tok · $0.42", leaving out the parts not reported.
+fn usage(agent: &Agent) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(model) = &agent.model {
+        parts.push(model.clone());
+    }
+    if let Some(Context { used, limit }) = agent.context.filter(|context| context.limit > 0) {
+        let percent = (used as f64 / limit as f64 * 100.0).round();
+        parts.push(format!("{percent}% ctx"));
+    }
+    if let Some(Tokens { input, output }) = agent.tokens {
+        parts.push(format!("{} tok", count(input.saturating_add(output))));
+    }
+    if let Some(cost) = agent.cost {
+        parts.push(format!("${cost:.2}"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// `n` with a k or M suffix past a thousand: "512", "18.4k", "1.2M".
+fn count(n: u64) -> String {
+    match n {
+        0..1000 => n.to_string(),
+        1000..999_950 => format!("{:.1}k", n as f64 / 1e3),
+        _ => format!("{:.1}M", n as f64 / 1e6),
     }
 }
 
@@ -301,7 +412,12 @@ impl Frame {
         zoom: bool,
         cell: (i32, i32),
     ) -> Frame {
-        entries.sort_by_key(|entry| Reverse(entry.state));
+        for entry in &mut entries {
+            entry.agents.sort_by_key(|agent| {
+                Reverse((agent.dim.is_none(), agent.live_state(), Reverse(agent.age)))
+            });
+        }
+        entries.sort_by_key(|entry| Reverse(entry.state()));
         Frame {
             columns,
             rows,
@@ -320,7 +436,7 @@ impl Frame {
     pub fn next_needing(&self) -> Option<u32> {
         self.entries
             .iter()
-            .find(|entry| !entry.current && entry.state >= Some(AgentState::Done))
+            .find(|entry| !entry.current && entry.state() >= Some(AgentState::Done))
             .map(|entry| entry.id)
     }
 
@@ -330,7 +446,7 @@ impl Frame {
         let current = self.entries.iter().position(|entry| entry.current)?;
         (1..count)
             .map(|step| &self.entries[(current + step) % count])
-            .find(|entry| entry.state == Some(state))
+            .find(|entry| entry.state() == Some(state))
             .map(|entry| entry.id)
     }
 
@@ -387,7 +503,7 @@ impl Frame {
             let count = self
                 .entries
                 .iter()
-                .filter(|entry| entry.state == Some(state))
+                .filter(|entry| entry.state() == Some(state))
                 .count();
             if count == 0 {
                 continue;
@@ -447,11 +563,7 @@ impl Frame {
             .into_iter()
             .find_map(|(i, top)| Some((i?, top)).filter(|&(i, _)| self.entries[i].id == id))?;
         let (cell_width, cell_height) = self.cell;
-        let lines = if self.entries[i].message.is_some() {
-            5
-        } else {
-            4
-        };
+        let lines = self.entries[i].popover_lines();
         let size = (
             POPOVER_WIDTH as i32 * cell_width,
             2 * self.scaled(POPOVER_PADDING) + lines * cell_height,
@@ -500,8 +612,7 @@ impl Frame {
         let mut top = (TOP + 3) as i32 * row;
         let mut cards = Vec::new();
         for (i, entry) in self.entries.iter().enumerate() {
-            let lines = if entry.message.is_some() { 4 } else { 3 };
-            let card = 2 * padding + lines * row;
+            let card = 2 * padding + entry.card_lines() * row;
             if top + card > bottom {
                 return (cards, None);
             }
@@ -558,7 +669,7 @@ impl Frame {
             let state = top + self.scaled(CARD_PADDING) + 2 * self.cell.1;
             let on_glyph =
                 (state..state + self.cell.1).contains(&y) && x < self.card_text() + 2 * self.cell.0;
-            return Some(if on_glyph && entry.state >= Some(AgentState::Done) {
+            return Some(if on_glyph && entry.state() >= Some(AgentState::Done) {
                 Hit::Clear(entry.id)
             } else {
                 Hit::Show(entry.id)
@@ -730,7 +841,12 @@ impl Frame {
         if background != SIDEBAR || ring != SIDEBAR {
             scene.rounded(left, top, (width, height), radius, background, ring);
         }
-        if let Some(color) = stripe(entry.state) {
+        let agent = entry.agents.first();
+        let color = match agent {
+            Some(agent) if agent.dim.is_some() => Some(MUTED),
+            _ => stripe(entry.state()),
+        };
+        if let Some(color) = color {
             // a rounded rect in the stripe's colour, covered but for its
             // left edge by one in the card's colour moved right by the
             // stripe's width, so the stripe bends round the corners
@@ -766,12 +882,19 @@ impl Frame {
             scene.text_px(branch_x, line(1), &branch, Face::Chrome, palette::CYAN);
         }
 
-        let state = fit(&state_line(entry), room);
-        scene.text_px(x, line(2), &state, Face::Chrome, tint(entry.state));
+        let others = entry.agents.len().saturating_sub(1);
+        let state = fit(&state_line(agent, others), room);
+        scene.text_px(x, line(2), &state, Face::Chrome, agent_tint(agent));
 
-        if let Some(message) = &entry.message {
+        let mut next = 3;
+        if let Some(message) = agent.and_then(|agent| agent.message.as_deref()) {
             let message = fit(message, room.saturating_sub(2));
-            scene.text_px(x + 2 * cell_width, line(3), &message, Face::Chrome, DIM);
+            scene.text_px(x + 2 * cell_width, line(next), &message, Face::Chrome, DIM);
+            next += 1;
+        }
+        if let Some(usage) = agent.and_then(usage) {
+            let usage = fit(&usage, room.saturating_sub(2));
+            scene.text_px(x + 2 * cell_width, line(next), &usage, Face::Chrome, MUTED);
         }
     }
 
@@ -813,7 +936,7 @@ impl Frame {
         );
         scene.text_px(x, y, &text, face, color);
 
-        let Some(dot) = entry.and_then(|entry| entry.state) else {
+        let Some(dot) = entry.and_then(Entry::state) else {
             return;
         };
         // the mockup sets the ringed dot 3 px past the inside of the
@@ -864,17 +987,30 @@ impl Frame {
         let path = tail(&entry.path, room.saturating_sub(tabs.chars().count()));
         scene.text_px(x, line(1), &format!("{path}{tabs}"), Face::Chrome, DIM);
 
-        let state = fit(&state_line(entry), room);
-        scene.text_px(x, line(2), &state, Face::Chrome, tint(entry.state));
-
-        let mut hint = 3;
-        if let Some(message) = &entry.message {
-            let message = fit(message, room.saturating_sub(2));
-            let color = palette::FADED_FOREGROUND;
-            scene.text_px(x + 2 * cell_width, line(3), &message, Face::Chrome, color);
-            hint = 4;
+        let mut next = 2;
+        if entry.agents.is_empty() {
+            let state = fit(&state_line(None, 0), room);
+            scene.text_px(x, line(next), &state, Face::Chrome, MUTED);
+            next += 1;
         }
-        scene.text_px(x, line(hint), "click to show", Face::Chrome, DIM);
+        for agent in &entry.agents {
+            let state = fit(&state_line(Some(agent), 0), room);
+            scene.text_px(x, line(next), &state, Face::Chrome, agent_tint(Some(agent)));
+            next += 1;
+            if let Some(message) = &agent.message {
+                let message = fit(message, room.saturating_sub(2));
+                let color = palette::FADED_FOREGROUND;
+                scene.text_px(
+                    x + 2 * cell_width,
+                    line(next),
+                    &message,
+                    Face::Chrome,
+                    color,
+                );
+                next += 1;
+            }
+        }
+        scene.text_px(x, line(next), "click to show", Face::Chrome, DIM);
     }
 }
 
@@ -882,6 +1018,21 @@ impl Frame {
 mod tests {
     use super::*;
 
+    fn agent(name: &str, state: Option<AgentState>) -> Agent {
+        Agent {
+            name: name.to_string(),
+            state,
+            age: Duration::from_secs(240),
+            message: None,
+            model: None,
+            context: None,
+            tokens: None,
+            cost: None,
+            dim: None,
+        }
+    }
+
+    /// A workspace with one live agent in `state`, or none for `None`.
     fn entry(id: u32, name: &str, state: Option<AgentState>) -> Entry {
         Entry {
             id,
@@ -889,12 +1040,18 @@ mod tests {
             tabs: 1,
             path: format!("~/p/{name}"),
             branch: None,
-            state,
-            age: Duration::from_secs(240),
-            message: None,
+            agents: state
+                .map(|state| agent("coax", Some(state)))
+                .into_iter()
+                .collect(),
             current: id == 0,
             pulse: None,
         }
+    }
+
+    fn dim(mut agent: Agent, dim: Dim) -> Agent {
+        agent.dim = Some(dim);
+        agent
     }
 
     fn tab(label: &str, state: Option<AgentState>) -> Tab {
@@ -913,7 +1070,7 @@ mod tests {
             entry(3, "sail", Some(AgentState::Done)),
             entry(4, "sufr", Some(AgentState::Done)),
         ];
-        entries[2].message = Some("which branch?".to_string());
+        entries[2].agents[0].message = Some("which branch?".to_string());
         Frame::new(
             (120, 40),
             open,
@@ -1233,7 +1390,7 @@ mod tests {
         let mut frame = frame(true);
         frame
             .entries
-            .retain(|entry| entry.state != Some(AgentState::Done));
+            .retain(|entry| entry.state() != Some(AgentState::Done));
         let states: Vec<_> = frame.state_pills().iter().map(|pill| pill.hit).collect();
         assert_eq!(
             states,
@@ -1292,5 +1449,157 @@ mod tests {
     #[test]
     fn the_next_workspace_needing_the_person_skips_the_current_one() {
         assert_eq!(frame(true).next_needing(), Some(2));
+    }
+
+    #[test]
+    fn a_state_line_names_the_agent_with_its_state_and_age() {
+        let working = agent("coax", Some(AgentState::Working));
+        assert_eq!(state_line(Some(&working), 0), "● coax working · 4m");
+        let mut asking = agent("coax", Some(AgentState::Attention));
+        asking.age = Duration::from_secs(12 * 60);
+        assert_eq!(state_line(Some(&asking), 0), "! coax needs you · 12m");
+        let silent = agent("coax", None);
+        assert_eq!(state_line(Some(&silent), 0), "· coax");
+        assert_eq!(state_line(None, 0), "· no agent");
+    }
+
+    #[test]
+    fn a_state_line_counts_the_agents_it_does_not_show() {
+        let done = agent("coax", Some(AgentState::Done));
+        assert_eq!(state_line(Some(&done), 2), "✓ coax done · 4m +2");
+    }
+
+    #[test]
+    fn a_dim_agent_reads_disconnected_with_its_age_or_no_pane() {
+        let working = || agent("coax", Some(AgentState::Working));
+        let gone = dim(working(), Dim::Disconnected);
+        assert_eq!(state_line(Some(&gone), 0), "○ coax disconnected · 4m");
+        let paneless = dim(working(), Dim::NoPane);
+        assert_eq!(state_line(Some(&paneless), 1), "○ coax no pane +1");
+        assert_eq!(agent_tint(Some(&gone)), MUTED);
+        assert_eq!(agent_tint(Some(&working())), palette::LIGHT_YELLOW);
+    }
+
+    #[test]
+    fn the_usage_line_gives_the_model_context_percent_tokens_and_cost() {
+        let mut coax = agent("coax", Some(AgentState::Working));
+        assert_eq!(usage(&coax), None);
+        coax.model = Some("claude-opus".to_string());
+        coax.context = Some(Context {
+            used: 124_000,
+            limit: 200_000,
+        });
+        coax.tokens = Some(Tokens {
+            input: 15_000,
+            output: 3_400,
+        });
+        coax.cost = Some(0.4213);
+        assert_eq!(
+            usage(&coax).as_deref(),
+            Some("claude-opus · 62% ctx · 18.4k tok · $0.42")
+        );
+    }
+
+    #[test]
+    fn the_usage_line_leaves_out_what_the_agent_has_not_reported() {
+        let mut coax = agent("coax", None);
+        coax.tokens = Some(Tokens {
+            input: 900_000,
+            output: 340_000,
+        });
+        coax.context = Some(Context { used: 5, limit: 0 });
+        assert_eq!(usage(&coax).as_deref(), Some("1.2M tok"));
+        coax.tokens = None;
+        coax.cost = Some(3.0);
+        assert_eq!(usage(&coax).as_deref(), Some("$3.00"));
+    }
+
+    #[test]
+    fn a_token_count_takes_a_k_or_m_suffix_past_a_thousand() {
+        let counts = [512, 1000, 18_432, 999_949, 999_950, 12_500_000].map(count);
+        assert_eq!(counts, ["512", "1.0k", "18.4k", "999.9k", "1.0M", "12.5M"]);
+    }
+
+    #[test]
+    fn a_card_with_usage_takes_a_line_more() {
+        let mut frame = frame(true);
+        frame.entries[1].agents[0].cost = Some(0.1);
+        let (cards, _) = frame.cards();
+        assert_eq!(cards[1].2, 2 * 4 + 4 * 18);
+    }
+
+    #[test]
+    fn the_card_shows_the_most_urgent_live_agent_and_a_dim_one_only_when_none_is_live() {
+        let mut busy = entry(1, "busy", None);
+        let mut recent = dim(agent("old", Some(AgentState::Idle)), Dim::Disconnected);
+        recent.age = Duration::from_secs(60);
+        busy.agents = vec![
+            dim(
+                agent("asking", Some(AgentState::Attention)),
+                Dim::Disconnected,
+            ),
+            agent("idle", Some(AgentState::Idle)),
+            agent("working", Some(AgentState::Working)),
+            recent,
+        ];
+        let mut gone = entry(2, "gone", None);
+        gone.agents = vec![
+            dim(agent("older", Some(AgentState::Attention)), Dim::NoPane),
+            dim(agent("newer", Some(AgentState::Idle)), Dim::Disconnected),
+        ];
+        gone.agents[0].age = Duration::from_secs(600);
+        let frame = Frame::new(
+            (120, 40),
+            true,
+            vec![entry(0, "jack", None), gone, busy],
+            (vec![], 0),
+            String::new(),
+            false,
+            (8, 18),
+        );
+        let names: Vec<Vec<_>> = (frame.entries.iter())
+            .map(|entry| entry.agents.iter().map(|a| a.name.as_str()).collect())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                vec!["working", "idle", "old", "asking"],
+                vec![],
+                vec!["newer", "older"],
+            ]
+        );
+        assert_eq!(frame.entries[0].state(), Some(AgentState::Working));
+        assert_eq!(frame.entries[2].state(), None);
+    }
+
+    #[test]
+    fn dim_agents_do_not_count_toward_the_state_pills() {
+        let mut frame = frame(true);
+        for entry in &mut frame.entries {
+            if entry.name == "foam" {
+                entry.agents[0].dim = Some(Dim::Disconnected);
+            }
+        }
+        let states: Vec<_> = frame.state_pills().iter().map(|pill| pill.hit).collect();
+        assert_eq!(
+            states,
+            [Hit::Next(AgentState::Working), Hit::Next(AgentState::Done)]
+        );
+        assert_eq!(frame.next_needing(), Some(3));
+    }
+
+    #[test]
+    fn the_popover_lists_every_agent_with_its_message() {
+        let mut frame = frame(false);
+        let foam = frame.entries.iter_mut().find(|e| e.name == "foam").unwrap();
+        foam.agents.push(agent("helper", Some(AgentState::Working)));
+        foam.agents.push(dim(agent("old", None), Dim::Disconnected));
+        foam.agents[2].message = Some("reading".to_string());
+        frame.hover = Some(Hit::Show(2));
+        let popover = frame.popover().unwrap();
+
+        // the name, the path, three agents of which two have a
+        // message, and the hint
+        assert_eq!(popover.size.1, 2 * 6 + 8 * 18);
     }
 }

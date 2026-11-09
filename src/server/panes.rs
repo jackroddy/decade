@@ -224,6 +224,9 @@ pub struct Pane {
 
     /// The ghostty decade started for the pane.
     pub pid: Option<u32>,
+
+    /// The name of the live agent in the pane, which labels its first tab.
+    pub agent: Option<String>,
 }
 
 impl Pane {
@@ -250,22 +253,33 @@ impl Pane {
         }
     }
 
-    /// What runs in the pane: what its shown client runs, or the pane's
-    /// name.
+    /// What runs in the pane: the agent's name when the shown tab is its
+    /// first, or else what its shown client runs, or the pane's name.
     pub fn running_label(&self) -> String {
-        let shown = self.clients.get(self.shown);
-        shown
-            .and_then(|client| client.running_label(self.pid))
+        self.tab_label(self.shown)
             .unwrap_or_else(|| self.name.clone())
     }
 
     /// The label of each tab: what its client runs, or the tab's number.
     fn tab_labels(&self) -> Vec<String> {
-        (self.clients.iter().enumerate())
-            .map(|(index, client)| {
-                (client.running_label(self.pid)).unwrap_or_else(|| (index + 1).to_string())
+        (0..self.clients.len())
+            .map(|index| {
+                self.tab_label(index)
+                    .unwrap_or_else(|| (index + 1).to_string())
             })
             .collect()
+    }
+
+    /// The agent's name for the first tab, or else what tab `index` runs.
+    fn tab_label(&self, index: usize) -> Option<String> {
+        let client = self.clients.get(index)?;
+
+        // an agent names only the pane it claimed, not which of the
+        // pane's clients runs it, so the first tab takes the name
+        match &self.agent {
+            Some(agent) if index == 0 => Some(agent.clone()),
+            _ => client.running_label(self.pid),
+        }
     }
 
     /// The start column and width of each tab's pill on the strip.
@@ -331,6 +345,7 @@ impl Pane {
             app_id: None,
             cwd: None,
             pid: None,
+            agent: None,
         }
     }
 }

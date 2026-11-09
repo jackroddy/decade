@@ -760,7 +760,7 @@ mod tests {
         assert!(!agent.connected);
         assert_eq!(agent.last_seen, dropped);
         assert_eq!(agent.report.state, Some(AgentState::Attention));
-        assert_eq!(r.agents.states().max(), Some(AgentState::Attention));
+        assert_eq!(r.agents.states().max(), None);
     }
 
     #[test]

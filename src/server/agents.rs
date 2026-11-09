@@ -85,6 +85,11 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// Whether a client holds the agent and its pane is still there.
+    pub fn live(&self) -> bool {
+        self.connected && self.pane.is_some()
+    }
+
     /// Merge an update, and return whether it entered attention.
     pub fn update(&mut self, update: AgentUpdate, now: Instant) -> bool {
         let before = self.report.state;
@@ -194,16 +199,11 @@ impl Agents {
         }
     }
 
-    /// The agent states reported in the workspace.
+    /// The states the workspace's live agents have reported.
     pub fn states(&self) -> impl Iterator<Item = AgentState> {
-        self.list.iter().filter_map(|agent| agent.report.state)
-    }
-
-    /// The agent with the most urgent state, and that state.
-    pub fn urgent(&self) -> Option<(AgentState, &Agent)> {
         (self.list.iter())
-            .filter_map(|agent| Some((agent.report.state?, agent)))
-            .max_by_key(|(state, _)| *state)
+            .filter(|agent| agent.live())
+            .filter_map(|agent| agent.report.state)
     }
 
     /// The answer to the MCP tool `agents`.
@@ -302,10 +302,16 @@ mod tests {
                 .update(state(reported), start);
         }
         agents.clear(later);
-        let states: Vec<_> = agents.states().collect();
+        let states: Vec<_> = (agents.list.iter())
+            .map(|agent| agent.report.state)
+            .collect();
         assert_eq!(
             states,
-            [AgentState::Idle, AgentState::Idle, AgentState::Working]
+            [
+                Some(AgentState::Idle),
+                Some(AgentState::Idle),
+                Some(AgentState::Working)
+            ]
         );
         assert_eq!(agents.list[0].since, later);
         assert_eq!(agents.list[0].history.len(), 2);

@@ -194,6 +194,16 @@ impl Workspace {
         }
     }
 
+    /// Give each pane the name of the live agent in it, or `None`.
+    pub fn name_agents(&mut self) {
+        let agents = &self.router.agents.list;
+        for pane in self.tabs.iter_mut().flat_map(|tab| &mut tab.layout.panes) {
+            pane.agent = (agents.iter())
+                .find(|agent| agent.live() && agent.pane.as_deref() == Some(pane.name.as_str()))
+                .map(|agent| agent.name.clone());
+        }
+    }
+
     /// Answer one line from socket client `id`.
     pub fn channel_line(&mut self, id: usize, line: &str) -> Vec<Out> {
         self.router.handle(id, line, &pane_names(&self.tabs))
@@ -369,8 +379,8 @@ impl Workspace {
         self.scratch_pane() == Some(pane.name.as_str())
     }
 
-    /// The most urgent state of the workspace's agents, or `None` when no
-    /// agent has reported.
+    /// The most urgent state of the workspace's live agents, or `None`
+    /// when no live agent has reported.
     pub fn agent_state(&self) -> Option<AgentState> {
         self.router.agents.states().max()
     }
@@ -611,9 +621,27 @@ mod tests {
         workspace.channel_line(1, r#"{"agent": {"state": "working"}}"#);
         assert_eq!(workspace.agent_state(), Some(AgentState::Working));
         workspace.remove_tab(1);
-        assert_eq!(workspace.agent_state(), Some(AgentState::Working));
+        assert_eq!(workspace.agent_state(), None);
         assert_eq!(workspace.router.agents.list[0].pane, None);
         assert!(workspace.router.occupant("terminal2").is_none());
+    }
+
+    #[test]
+    fn a_pane_takes_the_name_of_its_live_agent_and_loses_it_when_the_agent_disconnects() {
+        let mut workspace = at_home();
+        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.channel_line(
+            1,
+            r#"{"hello": {"name": "coax", "pane": "terminal2", "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#,
+        );
+        workspace.name_agents();
+        let agent =
+            |workspace: &Workspace, tab: usize| workspace.tabs[tab].layout.panes[0].agent.clone();
+        assert_eq!(agent(&workspace, 0), None);
+        assert_eq!(agent(&workspace, 1).as_deref(), Some("coax"));
+        workspace.router.disconnect(1, Instant::now());
+        workspace.name_agents();
+        assert_eq!(agent(&workspace, 1), None);
     }
 
     #[test]
