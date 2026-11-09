@@ -1,0 +1,30 @@
+{
+  "id": "decade-649c72",
+  "title": "decade keeps a model of the agents in each workspace",
+  "body": "Agent state lives on `channel::Client` (`status`, `since`) and goes with the connection.\n\n## Proposal\n\n- A new `src/server/agents.rs` holds `Agent`: session, name, version, workspace, pane, state and since, the last 32 state changes, activity, question, model, context, tokens, cost, last seen, and whether it is connected.\n- Agents are keyed by session per workspace. A reconnect with the same session re-attaches to its agent and keeps its history.\n- A disconnected agent stays, shown as disconnected, until it sends `ended` or 10 minutes pass.\n- The router feeds the model. `Client.status` and `since` move into it, along with notifications, the \"raised\" check and clearing a mark.\n- A new MCP tool `agents` lists the agents in the caller's workspace.\n- Everything is in memory. Agents do not survive a server restart.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": "decade-179670",
+  "blocked_by": [
+    "decade-fb0930"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T06:01:22.567108123Z",
+  "updated_at": "2026-11-09T06:01:22.567108123Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "da499ce",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
