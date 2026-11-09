@@ -1,0 +1,28 @@
+{
+  "id": "decade-b410e5",
+  "title": "Decade-aware apps stream state to a local view half instead of pixels",
+  "body": "The remote viewer design under the UI kit milestone (decade-4a4e0f) streams each pane's pixels and draws the chrome locally. A terminal still feels laggy over a slow link that way, because each keystroke's echo makes a round trip before it shows.\n\n## Proposal\n\nA decade-aware app has two halves. The host half runs on the server's machine and keeps the true state, such as a terminal's screen. The view half is the same app's view code, installed on the viewer's machine, and draws a copy of that state locally. decade carries an app-defined stream of state diffs between the halves inside its own connection. A terminal's view half draws typed characters at once, marked unconfirmed, and the host's next diff confirms or corrects them, the way mosh does. Text is drawn at the viewer's scale, and scrollback, selection and search run on the viewer.\n\nA viewer without a matching view half, or with a different protocol version, streams the pane's pixels as for any other window.\n\n## Cost\n\n- Prediction is easy to get wrong: password prompts have no echo, and full-screen programs redraw on their own terms.\n- The viewer must only run view halves installed locally, matched by app id and protocol version, never code the server picks.\n- The view half has to build for every viewer platform, macOS included.\n- It needs a decade terminal first, built on an existing VT core such as `alacritty_terminal` or ghostty's VT library.\n\n## Open\n\nWhether it is worth building at all. Jack sees it as a v2 feature at most.",
+  "type": "feature",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T02:03:24.040927173Z",
+  "updated_at": "2026-11-09T02:03:24.040927173Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "2c3c178",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
