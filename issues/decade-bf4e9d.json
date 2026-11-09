@@ -3,7 +3,7 @@
   "title": "Pane bars, pane tabs and outline tags match the new chrome",
   "body": "The pane chrome in `panes.rs` still draws in the old style. While Ctrl is held, the focused pane's bar is solid `ACCENT` with dark text and the others `LIGHTER_BACKGROUND`, and a hovered button fills its cell with `SELECTION`, or `RED` for close. A pane holding several windows shows a strip of equal-width tab cells labelled with window titles, the shown one solid `ACCENT` when focused. `pin`, `zoom` and `scratch` are cut into the outline's top line as text.\n\n## Proposal\n\n- Every Ctrl bar is `LIGHTER_BACKGROUND`. The focused pane's name is bold in `FOREGROUND`, the others `LIGHT_FOREGROUND`. The orange outline alone marks focus.\n- A hovered button gets a rounded square behind its icon, inset a few pixels. Close hovers in `DARK_RED` behind `LIGHT_RED`.\n- Pane tabs are rounded pills as wide as their labels. The shown tab is `SELECTION`, its label bold when the pane is focused, and a hovered tab fills with `SELECTION`. Hits stay in cells.\n- A pane tab's label follows the top bar's rule: a terminal's foreground program, or its shell's directory at the prompt, and otherwise the app id's last part. The 2 s cache moves from the pane to each window.\n- Each outline tag is a small rounded pill on the top line, in the outline's colour.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T01:43:22.969930208Z",
-  "updated_at": "2026-11-09T01:43:22.969930208Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T01:57:46.53853644Z",
+  "closed_at": "2026-11-09T01:57:46.53853644Z",
+  "close_reason": "Landed in 2c3c178. `tab_pills` lays out pane tabs, and the label cache lives on `Client`.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "47f17fa",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "2c3c178",
+      "branch": "dev"
+    }
   }
 }
