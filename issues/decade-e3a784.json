@@ -1,7 +1,7 @@
 {
   "id": "decade-e3a784",
   "title": "A viewer on another machine shows a server over the network",
-  "body": "dmabufs cannot cross a network, so a remote viewer needs the server's frames encoded, sent, and decoded, over decade's own protocol.\n\n## Open\n\n- Encoding: the GPU's video encoder, lossless updates of changed regions, or a mix. Video codecs blur fine text.\n- Transport and latency over a link such as Tailscale.\n- Mapping macOS keys, Cmd to Super in particular, to the server's keyboard.",
+  "body": "dmabufs cannot cross a network, so a viewer on another machine needs something other than the local viewer's frames. Jack decided on 2026-11-08 how remote viewing works:\n\n- Transport is plain SSH. `ssh box decade attach` relays the viewer protocol over the session's stdin and stdout to the server's socket. decade adds no network code of its own, and works the same on a LAN, a slower link, or `localhost`.\n- Only pane contents cross the wire, as pixels. The viewer draws the chrome itself: top bar, sidebar, pane bars, palette and picker. Hover, the Ctrl bar, drag ghosts and typing in the palette respond locally, at the viewer's own scale and fonts.\n- The server sends the state the chrome is drawn from (workspaces, layout, tabs, titles, labels, agents) and each pane's damaged pixels. The viewer sends input for panes, and actions such as split, close, move or switch tab for chrome clicks.\n- That makes the remote viewer a second program running the UI kit, so this waits on milestone decade-4a4e0f. Whole-frame streaming as a quicker first test was considered and not chosen.\n- A macOS viewer is the first remote target.\n\n## Open\n\n- Encoding: lossless updates of changed regions keep text sharp. Video codecs blur it.\n- Mapping macOS keys, Cmd to Super in particular, to the server's keyboard.\n- Popups and subsurfaces are composited into their pane's pixels on the server before encoding.\n\n[From the viewer protocol review on 2026-11-07, still open for the remote step:]\n\n- Heartbeats, so a viewer and a server notice a dead link.\n- Timestamps taken when the server receives input, since clocks differ across machines.\n- Server-side key repeat that keeps going when a key-up arrives late.\n- Remote clipboard transfers as data messages with flow control, since local transfers go through a pipe fd.\n\nMissing from version 1 for every viewer: pointer lock and relative motion, touch, gestures, tablets, IME and text input, and drag and drop between the host and panes.\n\nA later idea, apps streaming state to a local view half instead of pixels, is decade-b410e5.",
   "type": "feature",
   "status": "open",
   "priority": 2,
@@ -15,7 +15,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T08:33:59.965791301Z",
-  "updated_at": "2026-11-07T08:44:09.479419101Z",
+  "updated_at": "2026-11-09T20:40:40.835394796Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
