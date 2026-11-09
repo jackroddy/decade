@@ -3,7 +3,7 @@
   "title": "The channel protocol carries agent identity, updates and ending",
   "body": "A socket client reports `{\"status\": {\"state\": …, \"message\": …}}`, and `decade-channel` sends it through `Channel::status(state, message)`. Hello carries a name, the verbs a client accepts, the kinds it shows and the pane it claims. Nothing in hello marks a client as an agent.\n\n## Proposal\n\n- Hello gains an optional `agent` block: `{\"name\": \"coax\", \"version\": \"0.4.0\", \"session\": \"<id>\"}`. A client without it is a plain pane program.\n- A new `agent` message carries any subset of `state`, `activity` (what the agent is doing now), `question` (what it needs from Jack), `model`, `context` (`used` and `limit`), `tokens` (`input` and `output`) and `cost`. decade merges each update into what it already holds.\n- An `ended` message says the session is over. A dropped socket does not.\n- `status` folds into `agent` and goes. coax is its only user.\n- `decade-channel`: `Channel::from_env` takes an optional `Agent` identity, `Channel::agent(update)` sends an update with only the fields set, and `Channel::ended()` ends the session. The crate is unreleased, so its Unreleased bullets are edited and its version stays.\n- `docs/protocol.md` documents all of it.\n\nThe server keeps using the merged fields as it uses `status` today until the model issue lands.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": "decade-179670",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T06:01:22.555839059Z",
-  "updated_at": "2026-11-09T06:01:22.555839059Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T06:10:27.533893914Z",
+  "closed_at": "2026-11-09T06:10:27.533893914Z",
+  "close_reason": "Landed in 896d419, with decade-code updated in decade-apps 4323017. coax still calls the removed Channel::status and is left to its own session.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "da499ce",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "896d419",
+      "branch": "dev"
+    }
   }
 }
