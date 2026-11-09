@@ -328,6 +328,7 @@ impl State {
                 }
                 self.pointer_button(button, pressed, time);
             }
+            ViewerMessage::PointerLeft => self.pointer_left(),
             ViewerMessage::Scroll(scroll) => self.pointer_scroll(scroll),
             ViewerMessage::Offer {
                 selection,

@@ -942,6 +942,7 @@ impl Viewer {
             }
             wl_pointer::Event::Leave { .. } => {
                 self.pointer.enter_serial = None;
+                self.input(ViewerMessage::PointerLeft);
             }
             wl_pointer::Event::Motion {
                 time,

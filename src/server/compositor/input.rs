@@ -126,6 +126,14 @@ impl State {
         pointer.frame(self);
     }
 
+    pub(super) fn pointer_left(&mut self) {
+        if self.frame_hover.is_some() || self.hover.is_some() {
+            self.frame_hover = None;
+            self.hover = None;
+            self.request_redraw();
+        }
+    }
+
     pub(super) fn pointer_button(&mut self, button: u32, pressed: bool, time: u32) {
         if matches!(self.overlay, Some(Overlay::Picker { .. })) {
             if button == BTN_LEFT {

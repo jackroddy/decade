@@ -149,6 +149,7 @@ pub enum ViewerMessage {
         rate: u32,
         delay: u32,
     },
+    PointerLeft,
 }
 
 /// A message from the server to a viewer.
@@ -437,6 +438,7 @@ impl ViewerMessage {
                 w.u32(delay);
                 17
             }
+            ViewerMessage::PointerLeft => 18,
         };
         w.finish(opcode)
     }
@@ -957,6 +959,7 @@ impl Decoder {
                 rate: a.u32()?,
                 delay: a.u32()?,
             },
+            18 => ViewerMessage::PointerLeft,
             _ => return Err(Error::UnknownOpcode(opcode)),
         };
         a.finish()?;
@@ -1272,6 +1275,7 @@ mod tests {
                 rate: 25,
                 delay: 600,
             },
+            ViewerMessage::PointerLeft,
         ]
     }
 

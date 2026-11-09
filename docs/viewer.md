@@ -222,6 +222,10 @@ them. The server handles each one when it arrives.
 `pointer(time: u32, x: fixed, y: fixed)`
 : The pointer moved to `x`, `y`.
 
+`pointer_left()`
+: The pointer left the window. The server clears the hover state of the
+  top bar, the sidebar and the pane bars.
+
 `button(time: u32, button: u32, pressed: u32)`
 : A mouse button changed. `button` is a Linux evdev code, such as `BTN_LEFT`.
   A button still down when the pointer leaves the window stays down until
@@ -353,6 +357,7 @@ Viewer to server:
 | 15 | `request` |
 | 16 | `list` |
 | 17 | `repeat` |
+| 18 | `pointer_left` |
 
 Server to viewer:
 
