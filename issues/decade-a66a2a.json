@@ -3,7 +3,7 @@
   "title": "The rail's hover card closes when the pointer moves onto it",
   "body": "Hovering a rail tile shows the workspace's card beside the rail. `Frame::hover` only counts the top bar and the sidebar as chrome, so moving the pointer from the tile onto the card clears the hover and the card disappears.\n\n## Proposal\n\nThe popover's rect counts as part of the hovered tile while the card is shown, so the card stays while the pointer is on it. A click on the card shows its workspace, as a click on the tile does.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": "decade-30d5e3",
@@ -13,16 +13,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T23:38:05.184495108Z",
-  "updated_at": "2026-11-08T23:38:05.184495108Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-09T01:18:57.067559213Z",
+  "closed_at": "2026-11-09T01:18:57.067559213Z",
+  "close_reason": "Landed in 984fd9f. `Frame::hit` counts the card and the gap before it as the hovered tile.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "b25d04d",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "47f17fa",
+      "branch": "dev"
+    }
   }
 }
