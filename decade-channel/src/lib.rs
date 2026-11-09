@@ -20,6 +20,18 @@ pub enum Message {
         message: Value,
     },
     Panes(Vec<Pane>),
+    Show {
+        from: String,
+        show: Show,
+    },
+    Highlight {
+        from: String,
+        highlight: Highlight,
+    },
+    Clear {
+        from: String,
+        clear: Clear,
+    },
     Verb {
         from: String,
         verb: String,
@@ -42,6 +54,10 @@ pub enum AgentState {
 pub struct Pane {
     pub name: String,
     pub client: Option<String>,
+
+    /// The kinds the client in the pane can show.
+    #[serde(default)]
+    pub shows: Vec<Shows>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -51,6 +67,45 @@ pub struct Hello {
     pub accepts: Vec<String>,
     #[serde(default)]
     pub pane: Option<String>,
+    #[serde(default)]
+    pub shows: Vec<Shows>,
+}
+
+/// A kind of thing a program can show, such as `file` or `url`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Shows {
+    pub kind: String,
+
+    /// Whether the program takes `highlight` and `clear` for this kind.
+    #[serde(default)]
+    pub highlight: bool,
+}
+
+/// The payload of `show`: bring `target` into view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Show {
+    pub kind: String,
+    pub target: String,
+
+    /// Where in the target, in the form the kind defines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<Value>,
+}
+
+/// The payload of `highlight`: mark parts of `target`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Highlight {
+    pub kind: String,
+    pub target: String,
+
+    /// The parts to mark, in the form the kind defines.
+    pub ranges: Value,
+}
+
+/// The payload of `clear`: drop every highlight of the kind.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Clear {
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -90,29 +145,6 @@ enum Request {
     Panes {},
 }
 
-pub mod code {
-    use std::path::PathBuf;
-
-    use serde::{Deserialize, Serialize};
-
-    pub const SHOW: &str = "show";
-    pub const MARK: &str = "mark";
-    pub const CLEAR: &str = "clear";
-
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    pub struct Show {
-        pub path: PathBuf,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub line: Option<u32>,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    pub struct Mark {
-        pub path: PathBuf,
-        pub lines: Vec<(u32, u32)>,
-    }
-}
-
 pub fn parse(line: &str) -> Result<Message, String> {
     let value: Value = serde_json::from_str(line).map_err(|e| format!("not JSON: {e}"))?;
     let Value::Object(mut object) = value else {
@@ -137,13 +169,25 @@ pub fn parse(line: &str) -> Result<Message, String> {
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_default();
     let mut rest = object.into_iter();
-    match (rest.next(), rest.next()) {
-        (Some((verb, payload)), None) => Ok(Message::Verb {
+    let (Some((verb, payload)), None) = (rest.next(), rest.next()) else {
+        return Err("expected exactly one verb".to_string());
+    };
+    let bad = |e: serde_json::Error| format!("bad {verb}: {e}");
+    match verb.as_str() {
+        "show" => serde_json::from_value(payload)
+            .map(|show| Message::Show { from, show })
+            .map_err(bad),
+        "highlight" => serde_json::from_value(payload)
+            .map(|highlight| Message::Highlight { from, highlight })
+            .map_err(bad),
+        "clear" => serde_json::from_value(payload)
+            .map(|clear| Message::Clear { from, clear })
+            .map_err(bad),
+        _ => Ok(Message::Verb {
             from,
             verb,
             payload,
         }),
-        _ => Err("expected exactly one verb".to_string()),
     }
 }
 
@@ -155,6 +199,7 @@ impl Channel {
     pub fn from_env(
         name: &str,
         accepts: &[&str],
+        shows: &[Shows],
     ) -> Option<io::Result<(Channel, Receiver<Message>)>> {
         let path = std::env::var_os("DECADE_SOCKET")?;
         let pane = std::env::var("DECADE_PANE").ok();
@@ -162,6 +207,7 @@ impl Channel {
             Path::new(&path),
             name,
             accepts,
+            shows,
             pane.as_deref(),
         ))
     }
@@ -170,6 +216,7 @@ impl Channel {
         path: &Path,
         name: &str,
         accepts: &[&str],
+        shows: &[Shows],
         pane: Option<&str>,
     ) -> io::Result<(Channel, Receiver<Message>)> {
         let stream = UnixStream::connect(path)?;
@@ -181,6 +228,7 @@ impl Channel {
             name: name.to_string(),
             accepts: accepts.iter().map(|a| a.to_string()).collect(),
             pane: pane.map(str::to_string),
+            shows: shows.to_vec(),
         }))?;
         Ok((channel, rx))
     }
@@ -256,19 +304,77 @@ mod tests {
 
     #[test]
     fn a_forwarded_verb_parses_with_its_sender() {
-        let message = parse(r#"{"from":"coax","show":{"path":"src/gpu.rs","line":40}}"#).unwrap();
-        let Message::Verb {
-            from,
-            verb,
-            payload,
-        } = message
-        else {
-            panic!("not a verb");
+        let message = parse(r#"{"from":"coax","focus":{"row":3}}"#).unwrap();
+        assert_eq!(
+            message,
+            Message::Verb {
+                from: "coax".into(),
+                verb: "focus".into(),
+                payload: json!({"row": 3})
+            }
+        );
+    }
+
+    #[test]
+    fn show_highlight_and_clear_parse_into_their_payloads() {
+        let message =
+            parse(r#"{"from":"agent","show":{"kind":"file","target":"src/gpu.rs","at":40}}"#)
+                .unwrap();
+        assert_eq!(
+            message,
+            Message::Show {
+                from: "agent".into(),
+                show: Show {
+                    kind: "file".into(),
+                    target: "src/gpu.rs".into(),
+                    at: Some(json!(40))
+                }
+            }
+        );
+        let message = parse(
+            r#"{"from":"agent","highlight":{"kind":"file","target":"a.rs","ranges":[[10,14]]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            message,
+            Message::Highlight {
+                from: "agent".into(),
+                highlight: Highlight {
+                    kind: "file".into(),
+                    target: "a.rs".into(),
+                    ranges: json!([[10, 14]])
+                }
+            }
+        );
+        let message = parse(r#"{"from":"agent","clear":{"kind":"file"}}"#).unwrap();
+        assert_eq!(
+            message,
+            Message::Clear {
+                from: "agent".into(),
+                clear: Clear {
+                    kind: "file".into()
+                }
+            }
+        );
+        let error = parse(r#"{"from":"agent","show":{"path":"a.rs"}}"#).unwrap_err();
+        assert!(error.starts_with("bad show: missing field `kind`"));
+    }
+
+    #[test]
+    fn a_show_without_at_is_written_without_it_and_reads_back_the_same() {
+        let show = Show {
+            kind: "url".into(),
+            target: "https://example.org".into(),
+            at: None,
         };
-        assert_eq!(from, "coax");
-        assert_eq!(verb, "show");
-        let show: code::Show = serde_json::from_value(payload).unwrap();
-        assert_eq!(show.line, Some(40));
+        let value = serde_json::to_value(&show).unwrap();
+        assert_eq!(
+            value,
+            json!({"kind": "url", "target": "https://example.org"})
+        );
+        assert_eq!(serde_json::from_value::<Show>(value).unwrap(), show);
+        let shows: Shows = serde_json::from_value(json!({"kind": "image"})).unwrap();
+        assert!(!shows.highlight);
     }
 
     #[test]
@@ -283,18 +389,23 @@ mod tests {
             }
         );
         let message =
-            parse(r#"{"panes":[{"name":"chat","client":"coax"},{"name":"code","client":null}]}"#)
+            parse(r#"{"panes":[{"name":"chat","client":"coax"},{"name":"code","client":"decade-code","shows":[{"kind":"file","highlight":true}]}]}"#)
                 .unwrap();
         assert_eq!(
             message,
             Message::Panes(vec![
                 Pane {
                     name: "chat".into(),
-                    client: Some("coax".into())
+                    client: Some("coax".into()),
+                    shows: Vec::new()
                 },
                 Pane {
                     name: "code".into(),
-                    client: None
+                    client: Some("decade-code".into()),
+                    shows: vec![Shows {
+                        kind: "file".into(),
+                        highlight: true
+                    }]
                 }
             ])
         );
@@ -322,7 +433,7 @@ mod tests {
                 .write_all(b"{\"welcome\":{\"pane\":\"code\",\"version\":1}}\n")
                 .unwrap();
             writer
-                .write_all(b"{\"from\":\"coax\",\"clear\":{}}\n")
+                .write_all(b"{\"from\":\"agent\",\"clear\":{\"kind\":\"file\"}}\n")
                 .unwrap();
             let mut sent = String::new();
             reader.read_line(&mut sent).unwrap();
@@ -331,7 +442,11 @@ mod tests {
         let (mut channel, rx) = Channel::connect(
             &path,
             "decade-code",
-            &["show", "mark", "clear"],
+            &["reload"],
+            &[Shows {
+                kind: "file".into(),
+                highlight: true,
+            }],
             Some("code"),
         )
         .unwrap();
@@ -339,9 +454,10 @@ mod tests {
             .send(
                 "chat",
                 "show",
-                code::Show {
-                    path: "a.rs".into(),
-                    line: Some(3),
+                Show {
+                    kind: "file".into(),
+                    target: "a.rs".into(),
+                    at: Some(json!(3)),
                 },
             )
             .unwrap();
@@ -352,16 +468,20 @@ mod tests {
                 version: 1
             }
         );
-        assert!(matches!(rx.recv().unwrap(), Message::Verb { verb, .. } if verb == "clear"));
+        assert!(matches!(rx.recv().unwrap(), Message::Clear { clear, .. } if clear.kind == "file"));
         let (hello, sent) = server.join().unwrap();
         let hello: Value = serde_json::from_str(&hello).unwrap();
         assert_eq!(hello["hello"]["name"], "decade-code");
         assert_eq!(hello["hello"]["pane"], "code");
-        assert_eq!(hello["hello"]["accepts"], json!(["show", "mark", "clear"]));
+        assert_eq!(hello["hello"]["accepts"], json!(["reload"]));
+        assert_eq!(
+            hello["hello"]["shows"],
+            json!([{"kind": "file", "highlight": true}])
+        );
         let sent: Value = serde_json::from_str(&sent).unwrap();
         assert_eq!(
             sent,
-            json!({"to": "chat", "show": {"path": "a.rs", "line": 3}})
+            json!({"to": "chat", "show": {"kind": "file", "target": "a.rs", "at": 3}})
         );
         drop(channel);
         assert_eq!(rx.recv().unwrap(), Message::Closed);

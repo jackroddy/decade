@@ -101,7 +101,16 @@ impl State {
     fn mcp_call(&mut self, workspace: usize, call: mcp::Call) -> Result<String, String> {
         let shown = &self.workspaces[workspace];
         let (to, verb, payload) = match call {
-            mcp::Call::Send { to, verb, payload } => (to, verb, payload),
+            mcp::Call::Kind {
+                verb,
+                kind,
+                pane,
+                payload,
+            } => (
+                shown.showing(&kind, pane.as_deref())?,
+                verb.to_string(),
+                payload,
+            ),
             mcp::Call::ScratchSend { verb, payload } => {
                 let to = shown.scratch_pane().ok_or(NO_SCRATCH)?;
                 (to.to_string(), verb, payload)

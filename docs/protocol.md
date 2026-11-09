@@ -21,13 +21,19 @@ carries one JSON object per line.
 The first line a client sends:
 
 ```json
-{"hello": {"name": "code-pane", "accepts": ["show", "mark", "clear"], "pane": "code"}}
+{"hello": {"name": "decade-code", "pane": "code", "shows": [{"kind": "file", "highlight": true}]}}
 ```
 
-`name` is how other clients and error messages refer to it. `accepts` lists
-the verbs it handles; an empty list accepts everything. `pane` claims the pane
-of that name, normally the value of `DECADE_PANE`, and is optional: a client
-with no pane can still send. decade answers:
+`name` is how other clients and error messages refer to it. `accepts`
+lists the verbs it handles. `pane` claims the pane of that name, normally
+the value of `DECADE_PANE`, and is optional: a client with no pane can
+still send. `shows` lists the kinds of thing the client can show, and is
+optional. Each kind has a name and says whether the client can highlight
+it. `highlight` defaults to false.
+
+When `accepts` is empty or missing, a client that lists no kinds takes
+every verb. A client that lists kinds takes only `show`, `highlight` and
+`clear`. decade answers:
 
 ```json
 {"welcome": {"pane": "code", "version": 1}}
@@ -37,9 +43,9 @@ with no pane can still send. decade answers:
 another client holds it; in the last two cases an error line comes first.
 Every other message before hello is answered with an error.
 
-A client may send hello again. The new hello replaces its name and
-`accepts` list. The client gives up the pane it held and claims the one the
-new hello names, if any.
+A client may send hello again. The new hello replaces its name, its
+`accepts` list and its `shows` list. The client gives up the pane it held
+and claims the one the new hello names, if any.
 
 ## Messages to a pane
 
@@ -47,30 +53,53 @@ A message names a pane in `to` and carries exactly one verb. decade delivers
 it to the client occupying that pane, with `to` replaced by `from`:
 
 ```json
-{"to": "code", "show": {"path": "src/gpu.rs", "line": 40}}
+{"to": "code", "reload": {"path": "src/gpu.rs"}}
 ```
 
 arrives at the code pane as
 
 ```json
-{"show": {"path": "src/gpu.rs", "line": 40}, "from": "coax"}
+{"reload": {"path": "src/gpu.rs"}, "from": "coax"}
 ```
 
-The verbs so far, and what a code pane does with them:
-
-| Verb | Payload | Meaning |
-|---|---|---|
-| `show` | `path`, optional `line` | open the file, scroll to the line |
-| `mark` | `path`, `lines` as `[[from, to], ...]` | highlight those line ranges |
-| `clear` | none | drop every mark |
-
-Verbs are not checked by decade beyond the occupant's `accepts` list; the
-payload is the business of the two clients.
+decade checks a verb only against the occupant's `accepts` list. The
+payload is the business of the two clients. The three verbs below are the
+exception.
 
 A pane verb may not be one of these names, which decade keeps for its own
 messages: `hello`, `status`, `panes`, `welcome`, `error` and `from`.
 decade answers a message to a pane that uses one with an error and
 does not forward it.
+
+## Show, highlight and clear
+
+`show`, `highlight` and `clear` are standard verbs. Each names a kind, and
+decade delivers it only to an occupant whose hello listed that kind in
+`shows`. The occupant receives them whatever its `accepts` list says.
+`highlight` and `clear` also need the kind to have `highlight` true.
+
+| Verb | Payload | Meaning |
+|---|---|---|
+| `show` | `kind`, `target`, optional `at` | bring `target` into view, at `at` |
+| `highlight` | `kind`, `target`, `ranges` | mark `ranges` of `target`, replacing the marks before |
+| `clear` | `kind` | drop every mark of that kind |
+
+```json
+{"from": "agent", "show": {"kind": "file", "target": "src/gpu.rs", "at": 40}}
+{"from": "agent", "highlight": {"kind": "file", "target": "src/gpu.rs", "ranges": [[10, 14]]}}
+{"from": "agent", "clear": {"kind": "file"}}
+```
+
+`kind` and `target` are strings. `at` and `ranges` can be any JSON value,
+and their form depends on the kind. decade passes them through unread.
+decade-code shows `file`. Its target is a path, `at` is a 1-based line, and
+`ranges` is a list of inclusive 1-based `[from, to]` line pairs. A `show`
+without `at` leaves an open file where it is and starts any other file at
+the top.
+
+decade refuses one of these verbs when its payload lacks `kind` or
+`target`, when the occupant does not show the kind, or when the occupant
+cannot highlight it.
 
 ## Messages to decade
 
@@ -80,10 +109,11 @@ A message without `to` is for decade, and carries exactly one of its verbs.
 {"panes": {}}
 ```
 
-`panes` is answered with every pane in the workspace and its occupant:
+`panes` is answered with every pane in the workspace, its occupant and
+the kinds the occupant shows:
 
 ```json
-{"panes": [{"name": "chat", "client": "coax"}, {"name": "terminal", "client": null}, {"name": "code", "client": null}]}
+{"panes": [{"name": "chat", "client": "coax", "shows": []}, {"name": "terminal", "client": null, "shows": []}, {"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}]}]}
 ```
 
 ## Agent state
@@ -126,17 +156,23 @@ JSON. decade never drops a message silently.
 Agents do not use this socket. decade is also an MCP server, over streamable
 HTTP at the address in `DECADE_MCP`, which every program decade starts gets
 beside `DECADE_SOCKET`. Each workspace has its own address, ending in
-`?workspace=<id>`, and a tool call reaches only the panes of that
-workspace. Its tools are decade's own `panes` and `point` and, for
-the code pane, `code.show`, `code.mark` and `code.clear`, each with the payload
-described above as its arguments. decade delivers a pane verb from a tool
-call with `"from": "agent"`. decade answers `panes` with the pane list, in the
-shape of the socket's `panes` reply, and every other call with a line saying
-what it did. When decade cannot act on a call, the result is a tool error
-whose text is the reason the socket would give in `error`. decade refuses a
-call to an address without `?workspace=` as invalid parameters. coax passes
-`DECADE_MCP` to the agent in the ACP session's server list, so any agent coax
-runs sees these tools.
+`?workspace=<id>`, and a tool call reaches only the panes of that workspace.
+Its tools are `panes`, `point`, `show`, `highlight`, `clear`, `scratch.open`
+and `scratch.send`. decade delivers a pane verb from a tool call with
+`"from": "agent"`. decade answers `panes` with the pane list, in the shape
+of the socket's `panes` reply, and every other call with a line saying what
+it did. When decade cannot act on a call, the result is a tool error whose
+text is the reason the socket would give in `error`. decade refuses a call
+to an address without `?workspace=` as invalid parameters. coax passes
+`DECADE_MCP` to the agent in the ACP session's server list, so any agent
+coax runs sees these tools.
+
+`show`, `highlight` and `clear` take the payload of the socket verb of the
+same name as their arguments, plus an optional `pane`. With `pane`, decade
+sends the verb to that pane, whose occupant must show the kind. Without it,
+decade sends the verb to the one pane whose occupant shows the kind. decade
+refuses the call when several panes show the kind and when none does. In
+the second case the error lists the kinds the workspace's panes show.
 
 `point` takes `pane` and an optional `note`. decade pulses the pane's
 outline in magenta and puts the note on its top edge. Keyboard focus stays

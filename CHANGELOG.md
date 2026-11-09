@@ -125,8 +125,11 @@ command line and what the tool writes.
 - Scroll wheel events reach clients.
 - decade is an MCP server over streamable HTTP, at the address in
   `DECADE_MCP` in the environment of everything it starts. Its tools are
-  `point`, `panes`, `code.show`, `code.mark` and `code.clear`; a call becomes
+  `point`, `panes`, `show`, `highlight` and `clear`; a call becomes
   the matching socket message and decade's answer is the tool result.
+  `show`, `highlight` and `clear` name a kind, such as `file`, and go to
+  the pane whose program shows that kind, or to the pane the call names.
+  `panes` lists the kinds each pane's program shows.
   With `point` an agent points at a pane. Keyboard focus stays where it
   is. decade pulses the pane's outline in magenta and shows the
   agent's note on it. When the pane's tab is hidden, its pill on the top
@@ -135,9 +138,10 @@ command line and what the tool writes.
   the agent's next point.
 - A unix socket for decade-aware programs, with its path in `DECADE_SOCKET`
   and the pane name in `DECADE_PANE` of everything decade starts. JSON lines:
-  a hello that claims a pane, messages addressed to a pane and forwarded to
-  its occupant, `panes` for decade itself, and an error line for
-  anything else. `docs/protocol.md` has the details.
+  a hello that claims a pane and lists the kinds the program can show,
+  messages addressed to a pane and forwarded to its occupant, the standard
+  verbs `show`, `highlight` and `clear`, `panes` for decade itself, and an
+  error line for anything else. `docs/protocol.md` has the details.
 - `decade start`, `decade stop`, `decade restart` and `decade status`
   control the server. `start` runs a server in the background and opens no
   window. `stop` ends the server and every program in its panes. `status`

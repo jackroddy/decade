@@ -211,6 +211,11 @@ impl Workspace {
         self.router.send(AGENT, to, verb, payload, &panes)
     }
 
+    /// The pane an agent's show, highlight or clear of `kind` goes to.
+    pub fn showing(&self, kind: &str, pane: Option<&str>) -> Result<String, String> {
+        self.router.showing(kind, pane, &pane_names(&self.tabs))
+    }
+
     /// Every pane in tab order and the name of the client occupying it.
     pub fn pane_list(&self) -> Vec<decade_channel::Pane> {
         self.router.panes(&pane_names(&self.tabs))
@@ -613,14 +618,17 @@ mod tests {
         workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.channel_line(
             4,
-            r#"{"hello": {"name": "code-pane", "pane": "terminal2"}}"#,
+            r#"{"hello": {"name": "code-pane", "pane": "terminal2", "shows": [{"kind": "file"}]}}"#,
         );
-        let show = serde_json::json!({"path": "a.rs"});
-        let (client, line) = workspace
-            .agent_send("terminal2", "show".into(), show)
-            .unwrap();
+        let to = workspace.showing("file", None).unwrap();
+        assert_eq!(to, "terminal2");
+        let show = serde_json::json!({"kind": "file", "target": "a.rs"});
+        let (client, line) = workspace.agent_send(&to, "show".into(), show).unwrap();
         assert_eq!(client, 4);
-        assert_eq!(line, r#"{"from":"agent","show":{"path":"a.rs"}}"#);
+        assert_eq!(
+            line,
+            r#"{"from":"agent","show":{"kind":"file","target":"a.rs"}}"#
+        );
         let refused = workspace.agent_send("terminal", "show".into(), Value::Null);
         assert_eq!(refused, Err("no client occupies pane terminal".to_string()));
         let panes: Vec<_> = (workspace.pane_list().into_iter())

@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use decade_channel::{AgentState, Error, Hello, Pane, Reply, Status, VERSION, Welcome};
+use decade_channel::{
+    AgentState, Clear, Error, Hello, Highlight, Pane, Reply, Show, Shows, Status, VERSION, Welcome,
+};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 /// The keys a pane verb may not take: decade's own verbs and the
@@ -12,6 +15,7 @@ pub struct Client {
     pub name: String,
     pub accepts: Vec<String>,
     pub pane: Option<String>,
+    pub shows: Vec<Shows>,
 
     /// The agent state this client last reported for its pane.
     pub status: Option<Status>,
@@ -161,11 +165,57 @@ impl Router {
     pub fn panes(&self, panes: &[&str]) -> Vec<Pane> {
         panes
             .iter()
-            .map(|name| Pane {
-                name: name.to_string(),
-                client: self.occupant(name).map(|(_, c)| c.name.clone()),
+            .map(|name| {
+                let occupant = self.occupant(name).map(|(_, c)| c);
+                Pane {
+                    name: name.to_string(),
+                    client: occupant.map(|c| c.name.clone()),
+                    shows: occupant.map(|c| c.shows.clone()).unwrap_or_default(),
+                }
             })
             .collect()
+    }
+
+    /// The pane a show, highlight or clear of `kind` goes to: `pane` when
+    /// the call names one, or else the one pane whose client shows `kind`.
+    pub fn showing(
+        &self,
+        kind: &str,
+        pane: Option<&str>,
+        panes: &[&str],
+    ) -> Result<String, String> {
+        if let Some(pane) = pane {
+            return Ok(pane.to_string());
+        }
+        let list = self.panes(panes);
+        let showing: Vec<&str> = list
+            .iter()
+            .filter(|pane| pane.shows.iter().any(|shows| shows.kind == kind))
+            .map(|pane| pane.name.as_str())
+            .collect();
+        match showing[..] {
+            [one] => Ok(one.to_string()),
+            [] => {
+                let mut kinds: Vec<&str> = Vec::new();
+                for shows in list.iter().flat_map(|pane| &pane.shows) {
+                    if !kinds.contains(&shows.kind.as_str()) {
+                        kinds.push(&shows.kind);
+                    }
+                }
+                Err(if kinds.is_empty() {
+                    format!("no pane shows {kind}, and no pane here shows any kind")
+                } else {
+                    format!(
+                        "no pane shows {kind}; the panes here show {}",
+                        kinds.join(", ")
+                    )
+                })
+            }
+            _ => Err(format!(
+                "panes {} all show {kind}; name one in pane",
+                showing.join(", ")
+            )),
+        }
     }
 
     /// The id of the client occupying pane `to` and the line that carries
@@ -187,8 +237,18 @@ impl Router {
         let (target, client) = self
             .occupant(to)
             .ok_or_else(|| format!("no client occupies pane {to}"))?;
-        if !client.accepts.is_empty() && !client.accepts.contains(&verb) {
-            return Err(format!("pane {to} does not accept {verb}"));
+        match kind_of(&verb, &payload)? {
+            Some((kind, highlights)) => match client.shows.iter().find(|s| s.kind == kind) {
+                None => return Err(format!("pane {to} does not show {kind}")),
+                Some(shows) if highlights && !shows.highlight => {
+                    return Err(format!("pane {to} cannot highlight {kind}"));
+                }
+                Some(_) => {}
+            },
+            None if !accepts(client, &verb) => {
+                return Err(format!("pane {to} does not accept {verb}"));
+            }
+            None => {}
         }
         let mut forwarded = Map::new();
         forwarded.insert(verb, payload);
@@ -224,6 +284,7 @@ impl Router {
                 name: hello.name,
                 accepts: hello.accepts,
                 pane: pane.clone(),
+                shows: hello.shows,
                 status,
                 since: Instant::now(),
             },
@@ -237,6 +298,32 @@ impl Router {
         ));
         out
     }
+}
+
+/// Whether `client` takes a verb other than show, highlight and clear.
+fn accepts(client: &Client, verb: &str) -> bool {
+    if client.accepts.is_empty() {
+        // a client that shows kinds and lists no verbs takes
+        // only the kind verbs, which never reach this check
+        return client.shows.is_empty();
+    }
+    client.accepts.iter().any(|accepted| accepted == verb)
+}
+
+/// The kind a `show`, `highlight` or `clear` names, and whether the verb
+/// needs the kind to highlight; `None` for every other verb.
+fn kind_of(verb: &str, payload: &Value) -> Result<Option<(String, bool)>, String> {
+    let malformed = |error: serde_json::Error| format!("malformed {verb}: {error}");
+    let kind = match verb {
+        "show" => (Show::deserialize(payload).map_err(malformed)?.kind, false),
+        "highlight" => (
+            Highlight::deserialize(payload).map_err(malformed)?.kind,
+            true,
+        ),
+        "clear" => (Clear::deserialize(payload).map_err(malformed)?.kind, true),
+        _ => return Ok(None),
+    };
+    Ok(Some(kind))
 }
 
 fn error_line(id: usize, reason: &str, message: Value) -> Out {
@@ -308,21 +395,18 @@ mod tests {
         let mut r = Router::default();
         r.handle(
             1,
-            r#"{"hello": {"name": "code-pane", "accepts": ["show", "mark"], "pane": "code"}}"#,
+            r#"{"hello": {"name": "code-pane", "accepts": ["reload"], "pane": "code"}}"#,
             &PANES,
         );
         r.handle(2, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
         let out = lines(r.handle(
             2,
-            r#"{"to": "code", "show": {"path": "src/gpu.rs", "line": 40}}"#,
+            r#"{"to": "code", "reload": {"path": "src/gpu.rs"}}"#,
             &PANES,
         ));
         assert_eq!(
             out,
-            vec![(
-                1,
-                json!({"show": {"path": "src/gpu.rs", "line": 40}, "from": "coax"})
-            )]
+            vec![(1, json!({"reload": {"path": "src/gpu.rs"}, "from": "coax"}))]
         );
     }
 
@@ -365,9 +449,9 @@ mod tests {
         assert_eq!(
             out[0].1,
             json!({"panes": [
-                {"name": "chat", "client": "coax"},
-                {"name": "terminal", "client": null},
-                {"name": "code", "client": null}
+                {"name": "chat", "client": "coax", "shows": []},
+                {"name": "terminal", "client": null, "shows": []},
+                {"name": "code", "client": null, "shows": []}
             ]})
         );
     }
@@ -493,5 +577,150 @@ mod tests {
                 .unwrap()
                 .contains("claimed none")
         );
+    }
+
+    const CODE: &str = r#"{"hello": {"name": "decade-code", "accepts": ["reload"], "pane": "code", "shows": [{"kind": "file", "highlight": true}]}}"#;
+
+    #[test]
+    fn panes_lists_the_kinds_each_occupant_declared_at_hello() {
+        let mut r = Router::default();
+        r.handle(1, CODE, &PANES);
+        let out = lines(r.handle(1, r#"{"panes": {}}"#, &PANES));
+        assert_eq!(
+            out[0].1["panes"][2],
+            json!({"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}]})
+        );
+        assert_eq!(out[0].1["panes"][0]["shows"], json!([]));
+    }
+
+    #[test]
+    fn show_highlight_and_clear_reach_a_pane_that_shows_the_kind_without_being_in_accepts() {
+        let mut r = Router::default();
+        r.handle(1, CODE, &PANES);
+        r.handle(2, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
+        for message in [
+            json!({"show": {"kind": "file", "target": "a.rs", "at": 4}}),
+            json!({"highlight": {"kind": "file", "target": "a.rs", "ranges": [[1, 2]]}}),
+            json!({"clear": {"kind": "file"}}),
+        ] {
+            let mut sent = message.clone();
+            sent["to"] = json!("code");
+            let out = lines(r.handle(2, &sent.to_string(), &PANES));
+            let mut forwarded = message;
+            forwarded["from"] = json!("coax");
+            assert_eq!(out, vec![(1, forwarded)]);
+        }
+    }
+
+    #[test]
+    fn a_show_is_refused_by_a_pane_that_did_not_declare_its_kind_or_cannot_highlight_it() {
+        let mut r = Router::default();
+        r.handle(1, CODE, &PANES);
+        r.handle(
+            2,
+            r#"{"hello": {"name": "viewer", "pane": "terminal", "shows": [{"kind": "image"}]}}"#,
+            &PANES,
+        );
+        let reason = |r: &mut Router, line: &str| {
+            let out = lines(r.handle(1, line, &PANES));
+            assert_eq!(out[0].0, 1);
+            out[0].1["error"]["reason"].as_str().unwrap().to_string()
+        };
+        let url = r#"{"to": "code", "show": {"kind": "url", "target": "https://example.org"}}"#;
+        assert_eq!(reason(&mut r, url), "pane code does not show url");
+        let image = r#"{"to": "terminal", "highlight": {"kind": "image", "target": "a.png", "ranges": []}}"#;
+        assert_eq!(
+            reason(&mut r, image),
+            "pane terminal cannot highlight image"
+        );
+        let clear = r#"{"to": "terminal", "clear": {"kind": "image"}}"#;
+        assert_eq!(
+            reason(&mut r, clear),
+            "pane terminal cannot highlight image"
+        );
+        let malformed = r#"{"to": "code", "show": {"path": "a.rs"}}"#;
+        assert!(reason(&mut r, malformed).starts_with("malformed show: missing field `kind`"));
+    }
+
+    #[test]
+    fn a_kind_goes_to_the_one_pane_that_shows_it() {
+        let mut r = Router::default();
+        r.handle(1, CODE, &PANES);
+        r.handle(2, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
+        assert_eq!(r.showing("file", None, &PANES), Ok("code".to_string()));
+    }
+
+    #[test]
+    fn a_kind_several_panes_show_needs_a_pane_named_and_the_named_pane_is_used() {
+        let mut r = Router::default();
+        r.handle(1, CODE, &PANES);
+        r.handle(
+            2,
+            r#"{"hello": {"name": "other", "pane": "terminal", "shows": [{"kind": "file"}]}}"#,
+            &PANES,
+        );
+        assert_eq!(
+            r.showing("file", None, &PANES),
+            Err("panes terminal, code all show file; name one in pane".to_string())
+        );
+        assert_eq!(
+            r.showing("file", Some("terminal"), &PANES),
+            Ok("terminal".to_string())
+        );
+    }
+
+    #[test]
+    fn a_named_pane_that_does_not_show_the_kind_is_refused_when_sent_to() {
+        let mut r = Router::default();
+        r.handle(1, CODE, &PANES);
+        r.handle(2, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
+        let to = r.showing("file", Some("chat"), &PANES).unwrap();
+        let payload = json!({"kind": "file", "target": "a.rs"});
+        let sent = r.send("agent", &to, "show".to_string(), payload, &PANES);
+        assert_eq!(sent, Err("pane chat does not show file".to_string()));
+    }
+
+    #[test]
+    fn a_kind_no_pane_shows_is_refused_with_the_kinds_that_are_shown() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.showing("file", None, &PANES),
+            Err("no pane shows file, and no pane here shows any kind".to_string())
+        );
+        r.handle(
+            1,
+            r#"{"hello": {"name": "web", "pane": "terminal", "shows": [{"kind": "url"}, {"kind": "image"}]}}"#,
+            &PANES,
+        );
+        assert_eq!(
+            r.showing("file", None, &PANES),
+            Err("no pane shows file; the panes here show url, image".to_string())
+        );
+    }
+
+    #[test]
+    fn a_client_that_shows_kinds_and_lists_no_verbs_takes_only_the_kind_verbs() {
+        let mut r = Router::default();
+        r.handle(
+            1,
+            r#"{"hello": {"name": "viewer", "pane": "code", "shows": [{"kind": "file"}]}}"#,
+            &PANES,
+        );
+        r.handle(
+            2,
+            r#"{"hello": {"name": "anything", "pane": "terminal"}}"#,
+            &PANES,
+        );
+        r.handle(3, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
+        let out = lines(r.handle(3, r#"{"to": "code", "reload": {}}"#, &PANES));
+        assert_eq!(out[0].0, 3);
+        assert_eq!(
+            out[0].1["error"]["reason"],
+            "pane code does not accept reload"
+        );
+        let show = r#"{"to": "code", "show": {"kind": "file", "target": "a.rs"}}"#;
+        assert_eq!(lines(r.handle(3, show, &PANES))[0].0, 1);
+        let out = lines(r.handle(3, r#"{"to": "terminal", "reload": {}}"#, &PANES));
+        assert_eq!(out, vec![(2, json!({"reload": {}, "from": "coax"}))]);
     }
 }

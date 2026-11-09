@@ -1,7 +1,7 @@
 use std::io;
 use std::net::TcpListener;
 
-use decade_channel::code;
+use decade_channel::{Clear, Highlight, Show};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
@@ -10,8 +10,8 @@ use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData, RoleServer, ServerHandler};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use smithay::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
@@ -28,10 +28,12 @@ pub struct Request {
 }
 
 pub enum Call {
-    /// A pane verb for the program in pane `to`.
-    Send {
-        to: String,
-        verb: String,
+    /// A `show`, `highlight` or `clear` of `kind`, for pane `pane` or
+    /// else the one pane whose program shows `kind`.
+    Kind {
+        verb: &'static str,
+        kind: String,
+        pane: Option<String>,
         payload: Value,
     },
 
@@ -100,44 +102,50 @@ fn schema(value: Value) -> Map<String, Value> {
 }
 
 fn tools() -> Vec<Tool> {
-    let path = json!({"type": "string", "description": "a file path, absolute or relative to decade's working directory"});
+    let kind = json!({"type": "string", "description": "a kind of thing to show, as panes lists them, such as file"});
+    let target = json!({"type": "string", "description": "what to show, in the form the kind takes: a path for file"});
+    let pane = json!({"type": "string", "description": "the pane to use, needed only when several panes show the kind"});
     vec![
         Tool::new(
-            "code.show",
-            "Show a file in the code pane, scrolled to a line if one is given",
+            "show",
+            "Show a target in the pane whose program shows its kind",
             schema(json!({
                 "type": "object",
                 "properties": {
-                    "path": path,
-                    "line": {"type": "integer", "minimum": 1, "description": "the line to centre on"}
+                    "kind": kind,
+                    "target": target,
+                    "at": {"description": "where in the target, in the form the kind takes: a 1-based line number for file"},
+                    "pane": pane
                 },
-                "required": ["path"]
+                "required": ["kind", "target"]
             })),
         ),
         Tool::new(
-            "code.mark",
-            "Highlight ranges of lines in a file in the code pane; the file is shown if it is not already",
+            "highlight",
+            "Highlight parts of a target in the pane whose program shows its kind, replacing the highlights there",
             schema(json!({
                 "type": "object",
                 "properties": {
-                    "path": path,
-                    "lines": {
-                        "type": "array",
-                        "description": "inclusive [from, to] line ranges, 1-based",
-                        "items": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 2, "maxItems": 2}
-                    }
+                    "kind": kind,
+                    "target": target,
+                    "ranges": {"description": "the parts to highlight, in the form the kind takes: inclusive 1-based [from, to] line pairs for file"},
+                    "pane": pane
                 },
-                "required": ["path", "lines"]
+                "required": ["kind", "target", "ranges"]
             })),
         ),
         Tool::new(
-            "code.clear",
-            "Remove every highlight from the code pane",
-            schema(json!({"type": "object", "properties": {}})),
+            "clear",
+            "Remove every highlight of a kind",
+            schema(json!({
+                "type": "object",
+                "properties": {"kind": kind, "pane": pane},
+                "required": ["kind"]
+            })),
         ),
         Tool::new(
             "panes",
-            "List the panes in this workspace and the program occupying each",
+            "List the panes in this workspace, the program occupying each and the kinds it shows",
             schema(json!({"type": "object", "properties": {}})),
         ),
         Tool::new(
@@ -194,6 +202,15 @@ struct Point {
     note: Option<String>,
 }
 
+/// The arguments of `show`, `highlight` and `clear`: the verb's payload
+/// and an optional pane.
+#[derive(Deserialize)]
+struct ToKind<T> {
+    pane: Option<String>,
+    #[serde(flatten)]
+    payload: T,
+}
+
 /// The arguments of `scratch.send`.
 #[derive(Deserialize)]
 struct ScratchSend {
@@ -202,15 +219,19 @@ struct ScratchSend {
 }
 
 fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
-    let code = |verb: &str, payload: Map<String, Value>| Call::Send {
-        to: "code".to_string(),
-        verb: verb.to_string(),
-        payload: Value::Object(payload),
-    };
     match name {
-        "code.show" => Ok(code(code::SHOW, arguments)),
-        "code.mark" => Ok(code(code::MARK, arguments)),
-        "code.clear" => Ok(code(code::CLEAR, Map::new())),
+        "show" => {
+            let ToKind { pane, payload } = parse::<ToKind<Show>>(name, arguments)?;
+            Ok(kind_call("show", pane, payload.kind.clone(), payload))
+        }
+        "highlight" => {
+            let ToKind { pane, payload } = parse::<ToKind<Highlight>>(name, arguments)?;
+            Ok(kind_call("highlight", pane, payload.kind.clone(), payload))
+        }
+        "clear" => {
+            let ToKind { pane, payload } = parse::<ToKind<Clear>>(name, arguments)?;
+            Ok(kind_call("clear", pane, payload.kind.clone(), payload))
+        }
         "panes" => Ok(Call::Panes),
         "point" => {
             let Point { pane, note } = parse(name, arguments)?;
@@ -228,6 +249,20 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
     }
 }
 
+fn kind_call(
+    verb: &'static str,
+    pane: Option<String>,
+    kind: String,
+    payload: impl Serialize,
+) -> Call {
+    Call::Kind {
+        verb,
+        kind,
+        pane,
+        payload: serde_json::to_value(payload).expect("a payload of strings and JSON values"),
+    }
+}
+
 fn parse<T: DeserializeOwned>(tool: &str, arguments: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(arguments)).map_err(|error| format!("{tool}: {error}"))
 }
@@ -238,9 +273,12 @@ impl ServerHandler for Decade {
             .with_server_info(Implementation::new("decade", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "decade is the window the user is working in. These tools reach the panes of the \
-                 workspace this agent was started in, and panes lists them. A pane named code \
-                 shows one file; use code.show to bring a file into view and code.mark to point \
-                 at lines in it. The user may mark one pane as the scratch pane, where agents \
+                 workspace this agent was started in, and panes lists them with the kinds of \
+                 thing the program in each can show, such as file. show brings a target of a \
+                 kind into view, highlight marks parts of it, and clear removes the marks. Each \
+                 goes to the pane whose program shows that kind; name the pane when several \
+                 do. For file the target is a path, at is a line and ranges are [from, to] \
+                 line pairs. The user may mark one pane as the scratch pane, where agents \
                  show things. scratch.open starts a program whose name begins with decade- in \
                  it, replacing the program there, and scratch.send sends that program a message. \
                  Both fail when the workspace has no scratch pane. point draws the user's eye \
@@ -319,8 +357,14 @@ mod tests {
                     return;
                 };
                 let reply = match request.call {
-                    Call::Send { to, verb, payload } => {
-                        seen.push((request.workspace, json!({"to": to, verb: payload})));
+                    Call::Kind {
+                        verb,
+                        kind,
+                        pane,
+                        payload,
+                    } => {
+                        let call = json!({"kind": kind, "pane": pane, verb: payload});
+                        seen.push((request.workspace, call));
                         Ok("sent".to_string())
                     }
                     Call::Panes => {
@@ -348,10 +392,9 @@ mod tests {
                     .map(|tool| tool.name.to_string())
                     .collect();
                 let show = client
-                    .call_tool(
-                        CallToolRequestParams::new("code.show")
-                            .with_arguments(schema(json!({"path": "src/main.rs", "line": 3}))),
-                    )
+                    .call_tool(CallToolRequestParams::new("show").with_arguments(schema(
+                        json!({"kind": "file", "target": "src/main.rs", "at": 3}),
+                    )))
                     .await
                     .unwrap();
                 let panes = client
@@ -389,9 +432,9 @@ mod tests {
         assert_eq!(
             names,
             [
-                "code.show",
-                "code.mark",
-                "code.clear",
+                "show",
+                "highlight",
+                "clear",
                 "panes",
                 "point",
                 "scratch.open",
@@ -402,7 +445,11 @@ mod tests {
             seen,
             [(
                 7,
-                json!({"to": "code", "show": {"path": "src/main.rs", "line": 3}})
+                json!({
+                    "kind": "file",
+                    "pane": null,
+                    "show": {"kind": "file", "target": "src/main.rs", "at": 3}
+                })
             )]
         );
         assert_eq!(show.is_error, Some(false));
@@ -476,5 +523,51 @@ mod tests {
             panic!("a number is not a note");
         };
         assert!(reason.starts_with("point: invalid type: integer"));
+    }
+
+    #[test]
+    fn show_highlight_and_clear_take_a_payload_and_an_optional_pane() {
+        let show = json!({"kind": "file", "target": "a.rs", "at": 7, "pane": "code"});
+        let Ok(Call::Kind {
+            verb,
+            kind,
+            pane,
+            payload,
+        }) = call_for("show", schema(show))
+        else {
+            panic!("show with a kind and target is a kind call");
+        };
+        assert_eq!(
+            (verb, kind.as_str(), pane.as_deref()),
+            ("show", "file", Some("code"))
+        );
+        assert_eq!(payload, json!({"kind": "file", "target": "a.rs", "at": 7}));
+        let highlight = json!({"kind": "file", "target": "a.rs", "ranges": [[1, 3]]});
+        let Ok(Call::Kind {
+            verb,
+            pane,
+            payload,
+            ..
+        }) = call_for("highlight", schema(highlight))
+        else {
+            panic!("highlight with ranges is a kind call");
+        };
+        assert_eq!((verb, pane), ("highlight", None));
+        assert_eq!(payload["ranges"], json!([[1, 3]]));
+        let Ok(Call::Kind { verb, payload, .. }) =
+            call_for("clear", schema(json!({"kind": "url"})))
+        else {
+            panic!("clear with a kind is a kind call");
+        };
+        assert_eq!((verb, payload), ("clear", json!({"kind": "url"})));
+        let missing = call_for(
+            "highlight",
+            schema(json!({"kind": "file", "target": "a.rs"})),
+        );
+        assert_eq!(missing.err().unwrap(), "highlight: missing field `ranges`");
+        let Err(reason) = call_for("show", schema(json!({"kind": "file", "target": 3}))) else {
+            panic!("a number is not a target");
+        };
+        assert!(reason.starts_with("show: invalid type: integer"));
     }
 }
