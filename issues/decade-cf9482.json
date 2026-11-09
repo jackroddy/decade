@@ -15,11 +15,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T22:30:49.645299748Z",
-  "updated_at": "2026-11-08T22:30:49.645299748Z",
+  "updated_at": "2026-11-09T20:40:40.857090916Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "e084faa9",
+      "at": "2026-11-09T20:40:40.857090286Z",
+      "author": "Jack Roddy/913b1d2c",
+      "text": "The remote viewer in decade-e3a784 is the kit's second user. A viewer on another machine runs the kit, draws the chrome locally, and receives each pane's content as streamed pixels for its content id. So the review of this design should check each Wayland behaviour above for where it runs when the viewer is remote. A second content kind, an app channel instead of pixels, is the parked idea in decade-b410e5.",
+      "commit": "e37ba45",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "6bcc95b",
