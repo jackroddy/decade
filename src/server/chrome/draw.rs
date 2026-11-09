@@ -28,6 +28,7 @@ pub enum Face {
     Chrome,
     ChromeBold,
     Menu,
+    MenuBold,
 
     /// A single chrome glyph, sized to the height every icon shares and
     /// centred in one chrome cell.

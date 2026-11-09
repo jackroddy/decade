@@ -189,6 +189,7 @@ impl Text {
                 }
                 (Face::ChromeBold, _) => raster_run(context, &self.chrome, true, text, color),
                 (Face::Menu, _) => raster_run(context, &self.menu, false, text, color),
+                (Face::MenuBold, _) => raster_run(context, &self.menu, true, text, color),
             };
             let width = round_trip(run.width, self.scale);
             let height = round_trip(run.height, self.scale);

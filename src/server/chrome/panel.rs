@@ -1,11 +1,17 @@
 use smithay::utils::{Physical, Size};
 
 use crate::server::chrome::draw::{Face, Scene};
-use crate::server::chrome::menu::{Action, MenuKey, Outcome, draw_box};
+use crate::server::chrome::menu::{Action, MenuKey, Outcome, draw_box, scaled};
+use crate::server::chrome::palette;
 use crate::server::chrome::settings::{KNOBS, Settings};
+use crate::server::chrome::text::fit;
 
-/// The width in cells of a value between its chevrons.
-const VALUE_WIDTH: usize = 7;
+/// The width in cells of the pill a value sits in.
+const VALUE_WIDTH: i32 = 9;
+
+// the sizes below are in pixels at the palette's mockup cell, for `scaled`
+const VALUE_HEIGHT: i32 = 30;
+const VALUE_RADIUS: i32 = 6;
 
 pub struct Panel {
     selected: usize,
@@ -32,16 +38,38 @@ impl Panel {
     }
 
     pub fn draw(&self, scene: &mut Scene, settings: &Settings) -> Size<i32, Physical> {
-        let hint = "←/→ change · esc close";
-        let (rows, size) = draw_box(scene, &["Settings"], KNOBS.len(), hint);
-        let (cell_width, _) = scene.cell();
-        let value_x = rows.right - (VALUE_WIDTH as i32 + 4) * cell_width;
+        let hint = [("← →", "change"), ("esc", "close")];
+        let (rows, size) = draw_box(scene, &["Settings"], None, KNOBS.len(), &hint);
+        let (cell_width, cell_height) = scene.cell();
+        let pill_width = VALUE_WIDTH * cell_width;
+        let pill_height = scaled(VALUE_HEIGHT, cell_height);
+        let radius = scaled(VALUE_RADIUS, cell_height);
+        let pill_x = rows.right - 2 * cell_width - pill_width;
+        let pill = palette::RAISED_BACKGROUND;
         for (i, knob) in KNOBS.iter().enumerate() {
-            let fg = rows.select(scene, i, i == self.selected);
+            let selected = i == self.selected;
+            let style = rows.select(scene, i, selected, false);
             let y = rows.text_y(i);
-            scene.text_px(rows.left, y, knob.label(), Face::Menu, fg);
-            let value = format!("‹ {:^VALUE_WIDTH$} ›", knob.show(settings));
-            scene.text_px(value_x, y, &value, Face::Menu, fg);
+            scene.text_px(rows.left, y, knob.label(), style.face, style.text);
+            let chevron = if selected {
+                palette::ACCENT
+            } else {
+                palette::MUTED
+            };
+            scene.text_px(pill_x - 2 * cell_width, y, "‹", Face::Menu, chevron);
+            scene.text_px(rows.right - cell_width, y, "›", Face::Menu, chevron);
+            let pill_y = rows.centred(i, pill_height);
+            scene.rounded(
+                pill_x,
+                pill_y,
+                (pill_width, pill_height),
+                radius,
+                pill,
+                pill,
+            );
+            let value = fit(&knob.show(settings), VALUE_WIDTH as usize - 2);
+            let value_x = pill_x + (pill_width - value.chars().count() as i32 * cell_width) / 2;
+            scene.text_px(value_x, y, &value, Face::Menu, style.text);
         }
         size
     }

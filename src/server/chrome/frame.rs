@@ -33,7 +33,7 @@ const CURRENT: Rgba = palette::SELECTION;
 const TEXT: Rgba = palette::FOREGROUND;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 const MUTED: Rgba = palette::MUTED;
-const SHADOW: Rgba = [0.0, 0.0, 0.0, 0.4];
+const SHADOW: Rgba = palette::SHADOW;
 
 // the sizes below are in pixels at 18 px rows, for `scaled`
 const CARD_INSET: i32 = 6;
@@ -161,7 +161,7 @@ pub struct Frame {
 }
 
 /// The mark for an agent state and its colour.
-fn mark(state: Option<AgentState>) -> (char, Rgba) {
+pub(super) fn mark(state: Option<AgentState>) -> (char, Rgba) {
     match state {
         Some(AgentState::Attention) => ('!', palette::RED),
         Some(AgentState::Done) => ('✓', palette::GREEN),

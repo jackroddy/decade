@@ -190,10 +190,18 @@ command line and what the tool writes.
 - The palette, the New workspace browser and the settings panel share one
   width and one top edge. The palette is as tall as its rows. A dim scrim
   covers the window behind the palette, the settings panel and the picker.
-  Each of them has a footer of key hints.
-- The picker outlines the selected workspace two strokes thick. A dot marks
-  the current workspace. Labels are cut to their cell. After one press on a
-  workspace's x its label is "close? x again" in red. The x is larger.
+  Each of them ends with a line of key hints. Each key's name sits in a
+  small rounded cap. The palette and the panel are rounded boxes in the bar
+  colour with a thin border and a shadow. The title is bold, with › between
+  the steps of a path. The selected row has a rounded highlight and a bold
+  label. Close tab, Close workspace and their confirm rows turn red when
+  selected. The panel shows each value in a rounded pill.
+- The picker frames each workspace in a rounded outline. The selected
+  workspace's outline is two strokes thick. Each label starts with the mark
+  of its workspace's agent state. The current workspace's name is bold.
+  Labels are cut to their cell. After one press on a workspace's x, its
+  frame and label turn red and the label says Enter closes it. The x is
+  larger.
 - An open palette, settings panel or picker closes when the active viewer
   disconnects.
 - Long names are cut with an ellipsis on the Ctrl bar, in the top bar and

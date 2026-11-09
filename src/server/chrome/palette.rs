@@ -33,3 +33,4 @@ pub const BORDER: Rgba = hex(0x4A4458);
 pub const MID_RED: Rgba = hex(0x4D2F3E);
 pub const MID_YELLOW: Rgba = hex(0x4D3B2C);
 pub const MID_GREEN: Rgba = hex(0x354234);
+pub const SHADOW: Rgba = [0.0, 0.0, 0.0, 0.4];

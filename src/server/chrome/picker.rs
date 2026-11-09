@@ -1,7 +1,8 @@
 use smithay::utils::{Physical, Point, Rectangle, Size};
 
 use crate::server::chrome::draw::{Face, Scene};
-use crate::server::chrome::menu::{Action, MenuKey, Outcome};
+use crate::server::chrome::frame::mark;
+use crate::server::chrome::menu::{Action, MenuKey, Outcome, draw_hint, hint_width, scaled};
 use crate::server::chrome::palette::{self, ACCENT};
 use crate::server::chrome::text::Text;
 use crate::server::chrome::text::fit;
@@ -13,6 +14,12 @@ const DRAG_THRESHOLD: i32 = 8;
 const MIN_BUTTON: i32 = 24;
 
 const CLOSE_ICON: char = '\u{f0156}';
+
+// the sizes below are in pixels at the palette's mockup cell, for `scaled`
+const FRAME_RADIUS: i32 = 10;
+
+/// The gap between a cell's thumbnail and the inside of its frame.
+const FRAME_GAP: i32 = 4;
 
 pub struct Picker {
     /// The selected cell: a workspace, or past the last one the new-workspace cell.
@@ -181,9 +188,17 @@ impl Picker {
         }
     }
 
-    /// The cells' outlines, labels and close buttons and the hint under the
-    /// grid, then the cells' backgrounds, to be drawn over and under the
-    /// thumbnails.
+    /// The keys the picker takes, as key caps under the grid.
+    fn hint(&self) -> &'static [(&'static str, &'static str)] {
+        if self.confirming.is_some() {
+            &[("enter", "close"), ("esc", "cancel")]
+        } else {
+            &[("tab", "move"), ("enter", "show"), ("esc", "close")]
+        }
+    }
+
+    /// The cells' labels and close buttons and the hint under the grid,
+    /// then the cells' frames, to be drawn over and under the thumbnails.
     pub fn draw(
         &self,
         grid: &Grid,
@@ -198,60 +213,66 @@ impl Picker {
         let line = over.line_width();
         let label_width = |text: &str| text.chars().count() as i32 * menu_width;
         let drop_target = self.dragging.and_then(|_| grid.cell_at(pointer));
+        let radius = scaled(FRAME_RADIUS, menu_height);
         for (i, cell) in grid.cells.iter().enumerate() {
-            let (outline, stroke) = if drop_target == Some(i) {
+            let workspace = workspaces.get(i);
+            let confirming = workspace.is_some_and(|w| self.confirming == Some(w.id));
+            let red = confirming || workspace.is_some_and(Workspace::closing);
+            let thick = if self.selected == i { line * 2 } else { line };
+            let (ring, stroke) = if drop_target == Some(i) {
                 (palette::CYAN, line)
+            } else if red {
+                (palette::RED, thick)
             } else if self.selected == i {
-                (ACCENT, line * 2)
+                (ACCENT, thick)
             } else {
                 (palette::MUTED, line)
             };
-            for ring in 1..=stroke / line {
-                over.box_lines(
-                    cell.loc.x - line * ring,
-                    cell.loc.y - line * ring,
-                    cell.size.w + line * ring * 2,
-                    cell.size.h + line * ring * 2,
-                    outline,
-                );
-            }
-            under.rect(
-                cell.loc.x,
-                cell.loc.y,
-                cell.size.w,
-                cell.size.h,
-                palette::DARK_BACKGROUND,
+            let gap = scaled(FRAME_GAP, menu_height) + stroke;
+            let (x, y) = (cell.loc.x - gap, cell.loc.y - gap);
+            let (w, h) = (cell.size.w + gap * 2, cell.size.h + gap * 2);
+            let inside = palette::DARK_BACKGROUND;
+            under.rounded(x, y, (w, h), radius, ring, ring);
+            let inner = (w - stroke * 2, h - stroke * 2);
+            under.rounded(
+                x + stroke,
+                y + stroke,
+                inner,
+                radius - stroke,
+                inside,
+                inside,
             );
+
             let room = (cell.size.w / menu_width).max(1) as usize;
-            let label_y = cell.loc.y + cell.size.h + (grid.label - menu_height) / 2;
-            let Some(workspace) = workspaces.get(i) else {
+            let label_y = cell.loc.y + cell.size.h + gap + (grid.label - gap - menu_height) / 2;
+            let Some(workspace) = workspace else {
                 let text = fit("+ New workspace", room);
                 let x = cell.loc.x + (cell.size.w - label_width(&text)) / 2;
                 let y = cell.loc.y + (cell.size.h - menu_height) / 2;
                 over.text_px(x, y, &text, Face::Menu, palette::FOREGROUND);
                 continue;
             };
-            let confirming = self.confirming == Some(workspace.id);
-            let label = if confirming {
-                "close? x again".to_string()
-            } else if workspace.closing() {
-                format!("{} closing", workspace.name)
+            let (glyph, glyph_color) = mark(workspace.agent_state());
+            let (label, color, face) = if confirming {
+                let label = format!("{} — enter to close", workspace.name);
+                (label, palette::LIGHT_RED, Face::Menu)
+            } else if red {
+                let label = format!("{} closing", workspace.name);
+                (label, palette::LIGHT_RED, Face::Menu)
             } else if i == current {
-                format!("● {}", workspace.name)
+                (workspace.name.clone(), palette::FOREGROUND, Face::MenuBold)
             } else {
-                workspace.name.clone()
+                let label = workspace.name.clone();
+                (label, palette::FADED_FOREGROUND, Face::Menu)
             };
-            let label = fit(&label, room);
-            let label_color = if confirming {
-                palette::RED
-            } else {
-                palette::FOREGROUND
-            };
-            let x = cell.loc.x + (cell.size.w - label_width(&label)) / 2;
-            over.text_px(x, label_y, &label, Face::Menu, label_color);
+            let glyph_color = if red { palette::LIGHT_RED } else { glyph_color };
+            let label = fit(&label, room.saturating_sub(2).max(1));
+            let x = cell.loc.x + (cell.size.w - label_width(&label) - 2 * menu_width) / 2;
+            over.text_px(x, label_y, &glyph.to_string(), Face::Menu, glyph_color);
+            over.text_px(x + 2 * menu_width, label_y, &label, face, color);
             let button = grid.close_button(i);
             let icon_color = if confirming {
-                palette::RED
+                palette::LIGHT_RED
             } else {
                 palette::LIGHT_FOREGROUND
             };
@@ -266,13 +287,10 @@ impl Picker {
             );
         }
         let size = grid.size;
-        let hint = fit(
-            "tab move · enter show · esc close · x close",
-            (size.w / menu_width).max(1) as usize,
-        );
+        let cell = (menu_width, menu_height);
         let hint_y = size.h - (grid.label + menu_height) / 2;
-        let hint_x = (size.w - label_width(&hint)) / 2;
-        over.text_px(hint_x, hint_y, &hint, Face::Menu, palette::LIGHT_FOREGROUND);
+        let hint_x = (size.w - hint_width(self.hint(), cell)) / 2;
+        draw_hint(&mut over, (hint_x, hint_y), self.hint(), cell);
         (over, under)
     }
 }
