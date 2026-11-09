@@ -1,0 +1,28 @@
+{
+  "id": "decade-e9e1c4",
+  "title": "The point pulse is faint on rail tiles and may be too quick",
+  "body": "An agent's `point` pulses the pane's outline toward `MAGENTA`, and the tab pill, sidebar card or rail tile when the pane is out of view (commit 73a99bc). `pulse(elapsed)` in `src/server/workspace.rs` is a cosine with a 1 s period. A pulsing pill, card or tile gets a ring and a 30% fill toward `MAGENTA` in `src/server/chrome/frame.rs`. In the scripted frames the fill reads well on cards and pills but is faint on the small rail tile, and a 1 s period may feel quick for a glow.\n\n## Proposal\n\nGive the rail tile a stronger fill than cards and pills, and try a slower period, around 1.6 s. Jack judges both by eye on his own screen.",
+  "type": "feature",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-09T20:40:53.727995862Z",
+  "updated_at": "2026-11-09T20:40:53.727995862Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
