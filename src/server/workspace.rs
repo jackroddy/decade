@@ -24,6 +24,16 @@ pub struct Workspace {
     /// The git branch checked out at `cwd`, as last read.
     pub branch: Option<String>,
     branch_read: Option<Instant>,
+
+    /// The pane the workspace's agent points at.
+    pub point: Option<Point>,
+}
+
+/// An agent pointing at a pane, from the MCP tool `point`.
+pub struct Point {
+    pub pane: String,
+    pub note: Option<String>,
+    pub since: Instant,
 }
 
 /// One split tree of panes in a workspace.
@@ -38,6 +48,29 @@ pub struct Tab {
 const AGENT: &str = "agent";
 
 const BRANCH_EVERY: Duration = Duration::from_secs(2);
+
+/// The time from one peak of a point's pulse to the next.
+const PULSE_PERIOD: Duration = Duration::from_secs(1);
+
+/// How long a point lasts unless something ends it sooner.
+const POINT_FOR: Duration = Duration::from_secs(30);
+
+/// How far a point's pulse is toward its peak `elapsed` after it began,
+/// from 0 to 1.
+pub fn pulse(elapsed: Duration) -> f32 {
+    let phase = elapsed.as_secs_f32() / PULSE_PERIOD.as_secs_f32();
+    (1.0 - (phase * std::f32::consts::TAU).cos()) / 2.0
+}
+
+pub fn expired(elapsed: Duration) -> bool {
+    elapsed >= POINT_FOR
+}
+
+impl Point {
+    pub fn pulse(&self, now: Instant) -> f32 {
+        pulse(now.saturating_duration_since(self.since))
+    }
+}
 
 fn pane_names(tabs: &[Tab]) -> Vec<&str> {
     (tabs.iter())
@@ -129,6 +162,7 @@ impl Workspace {
             scratch: None,
             branch: None,
             branch_read: None,
+            point: None,
         }
     }
 
@@ -263,12 +297,49 @@ impl Workspace {
     }
 
     /// Drop what the workspace keeps about a pane that has gone: its
-    /// client's claim, its agent state and its scratch mark.
+    /// client's claim, its agent state, its scratch mark and a point at it.
     pub fn forget_pane(&mut self, name: &str) {
         self.router.release(name);
         if self.scratch_pane() == Some(name) {
             self.scratch = None;
         }
+        self.end_point_at(name);
+    }
+
+    /// Point at pane `pane` from `now`, in place of any earlier point.
+    pub fn point_at(
+        &mut self,
+        pane: &str,
+        note: Option<String>,
+        now: Instant,
+    ) -> Result<(), String> {
+        if self.by_name(pane).is_none() {
+            return Err(format!("no pane named {pane}"));
+        }
+        self.point = Some(Point {
+            pane: pane.to_string(),
+            note,
+            since: now,
+        });
+        Ok(())
+    }
+
+    /// End the point if it is at pane `pane`.
+    pub fn end_point_at(&mut self, pane: &str) {
+        if self.point.as_ref().is_some_and(|point| point.pane == pane) {
+            self.point = None;
+        }
+    }
+
+    /// End the point if it has expired by `now`, and return whether one is
+    /// left.
+    pub fn keep_point(&mut self, now: Instant) -> bool {
+        if (self.point.as_ref())
+            .is_some_and(|point| expired(now.saturating_duration_since(point.since)))
+        {
+            self.point = None;
+        }
+        self.point.is_some()
     }
 
     /// Whether the pane stays when it has no client: it is pinned or it is
@@ -560,5 +631,61 @@ mod tests {
             panes,
             [("terminal".into(), None), ("terminal2".into(), occupant)]
         );
+    }
+
+    #[test]
+    fn a_pulse_rises_from_nothing_to_its_peak_and_back_each_period() {
+        let at = |ms| pulse(Duration::from_millis(ms));
+        assert!(at(0) < 1e-6);
+        assert!((at(250) - 0.5).abs() < 1e-3);
+        assert!((at(500) - 1.0).abs() < 1e-6);
+        assert!((at(750) - 0.5).abs() < 1e-3);
+        assert!(at(1000) < 1e-6);
+        assert!(at(100) < at(200) && at(600) > at(700));
+    }
+
+    #[test]
+    fn a_point_expires_after_thirty_seconds() {
+        assert!(!expired(Duration::from_millis(29_999)));
+        assert!(expired(Duration::from_secs(30)));
+        let mut workspace = at_home();
+        let start = Instant::now();
+        workspace.point_at("terminal", None, start).unwrap();
+        assert!(workspace.keep_point(start + Duration::from_secs(29)));
+        assert!(!workspace.keep_point(start + Duration::from_secs(30)));
+        assert!(workspace.point.is_none());
+    }
+
+    #[test]
+    fn a_new_point_replaces_the_one_before_and_an_unknown_pane_is_refused() {
+        let mut workspace = at_home();
+        workspace.add_tab(crate::server::panes::tests::AREA);
+        let now = Instant::now();
+        workspace.point_at("terminal", None, now).unwrap();
+        let note = Some("this one".to_string());
+        workspace.point_at("terminal2", note.clone(), now).unwrap();
+        let point = workspace.point.as_ref().unwrap();
+        assert_eq!((point.pane.as_str(), &point.note), ("terminal2", &note));
+        let refused = workspace.point_at("chat", None, now);
+        assert_eq!(refused, Err("no pane named chat".to_string()));
+        assert_eq!(workspace.point.as_ref().unwrap().pane, "terminal2");
+    }
+
+    #[test]
+    fn a_point_ends_when_its_pane_is_focused_or_goes_and_not_for_another_pane() {
+        let mut workspace = at_home();
+        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace
+            .point_at("terminal2", None, Instant::now())
+            .unwrap();
+        workspace.end_point_at("terminal");
+        assert!(workspace.point.is_some());
+        workspace.end_point_at("terminal2");
+        assert!(workspace.point.is_none());
+        workspace
+            .point_at("terminal2", None, Instant::now())
+            .unwrap();
+        workspace.remove_tab(1);
+        assert!(workspace.point.is_none());
     }
 }

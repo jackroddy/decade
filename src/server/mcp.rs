@@ -1,7 +1,7 @@
 use std::io;
 use std::net::TcpListener;
 
-use decade_channel::{Focus, code};
+use decade_channel::code;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
@@ -40,7 +40,12 @@ pub enum Call {
         verb: String,
         payload: Value,
     },
-    Focus(String),
+
+    /// Point at pane `pane`, with a note beside it.
+    Point {
+        pane: String,
+        note: Option<String>,
+    },
     Panes,
     ScratchOpen(Launch),
 }
@@ -131,18 +136,21 @@ fn tools() -> Vec<Tool> {
             schema(json!({"type": "object", "properties": {}})),
         ),
         Tool::new(
-            "focus",
-            "Move keyboard focus to a pane",
-            schema(json!({
-                "type": "object",
-                "properties": {"pane": {"type": "string", "description": "a pane name, as panes lists it"}},
-                "required": ["pane"]
-            })),
-        ),
-        Tool::new(
             "panes",
             "List the panes in this workspace and the program occupying each",
             schema(json!({"type": "object", "properties": {}})),
+        ),
+        Tool::new(
+            "point",
+            "Draw the user's eye to a pane without moving keyboard focus: its outline pulses for up to 30 seconds, until the user focuses it or the next point",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": {"type": "string", "description": "a pane name, as panes lists it"},
+                    "note": {"type": "string", "description": "a few words shown on the pane's outline"}
+                },
+                "required": ["pane"]
+            })),
         ),
         Tool::new(
             "scratch.open",
@@ -179,6 +187,13 @@ fn workspace_in(query: &str) -> Option<u32> {
         .and_then(|id| id.parse().ok())
 }
 
+/// The arguments of `point`.
+#[derive(Deserialize)]
+struct Point {
+    pane: String,
+    note: Option<String>,
+}
+
 /// The arguments of `scratch.send`.
 #[derive(Deserialize)]
 struct ScratchSend {
@@ -196,11 +211,11 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
         "code.show" => Ok(code(code::SHOW, arguments)),
         "code.mark" => Ok(code(code::MARK, arguments)),
         "code.clear" => Ok(code(code::CLEAR, Map::new())),
-        "focus" => {
-            let Focus { pane } = parse(name, arguments)?;
-            Ok(Call::Focus(pane))
-        }
         "panes" => Ok(Call::Panes),
+        "point" => {
+            let Point { pane, note } = parse(name, arguments)?;
+            Ok(Call::Point { pane, note })
+        }
         "scratch.open" => parse(name, arguments).map(Call::ScratchOpen),
         "scratch.send" => {
             let ScratchSend { verb, payload } = parse(name, arguments)?;
@@ -228,7 +243,8 @@ impl ServerHandler for Decade {
                  at lines in it. The user may mark one pane as the scratch pane, where agents \
                  show things. scratch.open starts a program whose name begins with decade- in \
                  it, replacing the program there, and scratch.send sends that program a message. \
-                 Both fail when the workspace has no scratch pane.",
+                 Both fail when the workspace has no scratch pane. point draws the user's eye \
+                 to a pane without taking keyboard focus.",
             )
     }
 
@@ -310,7 +326,7 @@ mod tests {
                     Call::Panes => {
                         Ok(r#"{"panes":[{"name":"code","client":"decade-code"}]}"#.to_string())
                     }
-                    Call::Focus(pane) => Err(format!("no pane named {pane}")),
+                    Call::Point { pane, .. } => Err(format!("no pane named {pane}")),
                     _ => Err("unexpected call".to_string()),
                 };
                 let _ = request.reply.send(reply);
@@ -342,9 +358,9 @@ mod tests {
                     .call_tool(CallToolRequestParams::new("panes"))
                     .await
                     .unwrap();
-                let focus = client
+                let point = client
                     .call_tool(
-                        CallToolRequestParams::new("focus")
+                        CallToolRequestParams::new("point")
                             .with_arguments(schema(json!({"pane": "terminal"}))),
                     )
                     .await
@@ -358,7 +374,7 @@ mod tests {
                     .call_tool(CallToolRequestParams::new("panes"))
                     .await;
                 unaddressed.cancel().await.unwrap();
-                (names, show, panes, focus, refused)
+                (names, show, panes, point, refused)
             })
         });
 
@@ -368,7 +384,7 @@ mod tests {
                 .dispatch(Some(Duration::from_millis(50)), &mut seen)
                 .unwrap();
         }
-        let (names, show, panes, focus, refused) = client.join().unwrap();
+        let (names, show, panes, point, refused) = client.join().unwrap();
 
         assert_eq!(
             names,
@@ -376,8 +392,8 @@ mod tests {
                 "code.show",
                 "code.mark",
                 "code.clear",
-                "focus",
                 "panes",
+                "point",
                 "scratch.open",
                 "scratch.send"
             ]
@@ -399,9 +415,9 @@ mod tests {
                 .text
                 .contains("decade-code")
         );
-        assert_eq!(focus.is_error, Some(true));
+        assert_eq!(point.is_error, Some(true));
         assert!(
-            focus.content[0]
+            point.content[0]
                 .as_text()
                 .unwrap()
                 .text
@@ -436,7 +452,29 @@ mod tests {
             panic!("a string is not a payload");
         };
         assert!(reason.starts_with("scratch.send: invalid type: string"));
-        let missing = call_for("focus", Map::new());
-        assert_eq!(missing.err().unwrap(), "focus: missing field `pane`");
+        let missing = call_for("point", Map::new());
+        assert_eq!(missing.err().unwrap(), "point: missing field `pane`");
+        assert_eq!(
+            call_for("focus", Map::new()).err().unwrap(),
+            "no tool named focus"
+        );
+    }
+
+    #[test]
+    fn point_takes_a_pane_and_an_optional_note() {
+        let Ok(Call::Point { pane, note }) = call_for("point", schema(json!({"pane": "code"})))
+        else {
+            panic!("point with a pane is a point");
+        };
+        assert_eq!((pane.as_str(), note), ("code", None));
+        let noted = schema(json!({"pane": "code", "note": "the failing test"}));
+        let Ok(Call::Point { note, .. }) = call_for("point", noted) else {
+            panic!("point with a note is a point");
+        };
+        assert_eq!(note.as_deref(), Some("the failing test"));
+        let Err(reason) = call_for("point", schema(json!({"pane": "code", "note": 3}))) else {
+            panic!("a number is not a note");
+        };
+        assert!(reason.starts_with("point: invalid type: integer"));
     }
 }

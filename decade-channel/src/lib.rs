@@ -54,11 +54,6 @@ pub struct Hello {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Focus {
-    pub pane: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Status {
     pub state: AgentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -91,7 +86,6 @@ pub enum Reply {
 #[serde(rename_all = "lowercase")]
 enum Request {
     Hello(Hello),
-    Focus(Focus),
     Status(Status),
     Panes {},
 }
@@ -197,12 +191,6 @@ impl Channel {
         message.insert("to".into(), Value::String(to.to_string()));
         message.insert(verb.to_string(), payload);
         self.write(&message)
-    }
-
-    pub fn focus(&mut self, pane: &str) -> io::Result<()> {
-        self.write(&Request::Focus(Focus {
-            pane: pane.to_string(),
-        }))
     }
 
     /// Report the state of the agent in the pane this client claimed.
@@ -403,12 +391,6 @@ mod tests {
     #[test]
     fn requests_are_written_as_one_key_objects() {
         let line = |request: Request| serde_json::to_value(request).unwrap();
-        assert_eq!(
-            line(Request::Focus(Focus {
-                pane: "code".into()
-            })),
-            json!({"focus": {"pane": "code"}})
-        );
         assert_eq!(
             line(Request::Status(Status {
                 state: AgentState::Working,

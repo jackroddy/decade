@@ -12,11 +12,11 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 ### Added
 
 - `Channel::connect` and `Channel::from_env` open the decade socket, send
-  hello, and hand back a receiver of `Message`s read on a thread; `send`,
-  `focus` and `panes` write to it. `parse` turns one line into a `Message`.
+  hello, and hand back a receiver of `Message`s read on a thread; `send`
+  and `panes` write to it. `parse` turns one line into a `Message`.
 - The `code` module with the `show`, `mark` and `clear` verbs and their
   payload types, shared by the code pane and whoever drives it.
-- `Hello`, `Focus`, `Status`, `Welcome`, `Error`, `Pane` and `AgentState`
-  are the messages a client and decade exchange. `Reply` holds the lines
-  decade writes other than forwarded verbs. decade uses these same types.
+- `Hello`, `Status`, `Welcome`, `Error`, `Pane` and `AgentState` are the
+  messages a client and decade exchange. `Reply` holds the lines decade
+  writes other than forwarded verbs. decade uses these same types.
 

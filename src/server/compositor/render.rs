@@ -65,6 +65,8 @@ impl State {
         } = self;
         let layout = workspaces[workspace].layout();
         let scratch = workspaces[workspace].scratch_pane();
+        let now = Instant::now();
+        let point = (workspaces[workspace].point.as_ref()).map(|point| (point, point.pulse(now)));
         let (overlay, drag) = if workspace == current {
             (overlay.as_ref(), drag.as_ref())
         } else {
@@ -80,10 +82,12 @@ impl State {
                 bar: *bar,
                 hover: *hover,
                 tab_hover: *tab_hover,
+                point,
             }
         } else {
             Chrome {
                 scratch,
+                point,
                 ..Chrome::default()
             }
         };
@@ -200,6 +204,9 @@ impl State {
     pub(super) fn frame(&self, shown: usize) -> frame::Frame {
         let hover = self.frame_hover.filter(|_| shown == self.current());
         let home = workspace::home();
+        let now = Instant::now();
+        let pulse =
+            |workspace: &Workspace| (workspace.point.as_ref()).map(|point| point.pulse(now));
         let entries = (self.workspaces.iter().enumerate())
             .map(|(i, workspace)| {
                 let urgent = (workspace.router.clients.values())
@@ -215,12 +222,17 @@ impl State {
                     age: urgent.map_or(Duration::ZERO, |(_, since)| since.elapsed()),
                     message: urgent.and_then(|(status, _)| status.message.clone()),
                     current: i == shown,
+                    pulse: pulse(workspace).filter(|_| i != shown),
                 }
             })
             .collect();
         let shown = &self.workspaces[shown];
-        let tabs = (shown.tabs.iter())
-            .map(|tab| {
+        let pointed_tab = (shown.point.as_ref())
+            .and_then(|point| shown.by_name(&point.pane))
+            .map(|(tab, _)| tab)
+            .filter(|&tab| tab != shown.active_tab);
+        let tabs = (shown.tabs.iter().enumerate())
+            .map(|(index, tab)| {
                 let names: Vec<_> = (tab.layout.panes.iter())
                     .map(|pane| pane.name.as_str())
                     .collect();
@@ -234,6 +246,7 @@ impl State {
                 frame::Tab {
                     label: label.map(|pane| pane.running_label()).unwrap_or_default(),
                     state,
+                    pulse: pulse(shown).filter(|_| pointed_tab == Some(index)),
                 }
             })
             .collect();

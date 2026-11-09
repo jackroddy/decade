@@ -68,8 +68,8 @@ Verbs are not checked by decade beyond the occupant's `accepts` list; the
 payload is the business of the two clients.
 
 A pane verb may not be one of these names, which decade keeps for its own
-messages: `hello`, `focus`, `status`, `panes`, `welcome`, `error` and
-`from`. decade answers a message to a pane that uses one with an error and
+messages: `hello`, `status`, `panes`, `welcome`, `error` and `from`.
+decade answers a message to a pane that uses one with an error and
 does not forward it.
 
 ## Messages to decade
@@ -77,12 +77,9 @@ does not forward it.
 A message without `to` is for decade, and carries exactly one of its verbs.
 
 ```json
-{"focus": {"pane": "terminal"}}
 {"panes": {}}
 ```
 
-`focus` moves keyboard focus to the pane and has no reply. In a workspace
-that is not on screen, the pane has focus once the workspace is shown.
 `panes` is answered with every pane in the workspace and its occupant:
 
 ```json
@@ -130,7 +127,7 @@ Agents do not use this socket. decade is also an MCP server, over streamable
 HTTP at the address in `DECADE_MCP`, which every program decade starts gets
 beside `DECADE_SOCKET`. Each workspace has its own address, ending in
 `?workspace=<id>`, and a tool call reaches only the panes of that
-workspace. Its tools are decade's own `focus` and `panes` and, for
+workspace. Its tools are decade's own `panes` and `point` and, for
 the code pane, `code.show`, `code.mark` and `code.clear`, each with the payload
 described above as its arguments. decade delivers a pane verb from a tool
 call with `"from": "agent"`. decade answers `panes` with the pane list, in the
@@ -140,6 +137,14 @@ whose text is the reason the socket would give in `error`. decade refuses a
 call to an address without `?workspace=` as invalid parameters. coax passes
 `DECADE_MCP` to the agent in the ACP session's server list, so any agent coax
 runs sees these tools.
+
+`point` takes `pane` and an optional `note`. decade pulses the pane's
+outline in magenta and puts the note on its top edge. Keyboard focus stays
+where it is. When the pane is in a tab that is not shown, decade pulses
+that tab's pill on the top bar. When the workspace is not shown, decade
+pulses its card or tile in the sidebar. The point ends when the person
+focuses the pane, when the pane goes, after 30 seconds, or when the agent
+points again. A workspace has one point at a time.
 
 The person may mark one pane in a workspace as its scratch pane, from the
 Ctrl bar. Two tools reach it. `scratch.open` takes `program`, optional

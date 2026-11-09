@@ -86,6 +86,9 @@ const SAVE_DELAY: Duration = Duration::from_secs(1);
 const SAVE_EVERY: Duration = Duration::from_secs(60);
 const AGE_EVERY: Duration = Duration::from_secs(60);
 
+/// How often a frame is drawn while a point pulses, about 30 a second.
+const PULSE_EVERY: Duration = Duration::from_millis(33);
+
 /// The box or grid drawn over the workspace that takes the keys while it is open.
 enum Overlay {
     Menu(Menu),
@@ -154,6 +157,9 @@ pub struct State {
     /// The top bar or sidebar item under the pointer.
     frame_hover: Option<Hit>,
     ctrl_timer: Option<RegistrationToken>,
+
+    /// The timer that draws frames while a point pulses.
+    pulse_timer: Option<RegistrationToken>,
     scale: f64,
     start: Instant,
 }
@@ -241,6 +247,7 @@ pub fn run() {
         tab_hover: None,
         frame_hover: None,
         ctrl_timer: None,
+        pulse_timer: None,
         scale,
         start: Instant::now(),
     };
@@ -1020,6 +1027,9 @@ impl State {
         }
         let previous = self.layout().focused;
         self.layout_mut().focused = id;
+        if previous != id {
+            self.end_point_at(id);
+        }
         let surface = self
             .layout()
             .pane(id)
@@ -1035,19 +1045,37 @@ impl State {
         self.schedule_save();
     }
 
-    fn focus_named(&mut self, workspace: usize, name: &str) {
-        let Some((tab, id)) = self.workspaces[workspace].by_name(name) else {
+    /// End the point in the current workspace if it is at pane `id`.
+    fn end_point_at(&mut self, id: usize) {
+        let Some(name) = self.layout().pane(id).map(|pane| pane.name.clone()) else {
             return;
         };
-        if workspace == self.current() {
-            self.show_tab(tab);
-            self.focus(id);
-        } else {
-            let shown = &mut self.workspaces[workspace];
-            shown.active_tab = tab;
-            shown.tabs[tab].layout.focused = id;
-            self.schedule_save();
+        let current = self.current();
+        self.workspaces[current].end_point_at(&name);
+    }
+
+    /// Draw frames while any workspace's point pulses, and end points
+    /// as they expire.
+    fn start_pulse(&mut self) {
+        if self.pulse_timer.is_some() {
+            return;
         }
+        let timer = Timer::from_duration(PULSE_EVERY);
+        let token = self.loop_handle.insert_source(timer, |_, _, state| {
+            let now = Instant::now();
+            let mut pulsing = false;
+            for shown in &mut state.workspaces {
+                pulsing |= shown.keep_point(now);
+            }
+            state.request_redraw();
+            if pulsing {
+                TimeoutAction::ToDuration(PULSE_EVERY)
+            } else {
+                state.pulse_timer = None;
+                TimeoutAction::Drop
+            }
+        });
+        self.pulse_timer = token.ok();
     }
 
     fn new_terminal_pane(&mut self) {

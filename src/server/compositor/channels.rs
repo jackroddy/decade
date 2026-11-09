@@ -106,12 +106,12 @@ impl State {
                 let to = shown.scratch_pane().ok_or(NO_SCRATCH)?;
                 (to.to_string(), verb, payload)
             }
-            mcp::Call::Focus(pane) => {
-                shown
-                    .by_name(&pane)
-                    .ok_or_else(|| format!("no pane named {pane}"))?;
-                self.focus_named(workspace, &pane);
-                return Ok(format!("focused pane {pane}"));
+            mcp::Call::Point { pane, note } => {
+                let shown = &mut self.workspaces[workspace];
+                shown.point_at(&pane, note, Instant::now())?;
+                self.start_pulse();
+                self.request_redraw();
+                return Ok(format!("pointing at pane {pane}"));
             }
             mcp::Call::Panes => {
                 let panes = Reply::Panes(shown.pane_list());
@@ -243,7 +243,6 @@ impl State {
         for out in self.workspaces[workspace].channel_line(id, line) {
             match out {
                 Out::Line(to, text) => self.channel_send(to, &text),
-                Out::Focus(pane) => self.focus_named(workspace, &pane),
                 Out::Status {
                     pane,
                     message,

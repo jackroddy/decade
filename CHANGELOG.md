@@ -77,7 +77,6 @@ command line and what the tool writes.
   a tab's pill shows that tab. Programs in hidden tabs keep running at
   the size of the pane area. decade sends them no frame callbacks until
   their tab is shown. A pane name stays unique across a workspace's tabs.
-  Focusing a pane over the socket or MCP shows its tab.
 - Close tab in the palette asks for a second Enter, then closes every pane
   in the shown tab. The tab goes once its last client has. Closing the last
   tab closes the workspace.
@@ -126,12 +125,18 @@ command line and what the tool writes.
 - Scroll wheel events reach clients.
 - decade is an MCP server over streamable HTTP, at the address in
   `DECADE_MCP` in the environment of everything it starts. Its tools are
-  `focus`, `panes`, `code.show`, `code.mark` and `code.clear`; a call becomes
+  `point`, `panes`, `code.show`, `code.mark` and `code.clear`; a call becomes
   the matching socket message and decade's answer is the tool result.
+  With `point` an agent points at a pane. Keyboard focus stays where it
+  is. decade pulses the pane's outline in magenta and shows the
+  agent's note on it. When the pane's tab is hidden, its pill on the top
+  bar pulses. When the workspace is hidden, its card or tile pulses. The
+  point ends when the person focuses the pane, after 30 seconds, or at
+  the agent's next point.
 - A unix socket for decade-aware programs, with its path in `DECADE_SOCKET`
   and the pane name in `DECADE_PANE` of everything decade starts. JSON lines:
   a hello that claims a pane, messages addressed to a pane and forwarded to
-  its occupant, `focus` and `panes` for decade itself, and an error line for
+  its occupant, `panes` for decade itself, and an error line for
   anything else. `docs/protocol.md` has the details.
 - `decade start`, `decade stop`, `decade restart` and `decade status`
   control the server. `start` runs a server in the background and opens no

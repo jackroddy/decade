@@ -34,6 +34,11 @@ const TEXT: Rgba = palette::FOREGROUND;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 const MUTED: Rgba = palette::MUTED;
 const SHADOW: Rgba = palette::SHADOW;
+const POINTED: Rgba = palette::MAGENTA;
+
+/// How far toward `POINTED` a pulsing pill, card or tile is filled at
+/// the pulse's peak; its ring goes all the way.
+const POINTED_FILL: f32 = 0.3;
 
 // the sizes below are in pixels at 18 px rows, for `scaled`
 const CARD_INSET: i32 = 6;
@@ -79,6 +84,10 @@ pub struct Tab {
 
     /// The most urgent state an agent in the tab has reported.
     pub state: Option<AgentState>,
+
+    /// How far the pulse of an agent's point at a pane in the tab is
+    /// toward its peak, when the tab is not the one shown.
+    pub pulse: Option<f32>,
 }
 
 pub struct Entry {
@@ -95,6 +104,10 @@ pub struct Entry {
     pub age: Duration,
     pub message: Option<String>,
     pub current: bool,
+
+    /// How far the pulse of the workspace's point is toward its peak, when
+    /// the workspace is not the one shown.
+    pub pulse: Option<f32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -587,12 +600,24 @@ impl Frame {
 
         let tabs = self.tab_pills();
         for pill in &tabs {
+            let pulse = match pill.hit {
+                Hit::Tab(i) => self.tabs[i].pulse,
+                _ => None,
+            };
+            let hovered = self.hover == Some(pill.hit);
             let color = if pill.hit == Hit::Tab(self.active_tab) {
-                self.draw_pill(scene, pill.column, pill.width(), CURRENT);
+                self.draw_pill(scene, pill.column, pill.width(), CURRENT, CURRENT);
                 TEXT
+            } else if let Some(pulse) = pulse {
+                let base = if hovered { palette::SELECTION } else { BAR };
+                let fill = palette::mix(base, POINTED, POINTED_FILL * pulse);
+                let ring = palette::mix(base, POINTED, pulse);
+                self.draw_pill(scene, pill.column, pill.width(), fill, ring);
+                palette::mix(DIM, TEXT, pulse)
             } else {
-                if self.hover == Some(pill.hit) {
-                    self.draw_pill(scene, pill.column, pill.width(), palette::SELECTION);
+                if hovered {
+                    let hover = palette::SELECTION;
+                    self.draw_pill(scene, pill.column, pill.width(), hover, hover);
                 }
                 DIM
             };
@@ -628,7 +653,7 @@ impl Frame {
             } else {
                 pill_background(state)
             };
-            self.draw_pill(scene, pill.column, pill.width(), background);
+            self.draw_pill(scene, pill.column, pill.width(), background, background);
             scene.text_px(
                 x(pill.column),
                 y,
@@ -647,12 +672,12 @@ impl Frame {
     }
 
     /// The rounded background of a pill `width` columns wide from `column`.
-    fn draw_pill(&self, scene: &mut Scene, column: u32, width: u32, color: Rgba) {
+    fn draw_pill(&self, scene: &mut Scene, column: u32, width: u32, fill: Rgba, ring: Rgba) {
         let (cell_width, cell_height) = self.cell;
         let x = column as i32 * cell_width;
         let size = (width as i32 * cell_width, cell_height);
         let radius = self.scaled(PILL_RADIUS);
-        scene.rounded(x, cell_height / 2, size, radius, color, color);
+        scene.rounded(x, cell_height / 2, size, radius, fill, ring);
     }
 
     fn draw_sidebar(&self, scene: &mut Scene) {
@@ -699,8 +724,11 @@ impl Frame {
             (false, true) => palette::LIGHTER_BACKGROUND,
             (false, false) => SIDEBAR,
         };
-        if background != SIDEBAR {
-            scene.rounded(left, top, (width, height), radius, background, background);
+        let pulse = entry.pulse.unwrap_or(0.0);
+        let ring = palette::mix(background, POINTED, pulse);
+        let background = palette::mix(background, POINTED, POINTED_FILL * pulse);
+        if background != SIDEBAR || ring != SIDEBAR {
+            scene.rounded(left, top, (width, height), radius, background, ring);
         }
         if let Some(color) = stripe(entry.state) {
             // a rounded rect in the stripe's colour, covered but for its
@@ -753,7 +781,7 @@ impl Frame {
         let hit = entry.map_or(Hit::New, |entry| Hit::Show(entry.id));
         let current = entry.is_some_and(|entry| entry.current);
         let hovered = self.hover == Some(hit);
-        let (fill, ring, color) = match (entry, current, hovered) {
+        let (mut fill, mut ring, color) = match (entry, current, hovered) {
             (_, true, _) => (CURRENT, palette::ACCENT, TEXT),
             (Some(_), false, true) => (palette::LIGHTER_BACKGROUND, DIM, palette::FADED_FOREGROUND),
             (None, false, true) => (palette::LIGHTER_BACKGROUND, DIM, DIM),
@@ -764,6 +792,10 @@ impl Frame {
             ),
             (None, false, false) => (SIDEBAR, palette::BORDER, DIM),
         };
+        if let Some(pulse) = entry.and_then(|entry| entry.pulse) {
+            fill = palette::mix(fill, POINTED, POINTED_FILL * pulse);
+            ring = palette::mix(ring, POINTED, pulse);
+        }
         let radius = self.scaled(TILE_RADIUS);
         scene.rounded(left, top, (size, size), radius, fill, ring);
 
@@ -861,6 +893,7 @@ mod tests {
             age: Duration::from_secs(240),
             message: None,
             current: id == 0,
+            pulse: None,
         }
     }
 
@@ -868,6 +901,7 @@ mod tests {
         Tab {
             label: label.to_string(),
             state,
+            pulse: None,
         }
     }
 

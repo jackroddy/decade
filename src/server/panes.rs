@@ -12,12 +12,14 @@ use crate::server::chrome::palette;
 use crate::server::chrome::palette::Rgba;
 use crate::server::chrome::text::fit;
 use crate::server::proc;
+use crate::server::workspace::Point;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;
 const PANE: Rgba = palette::DARK_BACKGROUND;
 const OUTLINE: Rgba = palette::MUTED;
 const FOCUS: Rgba = palette::CYAN;
+const POINTED: Rgba = palette::MAGENTA;
 const DROP: Rgba = palette::ACCENT;
 const BAR: Rgba = palette::LIGHTER_BACKGROUND;
 const RESTART: Rgba = palette::ACCENT;
@@ -410,6 +412,9 @@ pub struct Chrome<'a> {
 
     /// The pane and index of the tab under the pointer.
     pub tab_hover: Option<(usize, usize)>,
+
+    /// The workspace's point and how far its pulse is toward its peak.
+    pub point: Option<(&'a Point, f32)>,
 }
 
 pub struct Layout {
@@ -742,7 +747,8 @@ impl Layout {
                 OUTLINE
             };
             let scratched = chrome.scratch == Some(pane.name.as_str());
-            self.draw_outline(scene, pane, outline, scratched);
+            let point = chrome.point.filter(|(point, _)| point.pane == pane.name);
+            self.draw_outline(scene, pane, outline, scratched, point);
             draw_waiting(scene, pane, pane.rect.inner(), scratched);
             let hover = (chrome.tab_hover)
                 .filter(|&(id, _)| id == pane.id)
@@ -758,8 +764,16 @@ impl Layout {
     }
 
     /// The pane's outline, with a tag on its top edge when it is pinned,
-    /// zoomed or the scratch pane.
-    fn draw_outline(&self, scene: &mut Scene, pane: &Pane, color: Rgba, scratched: bool) {
+    /// zoomed or the scratch pane, pulsing with its note when an agent
+    /// points at it.
+    fn draw_outline(
+        &self,
+        scene: &mut Scene,
+        pane: &Pane,
+        color: Rgba,
+        scratched: bool,
+        point: Option<(&Point, f32)>,
+    ) {
         let (cell_width, cell_height) = scene.cell();
         let line = scene.line_width();
         let rect = pane.rect;
@@ -776,7 +790,14 @@ impl Layout {
             cell_width,
         );
         let bottom = inset(rect.row + rect.rows == area.row + area.rows, cell_height);
+        let pulse = point.map_or(0.0, |(_, pulse)| pulse);
+        let color = palette::mix(color, POINTED, pulse);
         scene.outline(rect, [left, top, right, bottom], color);
+        if point.is_some() {
+            let [r, g, b, _] = POINTED;
+            let inner = [left + line, top + line, right + line, bottom + line];
+            scene.outline(rect, inner, [r, g, b, pulse]);
+        }
 
         let (x, y) = scene.px(rect.column, rect.row);
         let (width, _) = scene.px(rect.columns, 0);
@@ -806,6 +827,19 @@ impl Layout {
             scene.text_px(start, text_y, &text, face, TAG_TEXT);
             end = start - padding * 2 - scene.scaled(TAG_GAP);
         }
+        let Some(note) = point.and_then(|(point, _)| point.note.as_deref()) else {
+            return;
+        };
+        let room = (end - x - left - cell_width * 2) / cell_width;
+        if room < 2 {
+            return;
+        }
+        let note = fit(note, room as usize);
+        let start = end - note.chars().count() as i32 * cell_width;
+        let size = (end - start + padding * 2, height);
+        let pill_y = line_y + line / 2 - height / 2;
+        scene.rounded(start - padding, pill_y, size, radius, POINTED, POINTED);
+        scene.text_px(start, text_y, &note, Face::Chrome, TAG_TEXT);
     }
 
     pub fn draw_bars(&self, scene: &mut Scene, chrome: Chrome) {

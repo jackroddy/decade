@@ -21,6 +21,7 @@ pub const RED: Rgba = hex(0xC26A7A);
 pub const YELLOW: Rgba = hex(0xDA915C);
 pub const GREEN: Rgba = hex(0x69A676);
 pub const CYAN: Rgba = hex(0x57ABAD);
+pub const MAGENTA: Rgba = hex(0xA26DC9);
 pub const FADED_FOREGROUND: Rgba = hex(0xC9C0B0);
 pub const LIGHT_RED: Rgba = hex(0xE39AA6);
 pub const LIGHT_YELLOW: Rgba = hex(0xE8AC80);
@@ -34,3 +35,8 @@ pub const MID_RED: Rgba = hex(0x4D2F3E);
 pub const MID_YELLOW: Rgba = hex(0x4D3B2C);
 pub const MID_GREEN: Rgba = hex(0x354234);
 pub const SHADOW: Rgba = [0.0, 0.0, 0.0, 0.4];
+
+/// The colour `t` of the way from `from` to `to`, for `t` from 0 to 1.
+pub fn mix(from: Rgba, to: Rgba, t: f32) -> Rgba {
+    std::array::from_fn(|i| from[i] + (to[i] - from[i]) * t)
+}

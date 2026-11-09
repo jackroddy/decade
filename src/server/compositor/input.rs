@@ -483,6 +483,7 @@ impl State {
             self.restart_pane(self.current(), id);
             return true;
         }
+        self.end_point_at(id);
         if id != self.layout().focused {
             self.focus(id);
         }

@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use decade_channel::{AgentState, Error, Focus, Hello, Pane, Reply, Status, VERSION, Welcome};
+use decade_channel::{AgentState, Error, Hello, Pane, Reply, Status, VERSION, Welcome};
 use serde_json::{Map, Value, json};
 
 /// The keys a pane verb may not take: decade's own verbs and the
 /// names decade's replies and forwarded messages use.
-const RESERVED: [&str; 7] = [
-    "hello", "focus", "status", "panes", "welcome", "error", "from",
-];
+const RESERVED: [&str; 6] = ["hello", "status", "panes", "welcome", "error", "from"];
 
 pub struct Client {
     pub name: String,
@@ -24,7 +22,6 @@ pub struct Client {
 
 pub enum Out {
     Line(usize, String),
-    Focus(String),
 
     /// A client reported its agent's state; `raised` when the pane has
     /// just entered attention.
@@ -123,18 +120,6 @@ impl Router {
             )]
         };
         match verb {
-            "focus" => {
-                let focus: Focus = match serde_json::from_value(payload) {
-                    Ok(focus) => focus,
-                    Err(error) => return malformed(error),
-                };
-                if panes.contains(&focus.pane.as_str()) {
-                    vec![Out::Focus(focus.pane)]
-                } else {
-                    let reason = format!("no pane named {}", focus.pane);
-                    vec![error_line(id, &reason, value)]
-                }
-            }
             "status" => {
                 let status: Status = match serde_json::from_value(payload) {
                     Ok(status) => status,
@@ -166,7 +151,7 @@ impl Router {
             "panes" => vec![reply(id, Reply::Panes(self.panes(panes)))],
             _ => vec![error_line(
                 id,
-                "a message needs \"to\", or one of \"hello\", \"focus\", \"status\" and \"panes\"",
+                "a message needs \"to\", or one of \"hello\", \"status\" and \"panes\"",
                 value,
             )],
         }
@@ -373,11 +358,9 @@ mod tests {
     }
 
     #[test]
-    fn focus_becomes_a_host_command_and_panes_lists_occupants() {
+    fn panes_lists_every_pane_and_its_occupant() {
         let mut r = Router::default();
         r.handle(1, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
-        let out = r.handle(1, r#"{"focus": {"pane": "terminal"}}"#, &PANES);
-        assert!(matches!(&out[0], Out::Focus(pane) if pane == "terminal"));
         let out = lines(r.handle(1, r#"{"panes": {}}"#, &PANES));
         assert_eq!(
             out[0].1,
@@ -398,13 +381,29 @@ mod tests {
             &PANES,
         );
         r.handle(2, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
-        for verb in ["focus", "status", "error", "from"] {
+        for verb in ["status", "error", "from"] {
             let line = format!(r#"{{"to": "code", "{verb}": {{"pane": "chat"}}}}"#);
             let out = lines(r.handle(2, &line, &PANES));
             assert_eq!(out.len(), 1);
             assert_eq!(out[0].0, 2);
             assert_eq!(out[0].1["error"]["reason"], format!("{verb} is reserved"));
         }
+    }
+
+    #[test]
+    fn focus_is_not_decades_verb_and_a_pane_may_take_it() {
+        let mut r = Router::default();
+        r.handle(1, r#"{"hello": {"name": "list", "pane": "code"}}"#, &PANES);
+        r.handle(2, r#"{"hello": {"name": "coax", "pane": "chat"}}"#, &PANES);
+        let out = lines(r.handle(2, r#"{"focus": {"pane": "code"}}"#, &PANES));
+        assert!(
+            out[0].1["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("a message needs \"to\"")
+        );
+        let out = lines(r.handle(2, r#"{"to": "code", "focus": {"row": 3}}"#, &PANES));
+        assert_eq!(out, vec![(1, json!({"focus": {"row": 3}, "from": "coax"}))]);
     }
 
     #[test]
@@ -418,7 +417,7 @@ mod tests {
                 .unwrap()
                 .starts_with("a message needs \"to\"")
         );
-        let out = lines(r.handle(1, r#"{"focus": {"pane": "chat"}, "panes": {}}"#, &PANES));
+        let out = lines(r.handle(1, r#"{"status": {"state": "idle"}, "panes": {}}"#, &PANES));
         assert_eq!(
             out[0].1["error"]["reason"],
             "a message carries exactly one verb"
