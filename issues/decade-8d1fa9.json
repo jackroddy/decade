@@ -3,20 +3,20 @@
   "title": "A workspace card could blink to draw the eye when its agent needs the person",
   "body": "A workspace card in the open sidebar shows its agent's state with a coloured stripe on its left edge and a glyph on its state line (`stripe` and `mark` in `src/server/chrome/frame.rs`). The closed sidebar shows a state dot on each tile. Nothing on a card moves, so a workspace that enters `attention` or `done` changes colour and position and nothing more. Jack wants to try a blink or pulse that draws his eye to it.\n\nThe only animation in the sidebar today is a point's pulse, in magenta, which lasts up to 30 seconds (decade-e9e1c4 finds it faint on tiles). decade redraws only when something changes, so an animation that never stops means continuous frames for every viewer (see decade-a365b0).\n\n## Proposal\n\nJack compares several treatments in a web prototype before any is built. The candidates differ in what moves, which states move, and for how long:\n\n- what moves: the stripe, the glyph, the card's background, or an outline round the card\n- which states: `attention` only, or `attention` and `done`\n- how long: always, or a burst when the state is entered followed by a rare pulse\n\n## Open\n\n- Which treatment, chosen from the prototype.\n- How it shows on the closed sidebar's tiles.\n- Whether it stops once the person has looked, tied to the timeout in decade-ee05df.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/7403d304",
-  "lease_expires": "2026-11-10T23:41:14.916451426Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T23:01:07.938160738Z",
-  "updated_at": "2026-11-10T23:26:14.916451426Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T23:43:46.270738764Z",
+  "closed_at": "2026-11-10T23:43:46.270738764Z",
+  "close_reason": "Landed in a402a32: done and attention cards breathe toward their dark tint every 1.6 s, except while hovered. Tiles do not breathe.",
+  "resolution": "done",
   "notes": [
     {
       "id": "3050ddb8",
@@ -32,6 +32,9 @@
       "commit": "e37ba45",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "a402a32",
+      "branch": "dev"
+    }
   }
 }
