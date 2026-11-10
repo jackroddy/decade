@@ -414,6 +414,11 @@ fn insert_sources(
             |_, _, state| state.stopping = true,
         )
         .unwrap();
+    handle
+        .insert_source(Signals::new(&[Signal::SIGCHLD]).unwrap(), |_, _, state| {
+            state.children.reap();
+        })
+        .unwrap();
 
     let _ = std::fs::remove_file(viewer_path);
     let viewer_listener = UnixListener::bind(viewer_path).unwrap();

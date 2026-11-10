@@ -79,6 +79,12 @@ impl Children {
             .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
     }
 
+    /// Wait on every child that has exited, so none is left a zombie.
+    pub fn reap(&mut self) {
+        self.running
+            .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
+    }
+
     pub fn kill_all(&mut self) {
         for child in &mut self.running {
             let _ = child.kill();
@@ -130,6 +136,25 @@ mod tests {
         );
         let args: Vec<_> = ghostty.get_args().collect();
         assert_eq!(args.last().unwrap(), &"--class=decade.w3.logs.t2");
+    }
+
+    #[test]
+    fn a_reaped_child_that_exited_leaves_no_zombie() {
+        let mut children = Children::new("wayland-9".into(), "/tmp".into(), None);
+        let pid = children.spawn(Command::new("true")).unwrap();
+        let mut sleep = Command::new("sleep");
+        sleep.arg("5");
+        let sleeper = children.spawn(sleep).unwrap();
+        for _ in 0..100 {
+            children.reap();
+            if children.running.len() == 1 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        assert_eq!(children.running[0].id(), sleeper);
+        children.kill_all();
     }
 
     #[test]
