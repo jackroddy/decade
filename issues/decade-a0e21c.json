@@ -1,0 +1,28 @@
+{
+  "id": "decade-a0e21c",
+  "title": "The panes reply marks the scratch pane and the caller's own pane",
+  "body": "An agent calls the MCP tool `panes` to learn the workspace's panes. decade answers with a `decade_channel::Pane` per pane, in the shape of the socket's `panes` reply. A `Pane` has `name`, `client` and `shows`. The reply does not say which pane is the scratch pane, or which pane the calling agent runs in.\n\nAn agent in a decade workspace reported both gaps. It could not tell whether decade had recorded the scratch pane Jack marked, except by calling `scratch.open` and seeing whether it failed. It guessed its own pane from the `client: coax` entry, which fails once two panes run coax.\n\ndecade already gives each program it starts in a pane its pane name in `DECADE_PANE` (`Children::command` in `src/server/children.rs`), and gives every program the workspace's MCP address in `DECADE_MCP`, ending in `?workspace=<id>`. coax reads `DECADE_MCP` and passes it to its agent unchanged (`src/acp.rs` in coax).\n\n## Proposal\n\n- `Pane` gains `scratch: bool`, true for the workspace's scratch pane.\n- A program started in a pane gets `DECADE_MCP` ending in `?workspace=<id>&pane=<name>`. A tool call to that address comes from that pane.\n- `Pane` gains `you: bool`, true for the pane the call came from. Without `&pane=` it is false everywhere.\n- Both fields are `#[serde(default)]`, so a reader built before them still parses the reply.\n- `docs/protocol.md` describes both fields and the `pane` parameter of the address.\n\n## Cost\n\n`Pane` is public in `decade-channel`, so new fields break a caller that builds one with a struct literal. `decade-channel` moves its minor version. `decade` moves its minor for the protocol change.\n\n## Open\n\n- Whether the pane in the address goes stale when the pane is renamed (see the rename issue) or closed and its name reused.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T20:40:27.502958981Z",
+  "updated_at": "2026-11-10T20:40:27.502958981Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
