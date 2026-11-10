@@ -3,7 +3,7 @@
   "title": "How does a pane show that a mode such as screenshots is on, without relying on colour?",
   "body": "decade's panes have one per-pane mode today. The person marks a pane as the workspace's scratch pane with the scratch button on its Ctrl bar (`BarButton::Scratch` in `src/server/panes.rs`). The scratch pane gets its own outline and a \"scratch\" label while it waits for a program (`draw_outline` and `draw_waiting`). The screenshot permission in decade-6f4db4 adds a second mode, and Jack wants it marked by more than colour. He wants the mark visible at all times, whether or not the Ctrl bar is shown (the bar shows only while `Chrome::bar` is true).\n\ndecade has no general way for a pane to show that a mode is on. This issue decides what that way is. The answer should cover the scratch pane and any later mode too, not only screenshots.\n\n## Option 1: a glyph composited on a corner of the pane\n\ndecade draws a small glyph over one corner of the pane's client area for each mode that is on. The glyph takes no input. A click or motion over it goes to the client below as though the glyph were not there, so a GUI app that takes clicks in that corner works as before.\n\n- The pane keeps its full size and the client is never resized.\n- The glyph covers a few cells of the client's pixels, so it can hide what the program draws there. That includes the corner of a screenshot's subject when Jack looks at the pane.\n- Input has to skip the glyph by design, unlike the bar and the outline, which sit outside the client.\n\n## Option 2: the Ctrl bar stays shown while a mode is on\n\nWhile any mode is on, decade shows that pane's Ctrl bar permanently. The bar's button for the mode shows its state with an icon, as `SCRATCH_ICON` and `UNSCRATCHED_ICON` do now. The bar takes a row of its own, so the client's area is one cell shorter and the client is resized. The bar never draws over the client.\n\n- Nothing covers the client, and input needs no special case.\n- Turning a mode on or off resizes the client. A terminal reflows and a GUI app relayouts.\n- The pane's layout depends on its modes, so the split tree code has to learn about them.\n\n## Lean\n\nOption 2. The bar already holds the mode buttons, so the indicator and the switch sit in one place. Nothing draws over a program's pixels or input. One resize when the mode changes is cheap, and the person caused it. Option 1 is the better fit if the resize turns out to bother a program in practice.\n\n## Open\n\n- Whether the scratch pane moves to the same indicator, or keeps its outline as well.\n- How the bar shows several modes at once, if one pane has more than one on.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:12:52.419444914Z",
-  "updated_at": "2026-11-10T21:00:23.646933868Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T21:00:23.703660427Z",
+  "closed_at": "2026-11-10T21:00:23.703660427Z",
+  "close_reason": "Decided: a tag on the left end of the pane's outline, as recorded in the note. decade-6f4db4 builds it.",
+  "resolution": "done",
   "notes": [
     {
       "id": "7daf840c",
@@ -32,6 +32,9 @@
       "commit": "e37ba45",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    }
   }
 }
