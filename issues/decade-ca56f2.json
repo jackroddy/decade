@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T21:28:39.884944116Z",
-  "updated_at": "2026-11-10T21:28:39.884944116Z",
+  "updated_at": "2026-11-10T21:45:05.011389448Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "11c8c890",
+      "at": "2026-11-10T21:45:05.011388778Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "Jack chose option B, a timeout once the workspace has been shown, together with a redesign of the card's state glyph so that the click that clears is plain to see. Option A, clearing on focus, and option C, a plain timeout, were not taken. The two pieces are decade-ee05df and decade-6969e7.",
+      "commit": "e37ba45",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e37ba45",
