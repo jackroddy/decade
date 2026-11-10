@@ -1,0 +1,30 @@
+{
+  "id": "decade-6f4db4",
+  "title": "An agent can take a screenshot of a pane through decade's MCP tools",
+  "body": "Agents reach decade through its MCP server (`src/server/mcp.rs`, described under \"Agents: MCP\" in `docs/protocol.md`). The tools are `panes`, `agents`, `point`, `show`, `highlight`, `clear`, `scratch.open` and `scratch.send`. Each tool call becomes a `Call` that the compositor answers with text. No tool lets an agent see a pane. An agent testing or debugging a program in the workspace has no way to look at what the program drew.\n\ndecade already renders frames off screen. The server renders each viewer's frame in `render_to` (`src/server/compositor/viewers.rs`). `decade script` reads frames back through the renderer with `copy_framebuffer` (`read` in `src/script.rs`). It reads back that way because the GPU cannot render into a linear buffer, as the memory `linear-frames-do-not-render` records.\n\n## Proposal\n\nA tool named `screenshot` takes `pane`. decade renders the workspace, crops the pane's client area out of the frame at physical pixels, and returns it as an MCP image result holding a PNG. The crop leaves out the pane's bar and outline. decade refuses the call when no pane has that name, and when the pane is in a tab that is not shown.\n\nEach pane has a mode named \"accept screenshots\", off by default.\n\n- With the mode off, decade asks the person before each capture. It draws a prompt on the pane naming the agent, with three choices. They are allow once, allow and turn the mode on, and deny. decade points at the pane while the prompt is up, so the prompt is seen when the pane or its workspace is not shown. A deny, or no answer within 30 seconds, ends the call with a tool error giving the reason.\n- With the mode on, decade captures without asking.\n- A button on the pane's Ctrl bar turns the mode on and off.\n- While the mode is on, the pane carries a mark that is visible whether or not the Ctrl bar is shown. Its form is decided in decade-5d4ccc.\n- The mode is never saved with the workspace. A restored workspace has the mode off on every pane, so a restore never grants an agent access on its own.\n\n## Cost\n\nA new MCP tool and a new Ctrl bar button. `docs/protocol.md` gains the tool. `decade` moves its minor version, as for any protocol change. `decade-channel` is unaffected, since agents do not use the socket.\n\n## Open\n\n- Whether each capture should flash the pane's mark, so the person sees when an agent takes one.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [
+    "decade-5d4ccc"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T20:13:03.070219396Z",
+  "updated_at": "2026-11-10T20:13:03.070219396Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
