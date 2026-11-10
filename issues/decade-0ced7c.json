@@ -1,0 +1,28 @@
+{
+  "id": "decade-0ced7c",
+  "title": "scratch.open refuses any program whose name does not start with decade-",
+  "body": "`scratch.open` starts a program in the workspace's scratch pane. Before it starts anything, `check_program` in `src/server/scratch.rs` refuses a program whose name does not start with `decade-` or that contains a `/`. Then it checks that the program is an executable file on decade's `PATH`. An agent asked to open `acre-gui` got this error:\n\n```text\nacre-gui is not a bare program name starting with decade-\n```\n\nThe prefix came from `decade-c62fae`. It was chosen to match how decade-apps names its binaries, as an alternative to a config list of allowed programs. Jack never meant it as a rule. It keeps out every program not built for decade and protects nothing, because the person already chose the scratch pane and the agent can run any program from its own shell.\n\n## Proposal\n\n- `check_program` drops both the prefix rule and the bare-name rule.\n- A name with a `/` in it is a path, resolved against the workspace directory, so `./target/debug/acre-gui` works for relaunching a fresh build. A name without one is looked up on decade's `PATH`, as now.\n- The check that the program exists and is executable stays, so a typo still gets a clear error before decade closes the pane's current program.\n- The `scratch.open` description and the server instructions in `src/server/mcp.rs` drop the prefix, as does the `scratch.open` paragraph in `docs/protocol.md`.\n\n## Cost\n\n`decade` takes a `### Changed` entry under Unreleased. The change widens what a call accepts, so it breaks no caller and moves the patch.",
+  "type": "bug",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T20:40:27.492126547Z",
+  "updated_at": "2026-11-10T20:40:27.492126547Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
