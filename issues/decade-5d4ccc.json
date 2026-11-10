@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:12:52.419444914Z",
-  "updated_at": "2026-11-10T20:13:08.8492382Z",
+  "updated_at": "2026-11-10T21:00:23.646933868Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "7daf840c",
+      "at": "2026-11-10T21:00:23.646932068Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "Jack chose neither option. The mark is a tag on the pane's outline, drawn by `draw_outline` in `src/server/panes.rs` like the pin, `zoom` and `scratch` tags, but on the left end of the top edge where those sit on the right.\n\nIt meets every constraint. decade draws outline tags on every visible pane, not only the focused one, so the tag shows whether or not the Ctrl bar is up. The tag is a word or an icon, not a colour. It sits outside the client's area, so it covers no pixels, takes no input, and resizes nothing.\n\nOn a narrow pane a left tag can meet the right-hand tags or a point's note, which grows leftward from them. The tag loop already drops tags that do not fit. The screenshot tag should be the last to go, since it marks a permission.",
+      "commit": "e37ba45",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e37ba45",
