@@ -168,11 +168,11 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "scratch.open",
-            "Start a decade- program in the scratch pane, closing the program there first",
+            "Start a program in the scratch pane, closing the program there first. The program runs in the workspace's directory with decade's environment. With terminal false, decade puts the first window of the program, or of a process under it, in the scratch pane",
             schema(json!({
                 "type": "object",
                 "properties": {
-                    "program": {"type": "string", "description": "a program on decade's PATH whose name starts with decade-"},
+                    "program": {"type": "string", "description": "a program on decade's PATH, or a path relative to the workspace's directory"},
                     "args": {"type": "array", "items": {"type": "string"}, "description": "the program's arguments"},
                     "terminal": {"type": "boolean", "description": "run it in a terminal, the default, or as its own window"}
                 },
@@ -286,8 +286,8 @@ impl ServerHandler for Decade {
                  goes to the pane whose program shows that kind; name the pane when several \
                  do. For file the target is a path, at is a line and ranges are [from, to] \
                  line pairs. The user may mark one pane as the scratch pane, where agents \
-                 show things. scratch.open starts a program whose name begins with decade- in \
-                 it, replacing the program there, and scratch.send sends that program a message. \
+                 show things. scratch.open starts a program in it, \
+                 replacing the program there, and scratch.send sends that program a message. \
                  Both fail when the workspace has no scratch pane. point draws the user's eye \
                  to a pane without taking keyboard focus. agents lists the agents in the \
                  workspace with what each last reported.",

@@ -242,9 +242,11 @@ points again. A workspace has one point at a time.
 
 The person may mark one pane in a workspace as its scratch pane, from the
 Ctrl bar. Two tools reach it. `scratch.open` takes `program`, optional
-`args` and optional `terminal`. `terminal` defaults to true. decade refuses
-the call unless the workspace has a scratch pane and `program` is a bare
-name starting with `decade-` that is on decade's `PATH`. With `terminal`
+`args` and optional `terminal`. `terminal` defaults to true. `program` is a
+name that decade looks up on its `PATH`, or, when it holds a `/`, a path to
+an executable file, relative to the workspace's directory. decade refuses
+the call unless the workspace has a scratch pane and `program` names an
+executable file. With `terminal`
 true the program runs inside ghostty in the scratch pane. With `terminal`
 false decade starts it directly. decade puts the first window of that
 program, or of a process under it, in the scratch pane. Either way the

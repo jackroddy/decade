@@ -140,12 +140,13 @@ impl State {
 
     /// Start the program in the workspace's scratch pane, or ask the
     /// program there to close and start it once it has.
-    fn scratch_open(&mut self, workspace: usize, launch: Launch) -> Result<String, String> {
+    fn scratch_open(&mut self, workspace: usize, mut launch: Launch) -> Result<String, String> {
         let shown = &self.workspaces[workspace];
         let name = shown.scratch_pane().ok_or(NO_SCRATCH)?;
-        scratch::check_program(
+        launch.program = scratch::resolve_program(
             &launch.program,
             &std::env::var_os("PATH").unwrap_or_default(),
+            &shown.cwd,
         )?;
         let occupants: Vec<ToplevelSurface> = shown
             .by_name(name)

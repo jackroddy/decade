@@ -129,8 +129,8 @@ command line and what the tool writes.
   records which pane is the scratch pane.
 - When an agent calls the MCP tool `scratch.open`, decade starts a program
   in the scratch pane. The program runs in a terminal or as its own window.
-  decade starts only a program on its `PATH` whose name starts with
-  `decade-`. decade asks a program already in the scratch pane to close
+  `program` is a name on decade's `PATH`, or a path relative to the
+  workspace's directory. decade asks a program already in the scratch pane to close
   first. The MCP tool `scratch.send` sends a message to the program in the
   scratch pane.
 - Ctrl+dragging a pane, or dragging it by the name on its bar, carries a

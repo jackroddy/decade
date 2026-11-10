@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -46,18 +46,22 @@ impl Scratch {
     }
 }
 
-/// Check that `program` is a bare name starting with `decade-` and an
-/// executable file in one of the `PATH` directories.
-pub fn check_program(program: &str, path: &OsStr) -> Result<(), String> {
-    if !program.starts_with("decade-") || program.contains('/') {
-        return Err(format!(
-            "{program} is not a bare program name starting with decade-"
-        ));
+/// The program to start for `program`: a name looked up on `PATH`, or a
+/// path with a `/` in it, made absolute against `cwd`.
+pub fn resolve_program(program: &str, path: &OsStr, cwd: &Path) -> Result<String, String> {
+    if program.contains('/') {
+        let file: PathBuf = cwd.join(program).components().collect();
+        if !is_executable(&file) {
+            return Err(format!("{} is not an executable file", file.display()));
+        }
+        return file
+            .into_os_string()
+            .into_string()
+            .map_err(|file| format!("{} is not a UTF-8 path", file.display()));
     }
     std::env::split_paths(path)
-        .map(|dir| dir.join(program))
-        .any(|candidate| is_executable(&candidate))
-        .then_some(())
+        .any(|dir| is_executable(&dir.join(program)))
+        .then(|| program.to_string())
         .ok_or_else(|| format!("{program} is not on decade's PATH"))
 }
 
@@ -86,19 +90,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_bare_decade_program_on_the_path_passes() {
+    fn a_program_is_found_on_the_path_or_by_a_path_from_the_workspace() {
         let dir = std::env::temp_dir().join(format!("decade-scratch-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let program = dir.join("decade-code");
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        let program = dir.join("bin/acre-gui");
         std::fs::write(&program, "#!/bin/sh\n").unwrap();
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let path = std::env::join_paths(["/nonexistent", dir.to_str().unwrap()]).unwrap();
+        std::fs::write(dir.join("notes"), "").unwrap();
+        let bin = dir.join("bin");
+        let path = std::env::join_paths(["/nonexistent", bin.to_str().unwrap()]).unwrap();
+        let absolute = program.to_str().unwrap().to_string();
 
-        assert_eq!(check_program("decade-code", &path), Ok(()));
-        assert!(check_program("decade-missing", &path).is_err());
-        assert!(check_program("/bin/sh", &path).is_err());
-        assert!(check_program("bash", OsStr::new("/usr/bin:/bin")).is_err());
-        assert!(check_program("decade-x/y", &path).is_err());
+        assert_eq!(
+            resolve_program("acre-gui", &path, &dir),
+            Ok("acre-gui".into())
+        );
+        assert!(resolve_program("missing", &path, &dir).is_err());
+        assert_eq!(
+            resolve_program("./bin/acre-gui", &path, &dir),
+            Ok(absolute.clone())
+        );
+        assert_eq!(
+            resolve_program(&absolute, &path, Path::new("/")),
+            Ok(absolute)
+        );
+        assert!(resolve_program("./notes", &path, &dir).is_err());
+        assert!(resolve_program("./bin/missing", &path, &dir).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
