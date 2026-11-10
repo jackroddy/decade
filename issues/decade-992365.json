@@ -1,0 +1,28 @@
+{
+  "id": "decade-992365",
+  "title": "An agent learns whether the program scratch.open started is running",
+  "body": "`scratch.open` (`scratch_open` and `start_scratch` in `src/server/compositor/channels.rs`) answers as soon as decade has spawned the program, or as soon as it has asked the pane's current program to close. The agent learns nothing after that. If the new program crashes on startup, or never opens a window, nothing reports it. An agent relaunching a GUI program after a rebuild cannot tell a good start from a crash without asking the person.\n\n## Proposal\n\ndecade reports how a program `scratch.open` started got on.\n\n- With `terminal: false`, the call waits until the program's window lands in the scratch pane, the program exits, or a timeout of a few seconds passes. The result says which, with the exit status when the program exited.\n- The last lines of the program's stderr come back with an exit, so a startup crash carries its message.\n\n## Open\n\n- What `terminal: true` should report. The terminal's window arrives whether or not the program inside it starts.\n- Whether an agent needs a way to ask about the program later, after the call has answered, for a crash that comes minutes in.\n- How long the timeout is.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T20:40:27.524446889Z",
+  "updated_at": "2026-11-10T20:40:27.524446889Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
