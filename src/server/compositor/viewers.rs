@@ -27,6 +27,9 @@ impl State {
         for viewer in self.viewers.values_mut() {
             viewer.wants_frame = true;
         }
+        if self.breathing() {
+            self.start_pulse();
+        }
     }
 
     pub(super) fn viewer_connected(&mut self, stream: UnixStream) {

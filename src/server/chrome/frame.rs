@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::f32::consts::TAU;
 use std::path::Path;
 use std::time::Duration;
 
@@ -22,6 +23,9 @@ const DOT: char = '●';
 
 /// The mark of a dim agent.
 const DIM_MARK: char = '○';
+
+/// The time from one peak of a card's breathing to the next.
+const BREATH_PERIOD: Duration = Duration::from_millis(1600);
 
 /// The columns at the right of the top bar that open the palette.
 const MENU_WIDTH: u32 = 5;
@@ -49,6 +53,16 @@ const CARD_GAP: i32 = 6;
 const CARD_PADDING: i32 = 4;
 const CARD_RADIUS: i32 = 6;
 const STRIPE: i32 = 3;
+
+/// The state disc's width, and its gap to the card's right edge.
+const DISC: i32 = 26;
+const DISC_INSET: i32 = 6;
+
+/// The width of the ring round a hovered disc.
+const DISC_RING: i32 = 3;
+
+/// The gap between the end of a card's first two rows and its disc.
+const DISC_GAP: i32 = 4;
 const PILL_RADIUS: i32 = 4;
 const TILE: i32 = 28;
 const TILE_GAP: i32 = 9;
@@ -130,7 +144,6 @@ impl Agent {
 pub struct Entry {
     pub id: u32,
     pub name: String,
-    pub tabs: usize,
 
     /// The workspace's directory, shortened by `short_path`.
     pub path: String,
@@ -150,6 +163,11 @@ impl Entry {
     /// The state of the agent the card shows, when that agent is live.
     fn state(&self) -> Option<AgentState> {
         self.agents.first().and_then(Agent::live_state)
+    }
+
+    /// Whether a click on the card's disc returns its agents to idle.
+    fn clearable(&self) -> bool {
+        self.state() >= Some(AgentState::Done)
     }
 
     /// The lines of the card's text.
@@ -229,8 +247,12 @@ pub struct Frame {
     /// The width and height of a chrome cell in pixels.
     pub cell: (i32, i32),
 
-    /// What is under the pointer, as `Frame::hover` gives it.
+    /// What is under the pointer, as `Frame::hit` gives it.
     pub hover: Option<Hit>,
+
+    /// How far the cards that breathe are toward their state's tint, from
+    /// 0 to 1.
+    pub breath: f32,
 }
 
 /// The mark for an agent state and its colour.
@@ -285,31 +307,50 @@ fn pill_hover(state: AgentState) -> Rgba {
     }
 }
 
-/// "1 tab" or "N tabs".
-fn tab_count(tabs: usize) -> String {
-    match tabs {
-        1 => "1 tab".to_string(),
-        tabs => format!("{tabs} tabs"),
+/// The background a breathing card fades toward, for a state that
+/// breathes.
+fn breath_tint(state: AgentState, current: bool) -> Rgba {
+    match (state, current) {
+        (AgentState::Attention, false) => palette::DARK_RED,
+        (AgentState::Attention, true) => palette::MID_RED,
+        (_, false) => palette::DARK_GREEN,
+        (_, true) => palette::MID_GREEN,
+    }
+}
+
+/// How far a breathing card is toward its state's tint `elapsed` after
+/// the server started.
+pub fn breath(elapsed: Duration) -> f32 {
+    let period = BREATH_PERIOD.as_millis();
+    let phase = (elapsed.as_millis() % period) as f32 / period as f32;
+    (1.0 - (phase * TAU).cos()) / 2.0
+}
+
+/// The glyph for the agent a card shows, and its colour.
+fn glyph(agent: Option<&Agent>) -> (char, Rgba) {
+    match agent {
+        Some(agent) if agent.dim.is_some() => (DIM_MARK, MUTED),
+        agent => mark(agent.and_then(|agent| agent.state)),
     }
 }
 
 /// An agent's state line: "! coax needs you · 4m", with " +N" after it
 /// for `others` agents not shown, or "· no agent" for `None`.
 fn state_line(agent: Option<&Agent>, others: usize) -> String {
+    format!("{} {}", glyph(agent).0, state_text(agent, others))
+}
+
+/// An agent's state line without its glyph: "coax needs you · 4m".
+fn state_text(agent: Option<&Agent>, others: usize) -> String {
     let Some(agent) = agent else {
-        return format!("{} no agent", mark(None).0);
+        return "no agent".to_string();
     };
     let name = &agent.name;
     let line = match (agent.dim, agent.state) {
-        (Some(Dim::NoPane), _) => format!("{DIM_MARK} {name} no pane"),
-        (Some(Dim::Disconnected), _) => {
-            format!("{DIM_MARK} {name} disconnected · {}", age(agent.age))
-        }
-        (None, Some(state)) => {
-            let (glyph, _) = mark(Some(state));
-            format!("{glyph} {name} {} · {}", label(state), age(agent.age))
-        }
-        (None, None) => format!("{} {name}", mark(None).0),
+        (Some(Dim::NoPane), _) => format!("{name} no pane"),
+        (Some(Dim::Disconnected), _) => format!("{name} disconnected · {}", age(agent.age)),
+        (None, Some(state)) => format!("{name} {} · {}", label(state), age(agent.age)),
+        (None, None) => name.clone(),
     };
     match others {
         0 => line,
@@ -478,6 +519,7 @@ impl Frame {
             zoom,
             cell,
             hover: None,
+            breath: 0.0,
         }
     }
 
@@ -651,6 +693,15 @@ impl Frame {
         self.card_span().0 + self.scaled(STRIPE) + self.cell.0
     }
 
+    /// The left edge, top and width of the state disc of a card whose top
+    /// is `top`.
+    fn disc(&self, top: i32) -> (i32, i32, i32) {
+        let (left, width) = self.card_span();
+        let size = self.scaled(DISC);
+        let x = left + width - self.scaled(DISC_INSET) - size;
+        (x, top + self.scaled(CARD_PADDING), size)
+    }
+
     /// The open sidebar's cards that fit, each with its workspace and its
     /// top and height in pixels, and the top of the `+ new workspace` row
     /// when it fits.
@@ -715,10 +766,9 @@ impl Frame {
             .find(|&&(_, top, height)| (top..top + height).contains(&y))
         {
             let entry = &self.entries[i];
-            let state = top + self.scaled(CARD_PADDING) + 2 * self.cell.1;
-            let on_glyph =
-                (state..state + self.cell.1).contains(&y) && x < self.card_text() + 2 * self.cell.0;
-            return Some(if on_glyph && entry.state() >= Some(AgentState::Done) {
+            let (left, top, size) = self.disc(top);
+            let on_disc = (left..left + size).contains(&x) && (top..top + size).contains(&y);
+            return Some(if on_disc && entry.clearable() {
                 Hit::Clear(entry.id)
             } else {
                 Hit::Show(entry.id)
@@ -726,15 +776,6 @@ impl Frame {
         }
         let new = new?;
         (new..new + self.cell.1).contains(&y).then_some(Hit::New)
-    }
-
-    /// What is under the pointer at pixel `x`, `y`: what a click there
-    /// does, with a card's state glyph taken as the whole card.
-    pub fn hover(&self, x: i32, y: i32) -> Option<Hit> {
-        self.hit(x, y).map(|hit| match hit {
-            Hit::Clear(id) => Hit::Show(id),
-            hit => hit,
-        })
     }
 
     pub fn draw(&self, scene: &mut Scene) {
@@ -879,11 +920,15 @@ impl Frame {
         let (left, width) = self.card_span();
         let radius = self.scaled(CARD_RADIUS);
         let hovered = self.hover == Some(Hit::Show(entry.id));
-        let background = match (entry.current, hovered) {
+        let mut background = match (entry.current, hovered) {
             (true, _) => CURRENT,
             (false, true) => palette::LIGHTER_BACKGROUND,
             (false, false) => SIDEBAR,
         };
+        if let Some(state) = entry.state().filter(|_| entry.clearable() && !hovered) {
+            let tint = breath_tint(state, entry.current);
+            background = palette::mix(background, tint, self.breath);
+        }
         let pulse = entry.pulse.unwrap_or(0.0);
         let ring = palette::mix(background, POINTED, pulse);
         let background = palette::mix(background, POINTED, POINTED_FILL * pulse);
@@ -904,27 +949,26 @@ impl Frame {
             let x = left + self.scaled(STRIPE);
             scene.rounded(x, top, size, radius, background, background);
         }
+        self.draw_disc(scene, entry, top, background);
 
         let x = self.card_text();
         let right = left + width - cell_width;
         let room = ((right - x) / cell_width).max(0) as usize;
+        let (disc, _, _) = self.disc(top);
+        let beside_disc = ((disc - self.scaled(DISC_GAP) - x) / cell_width).max(0) as usize;
         let line = |n: i32| top + self.scaled(CARD_PADDING) + n * cell_height;
 
-        let tabs = tab_count(entry.tabs);
-        let tabs_width = tabs.chars().count();
-        let name = fit(&entry.name, room.saturating_sub(tabs_width + 1));
+        let name = fit(&entry.name, beside_disc);
         let name_color = if entry.current {
             TEXT
         } else {
             palette::FADED_FOREGROUND
         };
         scene.text_px(x, line(0), &name, Face::ChromeBold, name_color);
-        let tabs_x = right - tabs_width as i32 * cell_width;
-        scene.text_px(tabs_x, line(0), &tabs, Face::Chrome, DIM);
 
-        let branch = entry.branch.as_deref().map(|branch| fit(branch, room / 2));
+        let branch = (entry.branch.as_deref()).map(|branch| fit(branch, beside_disc / 2));
         let branch_width = branch.as_ref().map_or(0, |b| b.chars().count() + 2);
-        let path = tail(&entry.path, room.saturating_sub(branch_width));
+        let path = tail(&entry.path, beside_disc.saturating_sub(branch_width));
         scene.text_px(x, line(1), &path, Face::Chrome, DIM);
         if let Some(branch) = branch {
             let branch_x = x + (path.chars().count() + 2) as i32 * cell_width;
@@ -932,7 +976,7 @@ impl Frame {
         }
 
         let others = entry.agents.len().saturating_sub(1);
-        let state = fit(&state_line(agent, others), room);
+        let state = fit(&state_text(agent, others), room);
         scene.text_px(x, line(2), &state, Face::Chrome, agent_tint(agent));
 
         let mut next = 3;
@@ -947,6 +991,34 @@ impl Frame {
             scene.text_px(span_x, line(next), &text, Face::Chrome, color);
             span_x += text.chars().count() as i32 * cell_width;
         }
+    }
+
+    /// The disc at a card's top right holding its agent's glyph, on a card
+    /// whose background is `background`. Under the pointer, the disc of a
+    /// card that a click clears gets a ring and a check mark.
+    fn draw_disc(&self, scene: &mut Scene, entry: &Entry, top: i32, background: Rgba) {
+        let (x, y, size) = self.disc(top);
+        let (glyph, color) = glyph(entry.agents.first());
+        let hovered = entry.clearable() && self.hover == Some(Hit::Clear(entry.id));
+        let (fill, border, glyph, glyph_color) = if hovered {
+            let ring = self.scaled(DISC_RING);
+            let halo = palette::mix(background, color, 0.45);
+            let outer = size + 2 * ring;
+            scene.rounded(x - ring, y - ring, (outer, outer), outer / 2, halo, halo);
+            let border = tint(entry.state());
+            (palette::mix(SIDEBAR, color, 0.5), border, '✓', TEXT)
+        } else if entry.clearable() {
+            let border = palette::mix(background, color, 0.55);
+            (palette::mix(SIDEBAR, color, 0.22), border, glyph, color)
+        } else {
+            let (fill, border) = (palette::RAISED_BACKGROUND, palette::LIGHTER_BACKGROUND);
+            (fill, border, glyph, color)
+        };
+        scene.rounded(x, y, (size, size), size / 2, fill, border);
+        let (cell_width, cell_height) = self.cell;
+        let (glyph_x, glyph_y) = (x + (size - cell_width) / 2, y + (size - cell_height) / 2);
+        let glyph = glyph.to_string();
+        scene.text_px(glyph_x, glyph_y, &glyph, Face::Chrome, glyph_color);
     }
 
     /// A workspace's tile in the closed sidebar, or the `+` tile for `None`.
@@ -1034,9 +1106,8 @@ impl Frame {
             scene.text_px(branch_x, line(0), &branch, Face::Chrome, palette::CYAN);
         }
 
-        let tabs = format!(" · {}", tab_count(entry.tabs));
-        let path = tail(&entry.path, room.saturating_sub(tabs.chars().count()));
-        scene.text_px(x, line(1), &format!("{path}{tabs}"), Face::Chrome, DIM);
+        let path = tail(&entry.path, room);
+        scene.text_px(x, line(1), &path, Face::Chrome, DIM);
 
         let mut next = 2;
         if entry.agents.is_empty() {
@@ -1068,6 +1139,7 @@ impl Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::chrome::draw::Shape;
 
     fn agent(name: &str, state: Option<AgentState>) -> Agent {
         Agent {
@@ -1087,7 +1159,6 @@ mod tests {
         Entry {
             id,
             name: name.to_string(),
-            tabs: 1,
             path: format!("~/p/{name}"),
             branch: None,
             agents: state
@@ -1200,21 +1271,31 @@ mod tests {
     }
 
     #[test]
-    fn a_click_on_the_state_glyph_clears_done_or_attention_and_nothing_else() {
+    fn a_click_on_the_state_disc_clears_done_or_attention_and_nothing_else() {
         let frame = frame(true);
 
-        // the state line is the third, and its glyph sits one cell in
-        // from the 3 px stripe of a card inset 6 px
-        let glyph = 6 + 3 + 8;
-        let state = 90 + 4 + 2 * 18;
-        assert_eq!(frame.hit(glyph, state), Some(Hit::Clear(2)));
-        assert_eq!(frame.hit(glyph, state - 18), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(glyph + 3 * 8, state), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(glyph, 176 + 4 + 36), Some(Hit::Clear(3)));
+        // the 26 px disc sits 6 px in from the right of a card 244 px
+        // wide inset 6 px, and 4 px below the card's top
+        let (left, top) = (6 + 244 - 6 - 26, 90 + 4);
+        assert_eq!(frame.disc(90), (left, top, 26));
+        assert_eq!(frame.hit(left, top), Some(Hit::Clear(2)));
+        assert_eq!(frame.hit(left + 25, top + 25), Some(Hit::Clear(2)));
+        assert_eq!(frame.hit(left - 1, top + 13), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(left + 13, top + 26), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(6 + 3 + 8, 90 + 4 + 36), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(left + 13, 176 + 4 + 13), Some(Hit::Clear(3)));
 
         // nail is working and jack has no agent
-        assert_eq!(frame.hit(glyph, 312 + 4 + 36), Some(Hit::Show(1)));
-        assert_eq!(frame.hit(glyph, 380 + 4 + 36), Some(Hit::Show(0)));
+        assert_eq!(frame.hit(left + 13, 312 + 4 + 13), Some(Hit::Show(1)));
+        assert_eq!(frame.hit(left + 13, 380 + 4 + 13), Some(Hit::Show(0)));
+    }
+
+    #[test]
+    fn the_disc_scales_with_the_cell_height() {
+        let mut frame = frame(true);
+        frame.cell = (12, 27);
+        let (left, width) = frame.card_span();
+        assert_eq!(frame.disc(100), (left + width - 9 - 39, 106, 39));
     }
 
     #[test]
@@ -1267,16 +1348,76 @@ mod tests {
         assert_eq!(frame.hit(8, 0), Some(Hit::Sidebar));
     }
 
+    /// The frame drawn with `hover` under the pointer and its cards
+    /// breathing `breath` of the way to their tint.
+    fn drawn(hover: Option<Hit>, breath: f32) -> Vec<Shape> {
+        let mut frame = frame(true);
+        frame.hover = hover;
+        frame.breath = breath;
+        let mut scene = Scene::new(&crate::server::chrome::text::Font::load(14.0));
+        frame.draw(&mut scene);
+        scene.shapes
+    }
+
+    /// A colour in 8-bit channels, as it is drawn.
+    fn bytes(color: Rgba) -> [u8; 4] {
+        color.map(|channel| (channel * 255.0).round() as u8)
+    }
+
+    /// The fill of the card whose top is `top`, when it has one.
+    fn card_fill(shapes: &[Shape], top: i32) -> Option<[u8; 4]> {
+        shapes.iter().find_map(|shape| match shape {
+            Shape::Rounded { at, size, fill, .. } if at.y == top && size.w == 244 => {
+                Some(bytes(*fill))
+            }
+            _ => None,
+        })
+    }
+
+    fn checks(shapes: &[Shape]) -> usize {
+        (shapes.iter())
+            .filter(|shape| matches!(shape, Shape::Text { text, .. } if text == "✓"))
+            .count()
+    }
+
     #[test]
-    fn the_hovered_item_is_what_a_click_does_with_a_state_glyph_taken_as_its_card() {
-        let frame = frame(true);
-        let (glyph, state) = (6 + 3 + 8, 90 + 4 + 2 * 18);
-        assert_eq!(frame.hit(glyph, state), Some(Hit::Clear(2)));
-        assert_eq!(frame.hover(glyph, state), Some(Hit::Show(2)));
-        assert_eq!(frame.hover(100, 176), Some(Hit::Show(3)));
-        assert_eq!(frame.hover(115 * 8, 18), Some(Hit::Palette));
-        assert_eq!(frame.hover(20 * 8, 18), Some(Hit::Tab(1)));
-        assert_eq!(frame.hover(60 * 8, 200), None);
+    fn a_hovered_disc_that_clears_shows_a_check_and_leaves_its_card_unhovered() {
+        // sail and sufr are done, so their discs hold a check already
+        let resting = drawn(None, 0.0);
+        assert_eq!(checks(&resting), 2);
+        let on_disc = drawn(Some(Hit::Clear(2)), 0.0);
+        assert_eq!(checks(&on_disc), 3);
+        assert_eq!(card_fill(&on_disc, 90), None);
+        let on_card = drawn(Some(Hit::Show(2)), 0.0);
+        assert_eq!(checks(&on_card), 2);
+        assert_eq!(
+            card_fill(&on_card, 90),
+            Some(bytes(palette::LIGHTER_BACKGROUND))
+        );
+    }
+
+    #[test]
+    fn cards_needing_the_person_or_done_breathe_toward_their_tint_unless_hovered() {
+        let peak = drawn(None, 1.0);
+        assert_eq!(card_fill(&peak, 90), Some(bytes(palette::DARK_RED)));
+        assert_eq!(card_fill(&peak, 176), Some(bytes(palette::DARK_GREEN)));
+        assert_eq!(card_fill(&peak, 312), None);
+        assert_eq!(card_fill(&peak, 380), Some(bytes(CURRENT)));
+        let hovered = drawn(Some(Hit::Show(2)), 1.0);
+        assert_eq!(
+            card_fill(&hovered, 90),
+            Some(bytes(palette::LIGHTER_BACKGROUND))
+        );
+    }
+
+    #[test]
+    fn a_breath_rises_from_nothing_to_its_peak_and_back_every_1600_ms() {
+        let at = |ms| breath(Duration::from_millis(ms));
+        assert_eq!(at(0), 0.0);
+        assert!((at(800) - 1.0).abs() < 1e-6);
+        assert!((at(400) - 0.5).abs() < 1e-6);
+        assert_eq!(at(1600), 0.0);
+        assert_eq!(at(1600 * 1_000_000 + 800), at(800));
     }
 
     #[test]
@@ -1306,11 +1447,11 @@ mod tests {
     fn the_hover_stays_on_a_tile_while_the_pointer_is_on_its_popover_or_the_gap_before_it() {
         let mut frame = frame(false);
         let (inside, beyond) = ((200, 45), (5 * 8 + 6 + 34 * 8, 45));
-        assert_eq!(frame.hover(inside.0, inside.1), None);
+        assert_eq!(frame.hit(inside.0, inside.1), None);
         frame.hover = Some(Hit::Show(2));
-        assert_eq!(frame.hover(inside.0, inside.1), Some(Hit::Show(2)));
-        assert_eq!(frame.hover(5 * 8 + 3, 45), Some(Hit::Show(2)));
-        assert_eq!(frame.hover(beyond.0, beyond.1), None);
+        assert_eq!(frame.hit(inside.0, inside.1), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(5 * 8 + 3, 45), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(beyond.0, beyond.1), None);
     }
 
     #[test]
@@ -1517,6 +1658,17 @@ mod tests {
     fn a_state_line_counts_the_agents_it_does_not_show() {
         let done = agent("coax", Some(AgentState::Done));
         assert_eq!(state_line(Some(&done), 2), "✓ coax done · 4m +2");
+    }
+
+    #[test]
+    fn a_cards_state_line_leaves_the_glyph_to_its_disc() {
+        let done = agent("coax", Some(AgentState::Done));
+        assert_eq!(state_text(Some(&done), 1), "coax done · 4m +1");
+        let gone = dim(done, Dim::Disconnected);
+        assert_eq!(state_text(Some(&gone), 0), "coax disconnected · 4m");
+        assert_eq!(glyph(Some(&gone)), (DIM_MARK, MUTED));
+        assert_eq!(state_text(None, 0), "no agent");
+        assert_eq!(glyph(None), ('·', MUTED));
     }
 
     #[test]

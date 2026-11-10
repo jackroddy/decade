@@ -83,6 +83,7 @@ use crate::server::panes::{self as panes, BarButton, CellRect, Layout, Pane};
 use crate::server::save::{self, TerminalTab};
 use crate::server::workspace::{self, Workspace};
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
+use decade_channel::AgentState;
 
 use input::{Drag, Repeat};
 use selection::Offered;
@@ -1077,8 +1078,8 @@ impl State {
         self.workspaces[current].end_point_at(&name);
     }
 
-    /// Draw frames while any workspace's point pulses, and end points
-    /// as they expire.
+    /// Draw frames while any workspace's point pulses or a card in the
+    /// open sidebar breathes, and end points as they expire.
     fn start_pulse(&mut self) {
         if self.pulse_timer.is_some() {
             return;
@@ -1086,7 +1087,7 @@ impl State {
         let timer = Timer::from_duration(PULSE_EVERY);
         let token = self.loop_handle.insert_source(timer, |_, _, state| {
             let now = Instant::now();
-            let mut pulsing = false;
+            let mut pulsing = state.breathing();
             for shown in &mut state.workspaces {
                 pulsing |= shown.keep_point(now);
             }
@@ -1099,6 +1100,15 @@ impl State {
             }
         });
         self.pulse_timer = token.ok();
+    }
+
+    /// Whether a viewer shows the open sidebar with a card whose agent is
+    /// done or needs attention, which breathes.
+    fn breathing(&self) -> bool {
+        self.sidebar_open
+            && self.welcomed().next().is_some()
+            && (self.workspaces.iter())
+                .any(|shown| shown.router.agents.states().max() >= Some(AgentState::Done))
     }
 
     fn new_terminal_pane(&mut self) {

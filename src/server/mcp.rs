@@ -173,7 +173,7 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "scratch.open",
-            "Start a program in the scratch pane, closing the program there first. The program runs in the workspace's directory with decade's environment. With terminal false, decade puts the first window of the program, or of a process under it, in the scratch pane, and the call waits until that window arrives, the program exits or the wait passes. The result says which. An exit comes with the exit status and the last 20 lines of the program's stderr. A program still running past the wait gets its window in the scratch pane when it opens one. With terminal true, the result says only that the terminal started",
+            "Start a program in the scratch pane, closing the program there first. The program runs in the workspace's directory with decade's environment. With terminal false, decade puts the first window of the program, or of a process under it, in the scratch pane, and the call waits for that window, for the program to exit, or for the wait to pass. decade answers with which of these happened. After an exit, the answer gives the exit status and the last 20 lines of the program's stderr. When the program is still running at the end of the wait, decade puts its window in the scratch pane once the window opens. With terminal true, decade answers only that the terminal started",
             schema(json!({
                 "type": "object",
                 "properties": {

@@ -92,7 +92,7 @@ impl State {
         // only while frame_hover holds a tile
         let hover = if !in_panes || self.frame_hover.is_some() {
             let (x, y) = self.pointer_px();
-            self.frame(current).hover(x, y)
+            self.frame(current).hit(x, y)
         } else {
             None
         };

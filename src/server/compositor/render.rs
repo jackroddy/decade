@@ -216,7 +216,6 @@ impl State {
             .map(|(i, workspace)| frame::Entry {
                 id: workspace.id,
                 name: workspace.name.clone(),
-                tabs: workspace.tabs.len(),
                 path: frame::short_path(&workspace.cwd, &home),
                 branch: workspace.branch.clone(),
                 agents: (workspace.router.agents.list.iter())
@@ -269,6 +268,7 @@ impl State {
             ),
         );
         frame.hover = hover;
+        frame.breath = frame::breath(self.start.elapsed());
         frame
     }
 }

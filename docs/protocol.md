@@ -165,8 +165,8 @@ decade shows the state with the question beside it, or the activity when
 there is no question. A state holds until it is replaced, either by the
 client or by the person at the screen, who can return `done` and
 `attention` to `idle`. decade also returns a `done` agent to `idle` 10
-minutes after a viewer first shows its workspace, unless the agent sends
-another `agent` message first. `attention` never times out. Focusing the
+minutes after a viewer first shows its workspace. Another `agent` message
+from the agent stops that clock. `attention` never times out. Focusing the
 pane changes nothing. A workspace
 shows the most urgent state of its agents, in the order of the table.
 When a pane enters `attention` and no focused viewer shows its workspace,
@@ -264,17 +264,17 @@ program gets the pane's name in `DECADE_PANE`. When a program already
 occupies the scratch pane, decade asks it to close. decade starts the new
 program once the old one has gone.
 
-With `terminal` true, the result says that the terminal started. With
+With `terminal` true, decade answers that the terminal started. With
 `terminal` false, decade answers once the program's window lands in the
-scratch pane, the program exits, or `wait` seconds pass, 5 by default. The
-clock starts when the program starts. While an old program closes, the
-same wait bounds how long decade waits for it to go. The result says
-which of these happened. After an exit it carries the exit status and the
-last 20 lines the program wrote to stderr. decade still copies that
-stderr to its own log. A program still running when the wait ends keeps
-running, and decade puts its window in the scratch pane when it opens one.
-A second `scratch.open` answers a first one still waiting with what decade
-knows so far.
+scratch pane, the program exits, or `wait` seconds pass. `wait` defaults
+to 5. The clock starts when the program starts. While an old program
+closes, the same wait limits how long decade waits for it to go. The
+answer says which of these happened. After an exit, the answer gives the
+exit status and the last 20 lines the program wrote to stderr. decade
+also copies that stderr to its own log. A program still running when the
+wait ends keeps running. decade puts its window in the scratch pane when
+the window opens. When a second `scratch.open` arrives while the first
+still waits, decade answers the first with what it knows so far.
 
 `scratch.send` takes `verb` and
 `payload`. decade sends `{"to": "<scratch pane>", "<verb>": payload}` from

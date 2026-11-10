@@ -36,8 +36,9 @@ command line and what the tool writes.
   workspaces in that state. A click on one shows the next workspace in that
   state. The last button opens the palette. A sidebar on the left lists
   every workspace as a card, those whose agents most need the person first.
-  A card shows the workspace's name, its number of tabs, its directory and
-  its git branch. Under them come the agent's name with its state and how
+  A card shows the workspace's name, its directory and its git branch, with
+  a disc at its top right holding the mark of the agent's state. Under them
+  come the agent's name with its state and how
   long it has held that state, the agent's question or activity, and the
   model, context use and tokens the agent has reported. The model and
   tokens are dim. The context use is green under 50%, yellow up to 80% and
@@ -45,8 +46,11 @@ command line and what the tool writes.
   workspace has several agents, its card shows the one that most needs the
   person, with +N for the others. decade draws an agent that has
   disconnected or lost its pane in grey, and leaves it out of the state
-  counts and the sidebar's order. A click on a card shows its workspace, and
-  a click on the state's mark returns done or attention to idle. Super+B
+  counts and the sidebar's order. A click on a card shows its workspace.
+  When the agent is done or needs attention, the disc under the pointer
+  gets a ring and a check mark. A click on that disc returns the agent to
+  idle. The background of such a card fades toward a dark tint of its
+  state's colour and back every 1.6 seconds. Super+B
   collapses the sidebar to a rail of tiles. Each tile shows a workspace's
   initial. A dot on its corner takes the colour of the agent's state. A last
   tile marked + starts a new workspace. With the pointer on a tile, a card
@@ -68,9 +72,10 @@ command line and what the tool writes.
   use, token counts and cost. decade merges each message into what it
   holds. A field left out keeps its value. A field set to null is
   cleared. A state holds until its client or the person at the screen
-  replaces it. The exception is done. When a viewer shows a workspace, each
-  of its done agents returns to idle 10 minutes later, unless it reports
-  again first. The clock keeps running when the person switches away.
+  replaces it. Done is the exception. When a viewer shows a workspace,
+  decade starts a 10-minute clock on each of its done agents. When the
+  clock runs out, the agent returns to idle. A report from the agent stops
+  its clock. The clock keeps running when the person switches away.
   decade shows the question beside the state, or the
   activity when there is no question. A pane entering attention raises a
   desktop notification unless a focused viewer shows its workspace.
@@ -136,13 +141,14 @@ command line and what the tool writes.
   in the scratch pane. The program runs in a terminal or as its own window.
   `program` is a name on decade's `PATH`, or a path relative to the
   workspace's directory. decade asks a program already in the scratch pane to close
-  first. For a program that runs as its own window, the call waits until
-  the window arrives, the program exits, or 5 seconds pass, and says which.
-  An exit comes with the exit status and the last 20 lines of the
-  program's stderr. The optional `wait` sets how many seconds the call
-  waits. A program still running past it gets its window in the scratch
-  pane when it opens one. For a program in a terminal, the call says that
-  the terminal started. The MCP tool `scratch.send` sends a message to the
+  first. For a program that runs as its own window, the call waits for the
+  window, for the program to exit, or for 5 seconds. decade answers with
+  which of these happened. After an exit, the answer gives the exit status
+  and the last 20 lines of the program's stderr. The optional `wait` sets
+  how many seconds the call waits. When a program is still running at the
+  end of the wait, decade puts its window in the scratch pane once the
+  window opens. For a program in a terminal, decade answers that the
+  terminal started. The MCP tool `scratch.send` sends a message to the
   program in the scratch pane.
 - Ctrl+dragging a pane, or dragging it by the name on its bar, carries a
   small copy of it under the pointer. Dropping it on a target drawn over
