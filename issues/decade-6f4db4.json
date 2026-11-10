@@ -15,11 +15,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:13:03.070219396Z",
-  "updated_at": "2026-11-10T21:00:23.794767732Z",
+  "updated_at": "2026-11-10T23:48:21.195776286Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "8ea057fb",
+      "at": "2026-11-10T23:48:21.195775646Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "Jack approved: the prompt is drawn over the pane with allow once, allow and turn the mode on, and deny, answered with y, a and n, Escape denying; each capture briefly flashes the pane's left-side screenshot tag; the toggle sits on the pane's right-click menu (decade-98702c) as well as the Ctrl bar.",
+      "commit": "a402a32",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e37ba45",
