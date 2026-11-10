@@ -66,7 +66,10 @@ command line and what the tool writes.
   use, token counts and cost. decade merges each message into what it
   holds. A field left out keeps its value. A field set to null is
   cleared. A state holds until its client or the person at the screen
-  replaces it. decade shows the question beside the state, or the
+  replaces it. The exception is done. When a viewer shows a workspace, each
+  of its done agents returns to idle 10 minutes later, unless it reports
+  again first. The clock keeps running when the person switches away.
+  decade shows the question beside the state, or the
   activity when there is no question. A pane entering attention raises a
   desktop notification unless a focused viewer shows its workspace.
   decade keeps each workspace's agents in memory, by session. When an

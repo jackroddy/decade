@@ -274,6 +274,7 @@ pub fn run() {
         let mut expired = false;
         for shown in &mut state.workspaces {
             expired |= shown.router.agents.expire(now);
+            expired |= shown.router.agents.settle(now);
         }
         let reported = (state.workspaces.iter()).any(|shown| !shown.router.agents.list.is_empty());
         if expired || state.sidebar_open && reported {

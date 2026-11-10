@@ -10,6 +10,9 @@ const HISTORY: usize = 32;
 /// How long a disconnected agent is kept for its session to come back.
 const KEEP_FOR: Duration = Duration::from_secs(10 * 60);
 
+/// How long a done agent stays done once its workspace has been shown.
+const DONE_FOR: Duration = Duration::from_secs(10 * 60);
+
 /// The fields an agent has reported and not cleared.
 #[derive(Debug, Default, PartialEq)]
 pub struct Report {
@@ -82,6 +85,9 @@ pub struct Agent {
     /// When the agent last said something or its client disconnected.
     pub last_seen: Instant,
     pub connected: bool,
+
+    /// When a done agent returns to idle, set once its workspace is shown.
+    pub idle_at: Option<Instant>,
 }
 
 impl Agent {
@@ -95,11 +101,18 @@ impl Agent {
         let before = self.report.state;
         self.report.merge(update);
         self.last_seen = now;
+        self.idle_at = None;
         let after = self.report.state;
         if after != before {
             self.changed(now);
         }
         after == Some(AgentState::Attention) && before != Some(AgentState::Attention)
+    }
+
+    fn idle(&mut self, now: Instant) {
+        self.report.state = Some(AgentState::Idle);
+        self.idle_at = None;
+        self.changed(now);
     }
 
     fn changed(&mut self, now: Instant) {
@@ -153,6 +166,7 @@ impl Agents {
                 history: VecDeque::new(),
                 last_seen: now,
                 connected: true,
+                idle_at: None,
             }),
         }
     }
@@ -193,10 +207,34 @@ impl Agents {
     pub fn clear(&mut self, now: Instant) {
         for agent in &mut self.list {
             if agent.report.state > Some(AgentState::Working) {
-                agent.report.state = Some(AgentState::Idle);
-                agent.changed(now);
+                agent.idle(now);
             }
         }
+    }
+
+    /// Start the clock on each done agent without one, for a workspace
+    /// shown at `now`.
+    pub fn shown(&mut self, now: Instant) {
+        for agent in &mut self.list {
+            if agent.report.state == Some(AgentState::Done) && agent.idle_at.is_none() {
+                agent.idle_at = Some(now + DONE_FOR);
+            }
+        }
+    }
+
+    /// Return the done agents whose clock has run out by `now` to idle,
+    /// and return whether any did.
+    pub fn settle(&mut self, now: Instant) -> bool {
+        let mut settled = false;
+        for agent in &mut self.list {
+            if agent.report.state == Some(AgentState::Done)
+                && agent.idle_at.is_some_and(|at| at <= now)
+            {
+                agent.idle(now);
+                settled = true;
+            }
+        }
+        settled
     }
 
     /// The states the workspace's live agents have reported.
@@ -316,6 +354,56 @@ mod tests {
         assert_eq!(agents.list[0].since, later);
         assert_eq!(agents.list[0].history.len(), 2);
         assert_eq!(agents.list[2].since, start);
+    }
+
+    #[test]
+    fn a_done_agent_goes_idle_ten_minutes_after_its_workspace_is_first_shown() {
+        let start = Instant::now();
+        let minutes = |n: u64| start + Duration::from_secs(n * 60);
+        let mut agents = Agents::default();
+        for (session, reported) in [("s1", AgentState::Done), ("s2", AgentState::Attention)] {
+            agents.attach(identity(session), None, start);
+            agents
+                .get_mut(session)
+                .unwrap()
+                .update(state(reported), start);
+        }
+        assert!(!agents.settle(minutes(60)));
+        agents.shown(minutes(60));
+        agents.shown(minutes(65));
+        assert!(!agents.settle(minutes(69)));
+        assert!(agents.settle(minutes(70)));
+        let states: Vec<_> = (agents.list.iter())
+            .map(|agent| agent.report.state)
+            .collect();
+        assert_eq!(
+            states,
+            [Some(AgentState::Idle), Some(AgentState::Attention)]
+        );
+        assert_eq!(agents.list[0].since, minutes(70));
+        agents.shown(minutes(80));
+        assert!(!agents.settle(minutes(200)));
+        assert_eq!(agents.list[1].report.state, Some(AgentState::Attention));
+    }
+
+    #[test]
+    fn a_report_from_a_done_agent_stops_its_clock_until_the_workspace_is_shown_again() {
+        let start = Instant::now();
+        let minutes = |n: u64| start + Duration::from_secs(n * 60);
+        let mut agents = Agents::default();
+        agents.attach(identity("s1"), None, start);
+        let agent = agents.get_mut("s1").unwrap();
+        agent.update(state(AgentState::Done), start);
+        agents.shown(start);
+        let activity = AgentUpdate {
+            activity: Some(Some("summing up".into())),
+            ..AgentUpdate::default()
+        };
+        agents.get_mut("s1").unwrap().update(activity, minutes(5));
+        assert!(!agents.settle(minutes(30)));
+        agents.shown(minutes(30));
+        assert!(!agents.settle(minutes(39)));
+        assert!(agents.settle(minutes(40)));
     }
 
     #[test]

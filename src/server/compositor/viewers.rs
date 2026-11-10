@@ -473,6 +473,10 @@ impl State {
             }
         };
         self.render_failing = false;
+        self.workspaces[workspace]
+            .router
+            .agents
+            .shown(Instant::now());
         let Some(viewer) = self.viewers.get_mut(&id) else {
             return;
         };

@@ -164,7 +164,10 @@ agent that has its answer sends `"question": null`.
 decade shows the state with the question beside it, or the activity when
 there is no question. A state holds until it is replaced, either by the
 client or by the person at the screen, who can return `done` and
-`attention` to `idle`. Focusing the pane changes nothing. A workspace
+`attention` to `idle`. decade also returns a `done` agent to `idle` 10
+minutes after a viewer first shows its workspace, unless the agent sends
+another `agent` message first. `attention` never times out. Focusing the
+pane changes nothing. A workspace
 shows the most urgent state of its agents, in the order of the table.
 When a pane enters `attention` and no focused viewer shows its workspace,
 decade raises a desktop notification. Its text is the question, or else
