@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 use smithay::backend::input::{
     Axis as InputAxis, AxisRelativeDirection, AxisSource, ButtonState, KeyState,
 };
+use smithay::desktop::WindowSurfaceType;
+use smithay::desktop::utils::under_from_surface_tree;
 use smithay::input::keyboard::{FilterResult, Keycode, Keysym, ModifiersState, keysyms};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -13,7 +15,7 @@ use crate::server::panes;
 use crate::server::panes::{BarButton, Boundary, Direction, Drop};
 use crate::wire::{self, BTN_LEFT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
 
-use super::{Overlay, State};
+use super::{Overlay, State, popups_over};
 
 const KEY_C: u32 = 46;
 const KEY_V: u32 = 47;
@@ -118,8 +120,15 @@ impl State {
         let focus = under.and_then(|id| {
             let pane = self.layout().pane(id)?;
             let (origin, _) = self.client_geometry(pane);
-            pane.toplevel()
-                .map(|toplevel| (toplevel.wl_surface().clone(), origin.to_f64()))
+            let toplevel = pane.toplevel()?.wl_surface();
+            let popup = popups_over(toplevel).find_map(|(popup, at)| {
+                let surface = popup.wl_surface();
+                under_from_surface_tree(surface, self.pointer, origin + at, WindowSurfaceType::ALL)
+            });
+            Some(match popup {
+                Some((surface, at)) => (surface, at.to_f64()),
+                None => (toplevel.clone(), origin.to_f64()),
+            })
         });
         pointer.motion(
             self,

@@ -17,7 +17,12 @@ use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::ImportDma;
 use smithay::backend::renderer::gles::{GlesPixelProgram, GlesRenderer, UniformName, UniformType};
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
+use smithay::desktop::{
+    PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy,
+    find_popup_root_surface, get_popup_toplevel_coords,
+};
 use smithay::input::pointer::CursorImageStatus;
+use smithay::input::pointer::Focus;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::channel::{self as calloop_channel, Event as ChannelEvent};
@@ -32,7 +37,9 @@ use smithay::reexports::wayland_server::backend::ClientData;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_seat};
 use smithay::reexports::wayland_server::{Client, Display, DisplayHandle, Resource};
-use smithay::utils::{Logical, Physical, Point, SERIAL_COUNTER, Serial, Size, Transform};
+use smithay::utils::{
+    Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Serial, Size, Transform,
+};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction,
@@ -48,7 +55,8 @@ use smithay::wayland::output::OutputHandler;
 use smithay::wayland::selection::data_device::{DataDeviceState, set_data_device_focus};
 use smithay::wayland::selection::primary_selection::{PrimarySelectionState, set_primary_focus};
 use smithay::wayland::shell::xdg::{
-    PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+    PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler,
+    XdgShellState,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::socket::ListeningSocketSource;
@@ -135,6 +143,7 @@ pub struct State {
     workspaces: Vec<Workspace>,
     next_workspace: u32,
     unplaced: Vec<ToplevelSurface>,
+    popups: PopupManager,
     rounded: GlesPixelProgram,
     overlay: Option<Overlay>,
     sidebar_open: bool,
@@ -234,6 +243,7 @@ pub fn run() {
         next_workspace: 0,
         workspaces: Vec::new(),
         unplaced: Vec::new(),
+        popups: PopupManager::default(),
         overlay: None,
         sidebar_open: true,
         settings,
@@ -1271,6 +1281,29 @@ impl State {
         )
     }
 
+    /// Give `popup` the positioner it asked for and the place it takes,
+    /// kept inside the client area of the pane showing its toplevel.
+    fn place_popup(&self, popup: &PopupSurface, positioner: PositionerState) {
+        let kind = PopupKind::Xdg(popup.clone());
+        let bounds = find_popup_root_surface(&kind).ok().and_then(|root| {
+            let (workspace, tab, id) = self.pane_of_surface(&root)?;
+            let pane = self.workspaces[workspace].tabs[tab].layout.pane(id)?;
+            let (_, client) = self.client_geometry(pane);
+            Some((
+                client,
+                window_origin(&root) + get_popup_toplevel_coords(&kind),
+            ))
+        });
+        let geometry = match bounds {
+            Some((client, parent)) => popup_geometry(positioner, client, parent),
+            None => positioner.get_geometry(),
+        };
+        popup.with_pending_state(|state| {
+            state.positioner = positioner;
+            state.geometry = geometry;
+        });
+    }
+
     fn send_scale(&self, surface: &WlSurface) {
         with_states(surface, |states| {
             with_fractional_scale(states, |fractional| {
@@ -1278,6 +1311,38 @@ impl State {
             });
         });
     }
+}
+
+/// Where the corner of `surface`'s window geometry sits from the corner of
+/// its buffer.
+fn window_origin(surface: &WlSurface) -> Point<i32, Logical> {
+    with_states(surface, |states| {
+        let mut cached = states.cached_state.get::<SurfaceCachedState>();
+        cached.current().geometry.map(|geometry| geometry.loc)
+    })
+    .unwrap_or_default()
+}
+
+/// The popups open over `toplevel`, topmost first, each with where its
+/// buffer's corner sits from the corner of the toplevel's buffer.
+fn popups_over(toplevel: &WlSurface) -> impl Iterator<Item = (PopupKind, Point<i32, Logical>)> {
+    let origin = window_origin(toplevel);
+    PopupManager::popups_for_surface(toplevel).map(move |(popup, offset)| {
+        let at = origin + offset - popup.geometry().loc;
+        (popup, at)
+    })
+}
+
+/// The rectangle a popup takes, relative to its parent's window geometry,
+/// moved by its positioner to fit a pane's client area of size `client`
+/// where the parent's window geometry has its corner at `parent`.
+fn popup_geometry(
+    positioner: PositionerState,
+    client: Size<i32, Logical>,
+    parent: Point<i32, Logical>,
+) -> Rectangle<i32, Logical> {
+    let area = Rectangle::new((-parent.x, -parent.y).into(), client);
+    positioner.get_unconstrained_geometry(area)
 }
 
 fn send_frames_surface_tree(surface: &WlSurface, time: u32) {
@@ -1319,6 +1384,13 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<State>(surface);
         self.request_redraw();
+        self.popups.commit(surface);
+        self.popups.cleanup();
+        if let Some(PopupKind::Xdg(popup)) = self.popups.find_popup(surface)
+            && !popup.is_initial_configure_sent()
+        {
+            let _ = popup.send_configure();
+        }
         if let Some(i) = self
             .unplaced
             .iter()
@@ -1438,9 +1510,48 @@ impl XdgShellHandler for State {
         }
     }
 
-    fn new_popup(&mut self, _: PopupSurface, _: PositionerState) {}
-    fn grab(&mut self, _: PopupSurface, _: wl_seat::WlSeat, _: Serial) {}
-    fn reposition_request(&mut self, _: PopupSurface, _: PositionerState, _: u32) {}
+    fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
+        self.place_popup(&surface, positioner);
+        let _ = self.popups.track_popup(PopupKind::Xdg(surface));
+    }
+
+    fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        let Some(seat) = Seat::<State>::from_resource(&seat) else {
+            return;
+        };
+        let popup = PopupKind::Xdg(surface);
+        let Ok(root) = find_popup_root_surface(&popup) else {
+            return;
+        };
+        let Ok(mut grab) = self.popups.grab_popup(root, popup, &seat, serial) else {
+            return;
+        };
+        let keyboard = seat.get_keyboard().unwrap();
+        let previous = grab.previous_serial().unwrap_or(serial);
+        if keyboard.is_grabbed() && !keyboard.has_grab(serial) && !keyboard.has_grab(previous) {
+            grab.ungrab(PopupUngrabStrategy::All);
+            return;
+        }
+        keyboard.set_focus(self, grab.current_grab(), serial);
+        keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
+        let pointer = seat.get_pointer().unwrap();
+        let previous = grab.previous_serial().unwrap_or_else(|| grab.serial());
+        if pointer.is_grabbed() && !pointer.has_grab(serial) && !pointer.has_grab(previous) {
+            grab.ungrab(PopupUngrabStrategy::All);
+            return;
+        }
+        pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
+    }
+
+    fn reposition_request(
+        &mut self,
+        surface: PopupSurface,
+        positioner: PositionerState,
+        token: u32,
+    ) {
+        self.place_popup(&surface, positioner);
+        surface.send_repositioned(token);
+    }
 }
 
 impl BufferHandler for State {
@@ -1509,3 +1620,33 @@ delegate_primary_selection!(State);
 delegate_output!(State);
 delegate_fractional_scale!(State);
 delegate_viewporter!(State);
+
+#[cfg(test)]
+mod tests {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_positioner::{
+        Anchor, ConstraintAdjustment, Gravity,
+    };
+
+    use super::*;
+
+    #[test]
+    fn a_popup_requested_near_the_edge_of_a_pane_is_kept_inside_the_pane() {
+        let client = Size::from((400, 300));
+        let parent = Point::from((10, 20));
+        let positioner = PositionerState {
+            rect_size: (200, 150).into(),
+            anchor_rect: Rectangle::new((360, 260).into(), (1, 1).into()),
+            anchor_edges: Anchor::BottomRight,
+            gravity: Gravity::BottomRight,
+            constraint_adjustment: ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY,
+            ..PositionerState::default()
+        };
+        let mut placed = popup_geometry(positioner, client, parent);
+        placed.loc += parent;
+        assert!(
+            Rectangle::from_size(client).contains_rect(placed),
+            "{placed:?}"
+        );
+        assert_eq!(placed.size, positioner.rect_size);
+    }
+}

@@ -22,7 +22,7 @@ use crate::server::panes::{BACKGROUND, Chrome, Layout};
 use crate::server::workspace::{self, Workspace};
 
 use super::input::Drag;
-use super::{Overlay, State, send_frames_surface_tree};
+use super::{Overlay, State, popups_over, send_frames_surface_tree};
 
 const SCRIM: Rgba = [0.0, 0.0, 0.0, 0.35];
 
@@ -197,6 +197,9 @@ impl State {
         for pane in layout.visible() {
             if let Some(toplevel) = pane.toplevel() {
                 send_frames_surface_tree(toplevel.wl_surface(), time);
+                for (popup, _) in popups_over(toplevel.wl_surface()) {
+                    send_frames_surface_tree(popup.wl_surface(), time);
+                }
             }
         }
         Ok((sync.export(), animating))
@@ -372,8 +375,8 @@ fn paint_ghost(
     }));
 }
 
-/// Draw the client of every visible pane but the one being dragged,
-/// cropped to the pane.
+/// Draw the client of every visible pane but the one being dragged, with
+/// its popups in front, cropped to the pane.
 fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, layout: &Layout, chrome: Chrome) {
     for pane in layout.visible() {
         let Some(toplevel) = pane.toplevel() else {
@@ -387,15 +390,25 @@ fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, layout: &Layout
             continue;
         }
         let crop = paint.text.chrome.px_rect(rect);
-        let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-            render_elements_from_surface_tree(
+        let mut surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = Vec::new();
+        for (popup, at) in popups_over(toplevel.wl_surface()) {
+            surfaces.extend(render_elements_from_surface_tree(
                 paint.renderer,
-                toplevel.wl_surface(),
-                crop.loc,
+                popup.wl_surface(),
+                crop.loc + at.to_physical_precise_round(paint.scale),
                 paint.scale,
                 1.0,
                 Kind::Unspecified,
-            );
+            ));
+        }
+        surfaces.extend(render_elements_from_surface_tree(
+            paint.renderer,
+            toplevel.wl_surface(),
+            crop.loc,
+            paint.scale,
+            1.0,
+            Kind::Unspecified,
+        ));
         elements.extend(
             surfaces
                 .into_iter()

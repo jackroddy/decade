@@ -144,6 +144,9 @@ command line and what the tool writes.
 - Settings live in `~/.config/decade/config.toml`. Settings in the palette
   opens a panel that changes them and saves the file.
 - Scroll wheel events reach clients.
+- Menus, popovers and tooltips that a program opens appear over its pane,
+  kept inside the pane, and take the pointer and keyboard while they are
+  open. Before, a GTK program such as ghostty froze on its first menu.
 - decade is an MCP server over streamable HTTP, at the address in
   `DECADE_MCP` in the environment of everything it starts. Its tools are
   `point`, `panes`, `show`, `highlight` and `clear`; a call becomes
