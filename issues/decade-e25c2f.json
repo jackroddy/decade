@@ -1,0 +1,28 @@
+{
+  "id": "decade-e25c2f",
+  "title": "Where does decade show subscription usage, for any number of accounts and providers?",
+  "body": "decade shows nothing of Jack's subscription limits. The agent usage it has is per agent, reported on the channel (the `Agents` section of `docs/protocol.md`). Each agent reports its model, context, tokens and cost, and the workspace card draws them on a usage line (see decade-20d5f1).\n\n## What exists outside decade\n\n`claude-usaged`, with its source in `~/projects/claude-usaged`, is a user service on loopback HTTP at `127.0.0.1:7717`. It polls Anthropic's OAuth usage endpoint and merges in Claude Code statusLine posts. Every route except `/v1/health` takes a bearer token from `~/.local/state/claude-usage/endpoint.json`. `GET /v1/accounts` returns one entry per configured account:\n\n```json\n{\"id\": \"default\", \"config_dir\": \"~/.claude\", \"label\": \"...\", \"state\": \"fresh\",\n \"windows\": {\"five_hour\": {\"utilization\": 30, \"resets_at\": 1762790000, \"resets_in_s\": 3811},\n             \"seven_day\": {\"utilization\": 22, \"resets_in_s\": 476611},\n             \"seven_day_opus\": {}, \"seven_day_sonnet\": {}, \"spend_limit\": {}},\n \"sessions\": [{\"model\": \"...\", \"context\": {\"used_percentage\": 50}}]}\n```\n\nIt takes any number of `[[account]]` entries in `~/.config/claude-usage/config.toml`, keyed by Claude config directory. One is configured today. guise, the tool for running several Claude accounts, has no code yet and does not appear in `claude-usaged`.\n\nJack's herdr plugin, in `~/projects/herdr-plugins/claude-usage`, has the look he wants. herdr's tab bar shows one segment per account, from `claude-usaged line`, refreshed every 30 seconds:\n\n```text\nwork 5h ▰▰▱▱▱▱▱▱ 34% (19m) 7d ▰▱▱▱▱▱▱▱ 22%\n```\n\nEach gauge has eight segments, filled by the floor of the percent, so a full gauge means a full window. The 5-hour window shows its reset time and the 7-day window does not. Accounts are joined by `  |  `. Under each agent in herdr's sidebar, the plugin adds the account name in `#d3869b`, then context as `ctx 50%` in `#83a598`, then tokens such as `495k/1M` and the model, both dim.\n\n## The question\n\nWhere does account usage go in decade, and how does decade learn it, without decade knowing about Anthropic? Jack may run several Claude accounts, and later subscriptions to other providers.\n\n## Where it is drawn\n\n- The top bar's right end, one segment per account, as in herdr. The top bar is always visible and the usage is account-wide, not per workspace. Room is short when many tabs are open.\n- A block at the foot of the open sidebar, one row per account, with only a gauge on the closed sidebar's tiles. There is more room, but it is hidden while the sidebar is shut.\n\nEach agent row on a workspace card names its account once more than one account is in use, as herdr does, so Jack can tell which limit an agent draws on.\n\n## How decade learns it\n\n- Option A: decade reads `claude-usaged` over HTTP. This is the simplest today, but decade then knows one provider's service, and each new provider adds a client inside decade.\n- Option B: agents report it on the channel. An agent's report gains an `account` name and a list of windows, each with a label such as `5h`, a percent and an optional reset time. coax fills them from `claude-usaged`, matching its own config directory. decade keeps the latest windows per account and draws one segment per account. decade stays provider-neutral, and a Codex client reports its own windows the same way. Usage then shows only while some agent on that account is connected.\n- Option C: decade runs a configured command and draws its text, as herdr's tab bar does. It is fully generic, but decade gets a line of text, so it cannot colour by threshold or lay the gauges out itself.\n\n## Lean\n\nThe top bar's right end, filled by option B. It keeps decade free of any provider and fits the channel's existing per-agent reports. The account name on each agent also falls out of it. The gap, no usage while no agent runs, matters little in practice, since the limits matter only while agents run.\n\n## Cost\n\nOption B adds fields to the agent report in `decade-channel`, which moves its minor version, and to the protocol, which moves `decade`'s minor too. coax gains a `claude-usaged` client.\n\n## Open\n\n- Colours and thresholds for the gauges. herdr strips colour, so the plugin has none to carry over.\n- Which windows show by default. The plugin shows `5h` and `7d` and leaves out the Opus and Sonnet weekly windows.\n- How a stale reading is marked. `claude-usaged line` appends `*`.",
+  "type": "decision",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-10T21:02:12.879893829Z",
+  "updated_at": "2026-11-10T21:02:12.879893829Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
