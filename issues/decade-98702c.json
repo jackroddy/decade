@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-10T23:58:46.281157552Z",
   "defer_until": null,
   "created_at": "2026-11-10T20:40:27.556426852Z",
-  "updated_at": "2026-11-10T23:43:46.281157552Z",
+  "updated_at": "2026-11-10T23:44:08.556529796Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "58684a76",
+      "at": "2026-11-10T23:44:08.556529196Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "Jack approved this design:\n\n- A right click on decade's chrome opens a menu at the pointer, drawn like the sidebar popover and kept on screen. The chrome covers a pane's bar or outline, a tab pill, a workspace card or tile, and empty sidebar space. A right click inside a client's area still goes to the client.\n- A pane's menu offers pin, zoom and mark as scratch, each labelled for what a click does (pin or unpin). A card or tile offers clear when its agent is done or needs attention. Rename (decade-e8cf5c), new group (decade-316e42) and accept screenshots (decade-6f4db4) join as those land. A place with no entries opens no menu.\n- No entry closes a pane: a pane closes only through its x or when its program exits.\n- Up, Down, Enter and Escape work in the open menu, and a click outside dismisses it. No keybind opens it.\n- The menu lives with decade's own widgets beside the palette and imports nothing from smithay, so it can move into the UI kit (decade-4a4e0f) later.",
+      "commit": "a402a32",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e37ba45",
