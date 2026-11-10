@@ -39,7 +39,9 @@ command line and what the tool writes.
   A card shows the workspace's name, its number of tabs, its directory and
   its git branch. Under them come the agent's name with its state and how
   long it has held that state, the agent's question or activity, and the
-  model, context use, tokens and cost the agent has reported. When a
+  model, context use and tokens the agent has reported. The model and
+  tokens are dim. The context use is green under 50%, yellow up to 80% and
+  red above. When a
   workspace has several agents, its card shows the one that most needs the
   person, with +N for the others. decade draws an agent that has
   disconnected or lost its pane in grey, and leaves it out of the state

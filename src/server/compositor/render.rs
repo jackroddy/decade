@@ -294,7 +294,6 @@ fn card_agent(agent: &agents::Agent, now: Instant) -> frame::Agent {
         model: report.model.clone(),
         context: report.context,
         tokens: report.tokens,
-        cost: report.cost,
         dim,
     }
 }

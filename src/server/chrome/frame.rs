@@ -107,7 +107,6 @@ pub struct Agent {
     pub model: Option<String>,
     pub context: Option<Context>,
     pub tokens: Option<Tokens>,
-    pub cost: Option<f64>,
 
     /// Why the agent is drawn dim, or `None` for a live agent.
     pub dim: Option<Dim>,
@@ -157,7 +156,7 @@ impl Entry {
     fn card_lines(&self) -> i32 {
         let agent = self.agents.first();
         let message = agent.is_some_and(|agent| agent.message.is_some());
-        let usage = agent.and_then(|agent| usage(agent, usize::MAX)).is_some();
+        let usage = agent.is_some_and(|agent| !usage(agent, usize::MAX).is_empty());
         3 + message as i32 + usage as i32
     }
 
@@ -324,32 +323,74 @@ fn agent_tint(agent: Option<&Agent>) -> Rgba {
     tint(agent.and_then(Agent::live_state))
 }
 
-/// What the agent has reported of its usage: "claude-opus · 62% ctx ·
-/// 18.4k tok · $0.42", leaving out the parts not reported, and the model
-/// too when the line is wider than `room`.
-fn usage(agent: &Agent, room: usize) -> Option<String> {
+/// A run of text in one colour.
+type Span = (String, Rgba);
+
+/// What the agent has reported of its usage, "claude-opus · 62% ctx ·
+/// 18.4k tok", as spans in their colours, leaving out the parts not
+/// reported, and the model too when the line is wider than `room`.
+fn usage(agent: &Agent, room: usize) -> Vec<Span> {
     let mut parts = Vec::new();
     if let Some(model) = &agent.model {
-        parts.push(model.clone());
+        parts.push((model.clone(), DIM));
     }
     if let Some(Context { used, limit }) = agent.context.filter(|context| context.limit > 0) {
         let percent = (used as f64 / limit as f64 * 100.0).round();
-        parts.push(format!("{percent}% ctx"));
+        parts.push((format!("{percent}% ctx"), context_color(percent)));
     }
     if let Some(Tokens { input, output }) = agent.tokens {
-        parts.push(format!("{} tok", count(input.saturating_add(output))));
+        let tokens = count(input.saturating_add(output));
+        parts.push((format!("{tokens} tok"), DIM));
     }
-    if let Some(cost) = agent.cost {
-        parts.push(format!("${cost:.2}"));
-    }
-    if parts.is_empty() {
-        return None;
-    }
-    let line = parts.join(" · ");
-    if line.chars().count() > room && agent.model.is_some() && parts.len() > 1 {
+    let width = |parts: &[Span]| {
+        let text: usize = parts.iter().map(|(text, _)| text.chars().count()).sum();
+        text + 3 * parts.len().saturating_sub(1)
+    };
+    if width(&parts) > room && agent.model.is_some() && parts.len() > 1 {
         parts.remove(0);
     }
-    Some(fit(&parts.join(" · "), room))
+    let mut spans = Vec::new();
+    for (i, part) in parts.into_iter().enumerate() {
+        if i > 0 {
+            spans.push((" · ".to_string(), MUTED));
+        }
+        spans.push(part);
+    }
+    fit_spans(spans, room)
+}
+
+/// The colour of a context use of `percent`.
+fn context_color(percent: f64) -> Rgba {
+    if percent < 50.0 {
+        palette::GREEN
+    } else if percent <= 80.0 {
+        palette::YELLOW
+    } else {
+        palette::RED
+    }
+}
+
+/// `spans` cut to `room` characters, with an ellipsis where they were cut,
+/// in the colour of the span it ends.
+fn fit_spans(spans: Vec<Span>, room: usize) -> Vec<Span> {
+    let total: usize = spans.iter().map(|(text, _)| text.chars().count()).sum();
+    if total <= room {
+        return spans;
+    }
+    let mut left = room.saturating_sub(1);
+    let mut cut = Vec::new();
+    for (text, color) in spans {
+        let kept: String = text.chars().take(left).collect();
+        left -= kept.chars().count();
+        if left == 0 {
+            if room > 0 {
+                cut.push((format!("{kept}…"), color));
+            }
+            break;
+        }
+        cut.push((kept, color));
+    }
+    cut
 }
 
 /// `n` with a k or M suffix past a thousand: "512", "18.4k", "1.2M".
@@ -900,8 +941,11 @@ impl Frame {
             scene.text_px(x + 2 * cell_width, line(next), &message, Face::Chrome, DIM);
             next += 1;
         }
-        if let Some(usage) = agent.and_then(|agent| usage(agent, room.saturating_sub(2))) {
-            scene.text_px(x + 2 * cell_width, line(next), &usage, Face::Chrome, MUTED);
+        let spans = agent.map_or(Vec::new(), |agent| usage(agent, room.saturating_sub(2)));
+        let mut span_x = x + 2 * cell_width;
+        for (text, color) in spans {
+            scene.text_px(span_x, line(next), &text, Face::Chrome, color);
+            span_x += text.chars().count() as i32 * cell_width;
         }
     }
 
@@ -1034,7 +1078,6 @@ mod tests {
             model: None,
             context: None,
             tokens: None,
-            cost: None,
             dim: None,
         }
     }
@@ -1487,10 +1530,15 @@ mod tests {
         assert_eq!(agent_tint(Some(&working())), palette::LIGHT_YELLOW);
     }
 
+    /// The text of `spans`, joined.
+    fn text(spans: &[Span]) -> String {
+        spans.iter().map(|(text, _)| text.as_str()).collect()
+    }
+
     #[test]
-    fn the_usage_line_gives_the_model_context_percent_tokens_and_cost() {
+    fn the_usage_line_gives_the_model_context_percent_and_tokens_dim_but_the_percent() {
         let mut coax = agent("coax", Some(AgentState::Working));
-        assert_eq!(usage(&coax, usize::MAX), None);
+        assert_eq!(usage(&coax, usize::MAX), []);
         coax.model = Some("claude-opus".to_string());
         coax.context = Some(Context {
             used: 124_000,
@@ -1500,11 +1548,21 @@ mod tests {
             input: 15_000,
             output: 3_400,
         });
-        coax.cost = Some(0.4213);
+        let spans = usage(&coax, usize::MAX);
+        assert_eq!(text(&spans), "claude-opus · 62% ctx · 18.4k tok");
+        let colors: Vec<_> = spans.iter().map(|&(_, color)| color).collect();
         assert_eq!(
-            usage(&coax, usize::MAX).as_deref(),
-            Some("claude-opus · 62% ctx · 18.4k tok · $0.42")
+            colors,
+            [DIM, MUTED, palette::YELLOW, MUTED, DIM],
+            "the model and tokens are dim, the separators muted"
         );
+    }
+
+    #[test]
+    fn the_context_percent_is_green_under_half_yellow_to_eighty_and_red_above() {
+        let colors = [0.0, 49.0, 50.0, 80.0, 81.0, 100.0].map(context_color);
+        let (green, yellow, red) = (palette::GREEN, palette::YELLOW, palette::RED);
+        assert_eq!(colors, [green, green, yellow, yellow, red, red]);
     }
 
     #[test]
@@ -1515,29 +1573,29 @@ mod tests {
             output: 340_000,
         });
         coax.context = Some(Context { used: 5, limit: 0 });
-        assert_eq!(usage(&coax, usize::MAX).as_deref(), Some("1.2M tok"));
-        coax.tokens = None;
-        coax.cost = Some(3.0);
-        assert_eq!(usage(&coax, usize::MAX).as_deref(), Some("$3.00"));
+        assert_eq!(text(&usage(&coax, usize::MAX)), "1.2M tok");
     }
 
     #[test]
     fn a_usage_line_too_wide_for_its_room_drops_the_model_before_cutting_the_numbers() {
         let mut coax = agent("coax", Some(AgentState::Working));
         coax.model = Some("claude-opus".to_string());
+        coax.context = Some(Context {
+            used: 10,
+            limit: 100,
+        });
         coax.tokens = Some(Tokens {
             input: 15_000,
             output: 3_400,
         });
-        coax.cost = Some(0.42);
-        assert_eq!(
-            usage(&coax, 40).as_deref(),
-            Some("claude-opus · 18.4k tok · $0.42")
-        );
-        assert_eq!(usage(&coax, 20).as_deref(), Some("18.4k tok · $0.42"));
+        assert_eq!(text(&usage(&coax, 40)), "claude-opus · 10% ctx · 18.4k tok");
+        assert_eq!(text(&usage(&coax, 20)), "10% ctx · 18.4k tok");
+        let cut = usage(&coax, 9);
+        assert_eq!(text(&cut), "10% ctx …");
+        assert_eq!(cut.last(), Some(&(" …".to_string(), MUTED)));
+        coax.context = None;
         coax.tokens = None;
-        coax.cost = None;
-        assert_eq!(usage(&coax, 6).map(|line| line.chars().count()), Some(6));
+        assert_eq!(text(&usage(&coax, 6)).chars().count(), 6);
     }
 
     #[test]
@@ -1549,7 +1607,7 @@ mod tests {
     #[test]
     fn a_card_with_usage_takes_a_line_more() {
         let mut frame = frame(true);
-        frame.entries[1].agents[0].cost = Some(0.1);
+        frame.entries[1].agents[0].model = Some("opus".to_string());
         let (cards, _) = frame.cards();
         assert_eq!(cards[1].2, 2 * 4 + 4 * 18);
     }
