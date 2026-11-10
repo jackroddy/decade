@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:40:27.545849677Z",
-  "updated_at": "2026-11-10T20:40:33.180624155Z",
+  "updated_at": "2026-11-10T23:47:31.984756299Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "1c10075f",
+      "at": "2026-11-10T23:47:31.984755559Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "Jack approved this design:\n\n- Rename comes from the right-click menu (decade-98702c) or a double-click on the name. The name becomes a text field where it is drawn: the card or tile popover for a workspace, the pill for a tab, the bar for a pane. Enter keeps the new name and Escape cancels.\n- A name is not empty and is unique within its workspace. A pane name holds no `&`, `=` or space, since it goes into the `DECADE_MCP` address.\n- A renamed pane keeps its former names as aliases for as long as the pane lives. A program started before the rename still holds the old name in `DECADE_PANE` and `DECADE_MCP`, and that name still reaches the pane over the socket and MCP. The `panes` reply shows only the current name. A new pane cannot take a name that is an alias.\n- A tab gains an optional name. A tab without one keeps its current label. The tab name is saved in `workspaces.toml`, whose version moves from 2 to 3, and the reader keeps its arm for version 2.\n- A workspace's name is already saved, so a renamed workspace keeps it across a restore.",
+      "commit": "a402a32",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e37ba45",
