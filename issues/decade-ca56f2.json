@@ -3,7 +3,7 @@
   "title": "Should a done agent return to idle by itself once the person has looked?",
   "body": "An agent that reports `done` keeps that state until it reports another, or until the person clears it. The sidebar sorts `done` above `working` and `idle` (decade-ee66ae) and draws it green, so a workspace whose agent finished stays near the top after Jack has gone to look at it.\n\nOne way to clear it exists today. Clicking the state glyph on a workspace's card in the open sidebar gives `Hit::Clear` (`Frame::hit` in `src/server/chrome/frame.rs`). The compositor then calls `Agents::clear` (`src/server/agents.rs`), which returns every agent in that workspace that is done or needs attention to idle. Nothing on screen marks the glyph as a button. `Frame::hover` reports it as the whole card, so the hover looks like any other spot on the card. Jack did not know it was there. The closed sidebar's tiles and the top bar's state counts offer no way to clear.\n\n## Options\n\n- Option A: looking clears it. When the person focuses the agent's pane, decade moves `done` to idle. This matches how a point ends when the person focuses the pane. It needs no extra action, and it fits the case of having gone to check. A glance at the workspace without focusing the pane leaves it done.\n- Option B: a timeout once seen. decade moves `done` to idle a set time after the workspace was last shown. It catches a glance, but needs a duration, and a workspace shown in passing loses its mark.\n- Option C: a plain timeout. `done` turns idle a set time after the agent reported it, whether or not anyone looked. It is the simplest, but a finish Jack never saw drops out of sight.\n- Option D: a visible dismiss. The glyph that already clears shows a hover state and a mark that says what a click does. The same action is offered from the context menu (decade-98702c), from the top bar's done count, and perhaps from a key.\n\nA and D combine, and so do B and D.\n\n## Lean\n\nA with D. Focusing the pane is the act of checking, so it clears without a new gesture. D covers the case where Jack reads the result elsewhere and wants the mark gone. B and C add a duration to tune and can hide a finish he has not seen.\n\n## Open\n\n- Whether option A applies to `attention` too. An agent waiting on an answer usually reports `working` once it gets one, so A may only need `done`.\n- Whether a clear acts on one agent or on every agent in the workspace, as `Agents::clear` does now. On a card it clears them all. Focusing a pane would clear the agent in that pane.",
   "type": "decision",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
@@ -13,10 +13,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T21:28:39.884944116Z",
-  "updated_at": "2026-11-10T21:45:05.011389448Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-10T21:45:05.022517417Z",
+  "closed_at": "2026-11-10T21:45:05.022517417Z",
+  "close_reason": "Decided: option B with a glyph redesign, recorded in the note. Built by decade-ee05df and decade-6969e7.",
+  "resolution": "done",
   "notes": [
     {
       "id": "11c8c890",
@@ -32,6 +32,9 @@
       "commit": "e37ba45",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e37ba45",
+      "branch": "dev"
+    }
   }
 }
