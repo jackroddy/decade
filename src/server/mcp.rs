@@ -21,6 +21,9 @@ use crate::server::scratch::Launch;
 pub struct Request {
     /// The workspace named in the address the call came in on.
     pub workspace: u32,
+
+    /// The pane named in the address, the one the calling agent runs in.
+    pub pane: Option<String>,
     pub call: Call,
 
     /// The tool result's text, or the reason the call failed.
@@ -195,10 +198,14 @@ fn tools() -> Vec<Tool> {
 }
 
 fn workspace_in(query: &str) -> Option<u32> {
-    query
-        .split('&')
-        .find_map(|pair| pair.strip_prefix("workspace="))
-        .and_then(|id| id.parse().ok())
+    query_value(query, "workspace").and_then(|id| id.parse().ok())
+}
+
+fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name == key).then_some(value)
+    })
 }
 
 /// The arguments of `point`.
@@ -307,18 +314,19 @@ impl ServerHandler for Decade {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let workspace = context
-            .extensions
-            .get::<axum::http::request::Parts>()
+        let query = (context.extensions.get::<axum::http::request::Parts>())
             .and_then(|parts| parts.uri.query())
-            .and_then(workspace_in)
+            .unwrap_or_default();
+        let workspace = workspace_in(query)
             .ok_or_else(|| ErrorData::invalid_params("the MCP address names no workspace", None))?;
+        let pane = query_value(query, "pane").map(str::to_string);
         let call = call_for(&request.name, request.arguments.unwrap_or_default())
             .map_err(|reason| ErrorData::invalid_params(reason, None))?;
         let (reply, answer) = oneshot::channel();
         self.requests
             .send(Request {
                 workspace,
+                pane,
                 call,
                 reply,
             })
@@ -344,11 +352,14 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn the_workspace_is_read_from_the_query_of_the_address() {
+    fn the_workspace_and_pane_are_read_from_the_query_of_the_address() {
         assert_eq!(workspace_in("workspace=3"), Some(3));
         assert_eq!(workspace_in("a=b&workspace=12"), Some(12));
         assert_eq!(workspace_in("workspace=x"), None);
         assert_eq!(workspace_in("other=1"), None);
+        assert_eq!(workspace_in("myworkspace=1"), None);
+        assert_eq!(query_value("workspace=3&pane=chat", "pane"), Some("chat"));
+        assert_eq!(query_value("workspace=3", "pane"), None);
     }
 
     #[test]

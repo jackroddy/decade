@@ -58,6 +58,14 @@ pub struct Pane {
     /// The kinds the client in the pane can show.
     #[serde(default)]
     pub shows: Vec<Shows>,
+
+    /// Whether the pane is the workspace's scratch pane.
+    #[serde(default)]
+    pub scratch: bool,
+
+    /// Whether the pane is the one the question came from.
+    #[serde(default)]
+    pub you: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -482,7 +490,7 @@ mod tests {
             }
         );
         let message =
-            parse(r#"{"panes":[{"name":"chat","client":"coax"},{"name":"code","client":"decade-code","shows":[{"kind":"file","highlight":true}]}]}"#)
+            parse(r#"{"panes":[{"name":"chat","client":"coax"},{"name":"code","client":"decade-code","shows":[{"kind":"file","highlight":true}],"scratch":true,"you":true}]}"#)
                 .unwrap();
         assert_eq!(
             message,
@@ -490,7 +498,9 @@ mod tests {
                 Pane {
                     name: "chat".into(),
                     client: Some("coax".into()),
-                    shows: Vec::new()
+                    shows: Vec::new(),
+                    scratch: false,
+                    you: false
                 },
                 Pane {
                     name: "code".into(),
@@ -498,7 +508,9 @@ mod tests {
                     shows: vec![Shows {
                         kind: "file".into(),
                         highlight: true
-                    }]
+                    }],
+                    scratch: true,
+                    you: true
                 }
             ])
         );

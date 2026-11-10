@@ -41,7 +41,11 @@ impl Children {
             .env("DECADE_SOCKET", self.socket_path(workspace.id))
             .env_remove("DISPLAY");
         if let Some(mcp) = &self.mcp {
-            command.env("DECADE_MCP", format!("{mcp}?workspace={}", workspace.id));
+            let address = match pane {
+                Some(pane) => format!("{mcp}?workspace={}&pane={pane}", workspace.id),
+                None => format!("{mcp}?workspace={}", workspace.id),
+            };
+            command.env("DECADE_MCP", address);
         }
         if let Some(pane) = pane {
             command.env("DECADE_PANE", pane);
@@ -132,7 +136,7 @@ mod tests {
         );
         assert_eq!(
             env(&ghostty, "DECADE_MCP").as_deref(),
-            Some("http://127.0.0.1:4000/mcp?workspace=3")
+            Some("http://127.0.0.1:4000/mcp?workspace=3&pane=logs")
         );
         let args: Vec<_> = ghostty.get_args().collect();
         assert_eq!(args.last().unwrap(), &"--class=decade.w3.logs.t2");

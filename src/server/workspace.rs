@@ -206,7 +206,9 @@ impl Workspace {
 
     /// Answer one line from socket client `id`.
     pub fn channel_line(&mut self, id: usize, line: &str) -> Vec<Out> {
-        self.router.handle(id, line, &pane_names(&self.tabs))
+        let scratch = self.scratch.as_ref().map(|scratch| scratch.pane.as_str());
+        self.router
+            .handle(id, line, &pane_names(&self.tabs), scratch)
     }
 
     /// The id of the client in pane `to` and the line carrying it a pane
@@ -226,9 +228,11 @@ impl Workspace {
         self.router.showing(kind, pane, &pane_names(&self.tabs))
     }
 
-    /// Every pane in tab order and the name of the client occupying it.
-    pub fn pane_list(&self) -> Vec<decade_channel::Pane> {
-        self.router.panes(&pane_names(&self.tabs))
+    /// Every pane in tab order and the name of the client occupying it,
+    /// marking the scratch pane and the pane `you`.
+    pub fn pane_list(&self, you: Option<&str>) -> Vec<decade_channel::Pane> {
+        self.router
+            .panes(&pane_names(&self.tabs), self.scratch_pane(), you)
     }
 
     /// The layout of the active tab.
@@ -663,7 +667,7 @@ mod tests {
         );
         let refused = workspace.agent_send("terminal", "show".into(), Value::Null);
         assert_eq!(refused, Err("no client occupies pane terminal".to_string()));
-        let panes: Vec<_> = (workspace.pane_list().into_iter())
+        let panes: Vec<_> = (workspace.pane_list(None).into_iter())
             .map(|pane| (pane.name, pane.client))
             .collect();
         let occupant = Some("code-pane".to_string());

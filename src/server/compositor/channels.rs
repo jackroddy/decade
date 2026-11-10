@@ -92,13 +92,18 @@ impl State {
 
     pub(super) fn mcp_request(&mut self, request: mcp::Request) {
         let answer = match self.workspace_index(request.workspace) {
-            Some(workspace) => self.mcp_call(workspace, request.call),
+            Some(workspace) => self.mcp_call(workspace, request.call, request.pane.as_deref()),
             None => Err(format!("workspace {} is closed", request.workspace)),
         };
         let _ = request.reply.send(answer);
     }
 
-    fn mcp_call(&mut self, workspace: usize, call: mcp::Call) -> Result<String, String> {
+    fn mcp_call(
+        &mut self,
+        workspace: usize,
+        call: mcp::Call,
+        caller: Option<&str>,
+    ) -> Result<String, String> {
         let shown = &self.workspaces[workspace];
         let (to, verb, payload) = match call {
             mcp::Call::Kind {
@@ -127,7 +132,7 @@ impl State {
                 return Ok(agents.to_string());
             }
             mcp::Call::Panes => {
-                let panes = Reply::Panes(shown.pane_list());
+                let panes = Reply::Panes(shown.pane_list(caller));
                 return Ok(serde_json::to_string(&panes).unwrap());
             }
             mcp::Call::ScratchOpen(launch) => return self.scratch_open(workspace, launch),

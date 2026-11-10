@@ -153,7 +153,10 @@ command line and what the tool writes.
   the matching socket message and decade's answer is the tool result.
   `show`, `highlight` and `clear` name a kind, such as `file`, and go to
   the pane whose program shows that kind, or to the pane the call names.
-  `panes` lists the kinds each pane's program shows.
+  `panes` lists the kinds each pane's program shows, and marks the
+  scratch pane and the pane the question came from. A program started
+  in a pane gets that pane's name in its `DECADE_MCP` address, so an
+  agent it runs finds its own pane.
   With `point` an agent points at a pane. Keyboard focus stays where it
   is. decade pulses the pane's outline in magenta and shows the
   agent's note on it. When the pane's tab is hidden, its pill on the top

@@ -122,10 +122,13 @@ A message without `to` is for decade, and carries exactly one of its verbs.
 ```
 
 `panes` is answered with every pane in the workspace, its occupant and
-the kinds the occupant shows:
+the kinds the occupant shows. `client` is null when no client in the
+pane has said hello, though a terminal or another window may be there.
+`scratch` is true for the workspace's scratch pane, and `you` is true for
+the pane of the client that asked:
 
 ```json
-{"panes": [{"name": "chat", "client": "coax", "shows": []}, {"name": "terminal", "client": null, "shows": []}, {"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}]}]}
+{"panes": [{"name": "chat", "client": "coax", "shows": [], "scratch": false, "you": true}, {"name": "terminal", "client": null, "shows": [], "scratch": true, "you": false}, {"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}], "scratch": false, "you": false}]}
 ```
 
 ## Agents
@@ -204,6 +207,9 @@ Agents do not use this socket. decade is also an MCP server, over streamable
 HTTP at the address in `DECADE_MCP`, which every program decade starts gets
 beside `DECADE_SOCKET`. Each workspace has its own address, ending in
 `?workspace=<id>`, and a tool call reaches only the panes of that workspace.
+A program decade starts in a pane gets an address ending in
+`?workspace=<id>&pane=<name>` instead. In the `panes` reply to a call on
+that address, `you` marks that pane.
 Its tools are `panes`, `agents`, `point`, `show`, `highlight`, `clear`,
 `scratch.open` and `scratch.send`. decade delivers a pane verb from a tool
 call with `"from": "agent"`. decade answers `panes` with the pane list, in the shape
