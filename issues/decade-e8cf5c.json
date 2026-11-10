@@ -1,7 +1,7 @@
 {
   "id": "decade-e8cf5c",
   "title": "The person can rename workspaces, tabs and panes",
-  "body": "decade names things for itself and the person cannot change the names.\n\n- A workspace takes the base name of its directory (`Workspace::new` in `src/server/workspace.rs`).\n- A pane is named `terminal`, then `terminal2` and so on (`unique_pane_name`).\n- A tab has no name at all. `Tab` holds only its layout and a `closing` flag.\n\n## Proposal\n\nThe person can rename a workspace, a tab and a pane in place. They type the new name into the place the old one is drawn: the card or tile in the sidebar, the tab's pill on the top bar, the pane's bar. The context menu in its own issue is one way in. Double-clicking the name is another.\n\n## Cost\n\nA pane's name is its address. decade gives it to the program in the pane in `DECADE_PANE` when the program starts, agents pass it to MCP tools, and the channel delivers messages by it. coax reads `DECADE_PANE` (`src/report.rs` in coax). A rename has to keep those working. Tabs need a name field, and the saved workspace format gains it, which bumps that format's version byte.\n\n## Open\n\n- Whether a program learns that its pane was renamed, by a message on the socket, or whether decade keeps the old name as an alias.\n- Whether a renamed workspace keeps its name across a save and restore. It should, but its directory then no longer names it.",
+  "body": "decade names things for itself and the person cannot change the names.\n\n- A workspace takes the base name of its directory (`Workspace::new` in `src/server/workspace.rs`).\n- A pane is named `terminal`, then `terminal2` and so on (`unique_pane_name`).\n- A tab has no name at all. `Tab` holds only its layout and a `closing` flag.\n\n## Proposal\n\nThe person can rename a workspace, a tab and a pane in place. They type the new name into the place the old one is drawn: the card or tile in the sidebar, the tab's pill on the top bar, the pane's bar. The context menu in decade-98702c is one way in. Double-clicking the name is another.\n\n## Cost\n\nA pane's name is its address. decade gives it to the program in the pane in `DECADE_PANE` when the program starts, agents pass it to MCP tools, and the channel delivers messages by it. coax reads `DECADE_PANE` (`src/report.rs` in coax). A rename has to keep those working. Tabs need a name field, and the saved workspace format gains it, which bumps that format's version byte.\n\n## Open\n\n- Whether a program learns that its pane was renamed, by a message on the socket, or whether decade keeps the old name as an alias.\n- Whether a renamed workspace keeps its name across a save and restore. It should, but its directory then no longer names it.",
   "type": "feature",
   "status": "open",
   "priority": 2,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:40:27.545849677Z",
-  "updated_at": "2026-11-10T20:40:27.545849677Z",
+  "updated_at": "2026-11-10T20:40:33.180624155Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
