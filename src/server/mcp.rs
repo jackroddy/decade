@@ -146,7 +146,7 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "panes",
-            "List the panes in this workspace, the program occupying each and the kinds it shows",
+            "List the panes in this workspace, the program occupying each and the kinds it shows. client is the name a program gave when it connected to decade. It is null when no program in the pane has connected, though a terminal or another window may still be there. Only programs written for decade show kinds, so a terminal's shows is empty",
             schema(json!({"type": "object", "properties": {}})),
         ),
         Tool::new(
