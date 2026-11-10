@@ -248,7 +248,8 @@ points again. A workspace has one point at a time.
 
 The person may mark one pane in a workspace as its scratch pane, from the
 Ctrl bar. Two tools reach it. `scratch.open` takes `program`, optional
-`args` and optional `terminal`. `terminal` defaults to true. `program` is a
+`args`, optional `terminal` and optional `wait`. `terminal` defaults to
+true. `program` is a
 name that decade looks up on its `PATH`, or, when it holds a `/`, a path to
 an executable file, relative to the workspace's directory. decade refuses
 the call unless the workspace has a scratch pane and `program` names an
@@ -258,7 +259,21 @@ false decade starts it directly. decade puts the first window of that
 program, or of a process under it, in the scratch pane. Either way the
 program gets the pane's name in `DECADE_PANE`. When a program already
 occupies the scratch pane, decade asks it to close. decade starts the new
-program once the old one has gone. `scratch.send` takes `verb` and
+program once the old one has gone.
+
+With `terminal` true, the result says that the terminal started. With
+`terminal` false, decade answers once the program's window lands in the
+scratch pane, the program exits, or `wait` seconds pass, 5 by default. The
+clock starts when the program starts. While an old program closes, the
+same wait bounds how long decade waits for it to go. The result says
+which of these happened. After an exit it carries the exit status and the
+last 20 lines the program wrote to stderr. decade still copies that
+stderr to its own log. A program still running when the wait ends keeps
+running, and decade puts its window in the scratch pane when it opens one.
+A second `scratch.open` answers a first one still waiting with what decade
+knows so far.
+
+`scratch.send` takes `verb` and
 `payload`. decade sends `{"to": "<scratch pane>", "<verb>": payload}` from
 `agent`, and the program in the scratch pane receives it like any other
 message.

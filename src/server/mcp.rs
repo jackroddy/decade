@@ -26,9 +26,11 @@ pub struct Request {
     pub pane: Option<String>,
     pub call: Call,
 
-    /// The tool result's text, or the reason the call failed.
-    pub reply: oneshot::Sender<Result<String, String>>,
+    pub reply: Reply,
 }
+
+/// Where the tool result's text goes, or the reason the call failed.
+pub type Reply = oneshot::Sender<Result<String, String>>;
 
 pub enum Call {
     /// A `show`, `highlight` or `clear` of `kind`, for pane `pane` or
@@ -171,13 +173,14 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "scratch.open",
-            "Start a program in the scratch pane, closing the program there first. The program runs in the workspace's directory with decade's environment. With terminal false, decade puts the first window of the program, or of a process under it, in the scratch pane",
+            "Start a program in the scratch pane, closing the program there first. The program runs in the workspace's directory with decade's environment. With terminal false, decade puts the first window of the program, or of a process under it, in the scratch pane, and the call waits until that window arrives, the program exits or the wait passes. The result says which. An exit comes with the exit status and the last 20 lines of the program's stderr. A program still running past the wait gets its window in the scratch pane when it opens one. With terminal true, the result says only that the terminal started",
             schema(json!({
                 "type": "object",
                 "properties": {
                     "program": {"type": "string", "description": "a program on decade's PATH, or a path relative to the workspace's directory"},
                     "args": {"type": "array", "items": {"type": "string"}, "description": "the program's arguments"},
-                    "terminal": {"type": "boolean", "description": "run it in a terminal, the default, or as its own window"}
+                    "terminal": {"type": "boolean", "description": "run it in a terminal, the default, or as its own window"},
+                    "wait": {"type": "number", "description": "with terminal false, how many seconds to wait for the program's window, 5 by default"}
                 },
                 "required": ["program"]
             })),
@@ -503,17 +506,20 @@ mod tests {
         assert_eq!(launch.program, "decade-code");
         assert!(launch.args.is_empty());
         assert!(launch.terminal);
+        assert_eq!(launch.wait, None);
         let args = schema(json!({"program": "decade-code", "args": [1]}));
         let Err(reason) = call_for("scratch.open", args) else {
             panic!("a number is not an argument");
         };
         assert!(reason.starts_with("scratch.open: invalid type: integer"));
-        let windowed = json!({"program": "decade-code", "args": ["a"], "terminal": false});
+        let windowed =
+            json!({"program": "decade-code", "args": ["a"], "terminal": false, "wait": 30});
         let Ok(Call::ScratchOpen(launch)) = call_for("scratch.open", schema(windowed)) else {
             panic!("scratch.open with a program is a launch");
         };
         assert_eq!(launch.args, ["a"]);
         assert!(!launch.terminal);
+        assert_eq!(launch.wait, Some(30.0));
         let payload = schema(json!({"verb": "show", "payload": "x"}));
         let Err(reason) = call_for("scratch.send", payload) else {
             panic!("a string is not a payload");

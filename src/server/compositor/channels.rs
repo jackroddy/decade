@@ -1,17 +1,18 @@
 use std::io::{self, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::process::Command;
-use std::time::Instant;
+use std::process::{Command, ExitStatus};
+use std::time::{Duration, Instant};
 
 use decade_channel::Reply;
 use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{Interest, Mode as CalloopMode, PostAction};
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
 use crate::lines::Lines;
 use crate::server::channel::Out;
 use crate::server::mcp;
-use crate::server::scratch::{self, Launch};
+use crate::server::scratch::{self, Launch, Waiting};
 
 use super::State;
 
@@ -73,7 +74,7 @@ impl State {
         let inserted = self.loop_handle.insert_source(
             Generic::new(stream, Interest::READ, CalloopMode::Level),
             move |_, stream, state| {
-                let open = lines.read(stream, |line| {
+                let open = lines.read(&**stream, |line| {
                     if !line.trim().is_empty() {
                         state.channel_line(id, line);
                     }
@@ -91,11 +92,18 @@ impl State {
     }
 
     pub(super) fn mcp_request(&mut self, request: mcp::Request) {
-        let answer = match self.workspace_index(request.workspace) {
-            Some(workspace) => self.mcp_call(workspace, request.call, request.pane.as_deref()),
-            None => Err(format!("workspace {} is closed", request.workspace)),
+        let Some(workspace) = self.workspace_index(request.workspace) else {
+            let closed = format!("workspace {} is closed", request.workspace);
+            let _ = request.reply.send(Err(closed));
+            return;
         };
-        let _ = request.reply.send(answer);
+        match request.call {
+            mcp::Call::ScratchOpen(launch) => self.scratch_open(workspace, launch, request.reply),
+            call => {
+                let answer = self.mcp_call(workspace, call, request.pane.as_deref());
+                let _ = request.reply.send(answer);
+            }
+        }
     }
 
     fn mcp_call(
@@ -135,7 +143,7 @@ impl State {
                 let panes = Reply::Panes(shown.pane_list(caller));
                 return Ok(serde_json::to_string(&panes).unwrap());
             }
-            mcp::Call::ScratchOpen(launch) => return self.scratch_open(workspace, launch),
+            mcp::Call::ScratchOpen(_) => unreachable!("mcp_request answers scratch.open"),
         };
         let sent = format!("sent {verb} to pane {to}");
         let (client, line) = shown.agent_send(&to, verb, payload)?;
@@ -144,16 +152,50 @@ impl State {
     }
 
     /// Start the program in the workspace's scratch pane, or ask the
-    /// program there to close and start it once it has.
-    fn scratch_open(&mut self, workspace: usize, mut launch: Launch) -> Result<String, String> {
+    /// program there to close and start it once it has, and answer once
+    /// the program's start is known.
+    fn scratch_open(&mut self, workspace: usize, launch: Launch, reply: mcp::Reply) {
+        let (launch, wait, occupants) = match self.scratch_launch(workspace, launch) {
+            Ok(ready) => ready,
+            Err(reason) => {
+                let _ = reply.send(Err(reason));
+                return;
+            }
+        };
+        self.answer_scratch(workspace, None);
+        let Some(scratch) = &mut self.workspaces[workspace].scratch else {
+            return;
+        };
+        scratch.waiting = Some(Waiting::new(reply, launch.program.clone(), wait));
+        self.time_scratch(workspace);
+        if occupants.is_empty() {
+            self.start_scratch(workspace, launch);
+            return;
+        }
+        for occupant in &occupants {
+            occupant.send_close();
+        }
+        if let Some(scratch) = &mut self.workspaces[workspace].scratch {
+            scratch.next = Some(launch);
+        }
+    }
+
+    /// The launch with its program resolved, the time to wait for it, and
+    /// the windows in the scratch pane that must close first.
+    fn scratch_launch(
+        &self,
+        workspace: usize,
+        mut launch: Launch,
+    ) -> Result<(Launch, Duration, Vec<ToplevelSurface>), String> {
         let shown = &self.workspaces[workspace];
         let name = shown.scratch_pane().ok_or(NO_SCRATCH)?;
+        let wait = scratch::wait_for(launch.wait)?;
         launch.program = scratch::resolve_program(
             &launch.program,
             &std::env::var_os("PATH").unwrap_or_default(),
             &shown.cwd,
         )?;
-        let occupants: Vec<ToplevelSurface> = shown
+        let occupants = shown
             .by_name(name)
             .and_then(|(tab, id)| shown.tabs[tab].layout.pane(id))
             .map(|pane| {
@@ -163,52 +205,164 @@ impl State {
                     .collect()
             })
             .unwrap_or_default();
-        if occupants.is_empty() {
-            return self.start_scratch(workspace, launch);
-        }
-        for occupant in &occupants {
-            occupant.send_close();
-        }
-        let reply = format!(
-            "asked the program in pane {name} to close; {} starts there once it has",
-            launch.program
-        );
-        if let Some(scratch) = &mut self.workspaces[workspace].scratch {
-            scratch.next = Some(launch);
-        }
-        Ok(reply)
+        Ok((launch, wait, occupants))
     }
 
-    pub(super) fn start_scratch(
-        &mut self,
-        workspace: usize,
-        launch: Launch,
-    ) -> Result<String, String> {
-        let name = self.workspaces[workspace]
-            .scratch_pane()
-            .ok_or(NO_SCRATCH)?
-            .to_string();
-        let shown = &self.workspaces[workspace];
-        let mut command = if launch.terminal {
-            let mut ghostty = self.children.ghostty(shown, &name, &name, &shown.cwd);
-            ghostty.arg("-e").arg(&launch.program);
-            ghostty
-        } else {
-            self.children.command(shown, &launch.program, Some(&name))
+    /// Start the program in the scratch pane. A call waiting on it hears at
+    /// once that a terminal started, and otherwise waits on the program.
+    pub(super) fn start_scratch(&mut self, workspace: usize, launch: Launch) {
+        let started = self.spawn_scratch(workspace, &launch);
+        let Some(scratch) = &mut self.workspaces[workspace].scratch else {
+            return;
         };
-        command.args(&launch.args);
-        let pid = self.children.spawn(command)?;
-        if !launch.terminal
-            && let Some(scratch) = &mut self.workspaces[workspace].scratch
-        {
-            scratch.expected = Some(pid);
+        let name = scratch.pane.clone();
+        let pid = match started {
+            Ok(pid) if !launch.terminal => pid,
+            Ok(_) => {
+                let started = format!("started {} in a terminal in pane {name}", launch.program);
+                self.answer_scratch(workspace, Some(Ok(started)));
+                return;
+            }
+            Err(error) => {
+                if scratch.waiting.is_none() {
+                    eprintln!("decade: {error}");
+                }
+                self.answer_scratch(workspace, Some(Err(error)));
+                return;
+            }
+        };
+        scratch.expected = Some(pid);
+        if let Some(waiting) = &mut scratch.waiting {
+            waiting.pid = Some(pid);
+            waiting.stderr_open = true;
+            self.time_scratch(workspace);
         }
-        let place = if launch.terminal {
-            "in a terminal in"
-        } else {
-            "in"
+    }
+
+    /// Spawn the program for the scratch pane, reading its stderr when it
+    /// runs as its own window, and return its pid.
+    fn spawn_scratch(&mut self, workspace: usize, launch: &Launch) -> Result<u32, String> {
+        let shown = &self.workspaces[workspace];
+        let name = shown.scratch_pane().ok_or(NO_SCRATCH)?;
+        if launch.terminal {
+            let mut ghostty = self.children.ghostty(shown, name, name, &shown.cwd);
+            ghostty.arg("-e").arg(&launch.program).args(&launch.args);
+            return self.children.spawn(ghostty);
+        }
+        let mut command = self.children.command(shown, &launch.program, Some(name));
+        command.args(&launch.args);
+        let (pid, stderr) = self.children.spawn_with_stderr(command)?;
+        let mut lines = Lines::default();
+        let inserted = self.loop_handle.insert_source(
+            Generic::new(stderr, Interest::READ, CalloopMode::Level),
+            move |_, stderr, state| {
+                let open = lines.read(&**stderr, |line| state.scratch_stderr(pid, line));
+                if open {
+                    return Ok(PostAction::Continue);
+                }
+                state.scratch_stderr_closed(pid);
+                Ok(PostAction::Remove)
+            },
+        );
+        if let Err(error) = inserted {
+            eprintln!(
+                "decade: could not read the stderr of {}: {error}",
+                launch.program
+            );
+        }
+        Ok(pid)
+    }
+
+    /// (Re)start the clock on the workspace's waiting `scratch.open`.
+    fn time_scratch(&mut self, workspace: usize) {
+        let id = self.workspaces[workspace].id;
+        let Some(waiting) = (self.workspaces[workspace].scratch.as_mut())
+            .and_then(|scratch| scratch.waiting.as_mut())
+        else {
+            return;
         };
-        Ok(format!("started {} {place} pane {name}", launch.program))
+        if let Some(timer) = waiting.timer.take() {
+            self.loop_handle.remove(timer);
+        }
+        let timer = Timer::from_duration(waiting.wait);
+        let inserted = self.loop_handle.insert_source(timer, move |_, _, state| {
+            if let Some(workspace) = state.workspace_index(id)
+                && let Some(scratch) = &mut state.workspaces[workspace].scratch
+                && let Some(waiting) = &mut scratch.waiting
+            {
+                waiting.timer = None;
+                state.answer_scratch(workspace, None);
+            }
+            TimeoutAction::Drop
+        });
+        waiting.timer = inserted.ok();
+    }
+
+    /// Answer the workspace's waiting `scratch.open` with `answer`, or else
+    /// with what is known of its program so far.
+    fn answer_scratch(&mut self, workspace: usize, answer: Option<Result<String, String>>) {
+        let Some(scratch) = &mut self.workspaces[workspace].scratch else {
+            return;
+        };
+        let Some(waiting) = scratch.waiting.take() else {
+            return;
+        };
+        if let Some(timer) = waiting.timer {
+            self.loop_handle.remove(timer);
+        }
+        let answer = answer.unwrap_or_else(|| Ok(waiting.report(&scratch.pane)));
+        let _ = waiting.reply.send(answer);
+    }
+
+    /// The workspace whose `scratch.open` waits on the program `pid`.
+    fn waiting_on(&self, pid: u32) -> Option<usize> {
+        self.workspaces.iter().position(|workspace| {
+            (workspace.scratch.as_ref())
+                .and_then(|scratch| scratch.waiting.as_ref())
+                .is_some_and(|waiting| waiting.pid == Some(pid))
+        })
+    }
+
+    fn scratch_stderr(&mut self, pid: u32, line: &str) {
+        eprintln!("{line}");
+        if let Some(workspace) = self.waiting_on(pid)
+            && let Some(scratch) = &mut self.workspaces[workspace].scratch
+            && let Some(waiting) = &mut scratch.waiting
+        {
+            waiting.stderr_line(line);
+        }
+    }
+
+    fn scratch_stderr_closed(&mut self, pid: u32) {
+        let Some(workspace) = self.waiting_on(pid) else {
+            return;
+        };
+        let Some(waiting) = (self.workspaces[workspace].scratch.as_mut())
+            .and_then(|scratch| scratch.waiting.as_mut())
+        else {
+            return;
+        };
+        waiting.stderr_open = false;
+        if waiting.exited.is_some() {
+            self.answer_scratch(workspace, None);
+        }
+    }
+
+    /// Note that the child `pid` has exited, and answer a `scratch.open`
+    /// waiting on it once its stderr has been read to the end.
+    pub(super) fn child_exited(&mut self, pid: u32, status: ExitStatus) {
+        let Some(workspace) = self.waiting_on(pid) else {
+            return;
+        };
+        let Some(waiting) = (self.workspaces[workspace].scratch.as_mut())
+            .and_then(|scratch| scratch.waiting.as_mut())
+        else {
+            return;
+        };
+        waiting.exited = Some(status);
+        if !waiting.stderr_open {
+            self.answer_scratch(workspace, None);
+        }
     }
 
     /// The workspace, tab and id of the empty scratch pane waiting for a
@@ -234,6 +388,17 @@ impl State {
                 continue;
             }
             scratch.expected = None;
+            let landed = (scratch.waiting.as_ref())
+                .filter(|waiting| waiting.pid == Some(expected))
+                .map(|waiting| {
+                    format!(
+                        "started {} in pane {}, and its window is there",
+                        waiting.program, scratch.pane
+                    )
+                });
+            if let Some(landed) = landed {
+                self.answer_scratch(index, Some(Ok(landed)));
+            }
             return Some((index, tab, id));
         }
         None

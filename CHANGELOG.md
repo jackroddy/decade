@@ -131,8 +131,14 @@ command line and what the tool writes.
   in the scratch pane. The program runs in a terminal or as its own window.
   `program` is a name on decade's `PATH`, or a path relative to the
   workspace's directory. decade asks a program already in the scratch pane to close
-  first. The MCP tool `scratch.send` sends a message to the program in the
-  scratch pane.
+  first. For a program that runs as its own window, the call waits until
+  the window arrives, the program exits, or 5 seconds pass, and says which.
+  An exit comes with the exit status and the last 20 lines of the
+  program's stderr. The optional `wait` sets how many seconds the call
+  waits. A program still running past it gets its window in the scratch
+  pane when it opens one. For a program in a terminal, the call says that
+  the terminal started. The MCP tool `scratch.send` sends a message to the
+  program in the scratch pane.
 - Ctrl+dragging a pane, or dragging it by the name on its bar, carries a
   small copy of it under the pointer. Dropping it on a target drawn over
   another pane swaps the two or splits that pane on one side. Dropping it

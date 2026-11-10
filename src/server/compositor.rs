@@ -416,7 +416,9 @@ fn insert_sources(
         .unwrap();
     handle
         .insert_source(Signals::new(&[Signal::SIGCHLD]).unwrap(), |_, _, state| {
-            state.children.reap();
+            for (pid, status) in state.children.reap() {
+                state.child_exited(pid, status);
+            }
         })
         .unwrap();
 
@@ -1500,10 +1502,8 @@ impl XdgShellHandler for State {
             .as_mut()
             .filter(|_| scratched && !closing)
             .and_then(|scratch| scratch.next.take());
-        if let Some(next) = next
-            && let Err(error) = self.start_scratch(workspace, next)
-        {
-            eprintln!("decade: {error}");
+        if let Some(next) = next {
+            self.start_scratch(workspace, next);
         }
         if self.prune(workspace, tab, id) {
             return;

@@ -910,7 +910,7 @@ impl Viewer {
             Generic::new(stream, Interest::READ, Mode::Level),
             move |_, stream, viewer: &mut Viewer| {
                 let mut recount = false;
-                let open = lines.read(stream, |line| recount |= hypr::wants_recount(line));
+                let open = lines.read(&**stream, |line| recount |= hypr::wants_recount(line));
                 if recount {
                     viewer.recount_alone();
                 }

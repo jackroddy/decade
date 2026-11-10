@@ -1,5 +1,4 @@
 use std::io::{self, Read};
-use std::os::unix::net::UnixStream;
 
 /// The bytes read from a nonblocking stream since its last newline.
 #[derive(Default)]
@@ -10,7 +9,7 @@ pub struct Lines {
 impl Lines {
     /// Read what `stream` holds, passing each whole line, without its newline,
     /// to `line`. Return false once the stream has closed or failed.
-    pub fn read(&mut self, mut stream: &UnixStream, mut line: impl FnMut(&str)) -> bool {
+    pub fn read(&mut self, mut stream: impl Read, mut line: impl FnMut(&str)) -> bool {
         let mut chunk = [0u8; 4096];
         loop {
             match stream.read(&mut chunk) {
@@ -32,6 +31,7 @@ impl Lines {
 #[cfg(test)]
 mod tests {
     use std::io::Write;
+    use std::os::unix::net::UnixStream;
 
     use super::*;
 

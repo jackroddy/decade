@@ -1,6 +1,8 @@
 use std::ffi::OsString;
+use std::fs::File;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, ExitStatus, Stdio};
 
 use crate::server::workspace::{Workspace, app_id_prefix};
 
@@ -65,14 +67,29 @@ impl Children {
     }
 
     /// Start the command, and return its pid.
-    pub fn spawn(&mut self, mut command: Command) -> Result<u32, String> {
+    pub fn spawn(&mut self, command: Command) -> Result<u32, String> {
+        self.start(command).map(|child| child.id())
+    }
+
+    /// Start the command with its stderr on a pipe, and return its pid and
+    /// the pipe's nonblocking read end.
+    pub fn spawn_with_stderr(&mut self, mut command: Command) -> Result<(u32, File), String> {
+        command.stderr(Stdio::piped());
+        let child = self.start(command)?;
+        let pid = child.id();
+        let stderr = File::from(OwnedFd::from(child.stderr.take().expect("a piped stderr")));
+        rustix::io::ioctl_fionbio(&stderr, true)
+            .map_err(|error| format!("could not read the stderr of pid {pid}: {error}"))?;
+        Ok((pid, stderr))
+    }
+
+    fn start(&mut self, mut command: Command) -> Result<&mut Child, String> {
         let program = command.get_program().to_string_lossy().into_owned();
         let child = command
             .spawn()
             .map_err(|error| format!("could not start {program}: {error}"))?;
-        let pid = child.id();
         self.running.push(child);
-        Ok(pid)
+        Ok(self.running.last_mut().unwrap())
     }
 
     /// Whether the child with this pid has not exited.
@@ -83,10 +100,19 @@ impl Children {
             .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
     }
 
-    /// Wait on every child that has exited, so none is left a zombie.
-    pub fn reap(&mut self) {
-        self.running
-            .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
+    /// Wait on every child that has exited, so none is left a zombie, and
+    /// return the pid and exit status of each.
+    pub fn reap(&mut self) -> Vec<(u32, ExitStatus)> {
+        let mut exited = Vec::new();
+        self.running.retain_mut(|child| match child.try_wait() {
+            Ok(None) => true,
+            Ok(Some(status)) => {
+                exited.push((child.id(), status));
+                false
+            }
+            Err(_) => false,
+        });
+        exited
     }
 
     pub fn kill_all(&mut self) {
@@ -143,21 +169,43 @@ mod tests {
     }
 
     #[test]
-    fn a_reaped_child_that_exited_leaves_no_zombie() {
+    fn a_reaped_child_that_exited_leaves_no_zombie_and_gives_its_status() {
         let mut children = Children::new("wayland-9".into(), "/tmp".into(), None);
-        let pid = children.spawn(Command::new("true")).unwrap();
+        let pid = children.spawn(Command::new("false")).unwrap();
         let mut sleep = Command::new("sleep");
         sleep.arg("5");
         let sleeper = children.spawn(sleep).unwrap();
+        let mut exited = Vec::new();
         for _ in 0..100 {
-            children.reap();
+            exited.extend(children.reap());
             if children.running.len() == 1 {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        assert_eq!(exited.len(), 1);
+        assert_eq!((exited[0].0, exited[0].1.code()), (pid, Some(1)));
         assert_eq!(children.running[0].id(), sleeper);
+        children.kill_all();
+    }
+
+    #[test]
+    fn a_program_started_with_its_stderr_on_a_pipe_writes_its_stderr_there() {
+        let mut children = Children::new("wayland-9".into(), "/tmp".into(), None);
+        let mut shell = Command::new("sh");
+        shell.args(["-c", "echo out; echo broken >&2"]);
+        shell.stdout(Stdio::null());
+        let (_, stderr) = children.spawn_with_stderr(shell).unwrap();
+        let mut seen = Vec::new();
+        let mut lines = crate::lines::Lines::default();
+        for _ in 0..100 {
+            if !lines.read(&stderr, |line| seen.push(line.to_string())) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(seen, ["broken"]);
         children.kill_all();
     }
 
