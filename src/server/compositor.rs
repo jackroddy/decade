@@ -18,7 +18,7 @@ use smithay::backend::renderer::ImportDma;
 use smithay::backend::renderer::gles::{GlesPixelProgram, GlesRenderer, UniformName, UniformType};
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::desktop::{
-    PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy,
+    PopupGrab, PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy,
     find_popup_root_surface, get_popup_toplevel_coords,
 };
 use smithay::input::pointer::CursorImageStatus;
@@ -147,6 +147,9 @@ pub struct State {
     next_workspace: u32,
     unplaced: Vec<ToplevelSurface>,
     popups: PopupManager,
+
+    /// The grab the last popup to ask for one was given.
+    popup_grab: Option<PopupGrab<State>>,
     rounded: GlesPixelProgram,
     overlay: Option<Overlay>,
     sidebar_open: bool,
@@ -247,6 +250,7 @@ pub fn run() {
         workspaces: Vec::new(),
         unplaced: Vec::new(),
         popups: PopupManager::default(),
+        popup_grab: None,
         overlay: None,
         sidebar_open: true,
         settings,
@@ -1360,6 +1364,53 @@ impl State {
         });
     }
 
+    /// Dismiss every popup open over a pane. When one held a grab, end it
+    /// and give the keyboard back to the focused pane.
+    fn dismiss_popups(&mut self) {
+        let grabbed = match self.popup_grab.take() {
+            Some(mut grab) if !grab.has_ended() => {
+                grab.ungrab(PopupUngrabStrategy::All);
+                Some(grab)
+            }
+            _ => None,
+        };
+        for workspace in &self.workspaces {
+            for tab in &workspace.tabs {
+                for client in tab.layout.panes.iter().flat_map(|pane| &pane.clients) {
+                    let root = client.toplevel.wl_surface();
+                    let open: Vec<PopupKind> = PopupManager::popups_for_surface(root)
+                        .map(|(popup, _)| popup)
+                        .collect();
+                    for popup in open {
+                        let _ = PopupManager::dismiss_popup(root, &popup);
+                    }
+                }
+            }
+        }
+        let Some(grab) = grabbed else {
+            return;
+        };
+        let serials = [
+            grab.serial(),
+            grab.previous_serial().unwrap_or(grab.serial()),
+        ];
+        let serial = SERIAL_COUNTER.next_serial();
+        let keyboard = self.seat.get_keyboard().unwrap();
+        if serials.iter().any(|&held| keyboard.has_grab(held)) {
+            keyboard.unset_grab(self);
+        }
+        let pointer = self.seat.get_pointer().unwrap();
+        if serials.iter().any(|&held| pointer.has_grab(held)) {
+            pointer.unset_grab(self, serial, self.now());
+        }
+        let surface = self
+            .layout()
+            .pane(self.layout().focused)
+            .and_then(|pane| pane.toplevel())
+            .map(|toplevel| toplevel.wl_surface().clone());
+        keyboard.set_focus(self, surface, serial);
+    }
+
     fn send_scale(&self, surface: &WlSurface) {
         with_states(surface, |states| {
             with_fractional_scale(states, |fractional| {
@@ -1595,6 +1646,7 @@ impl XdgShellHandler for State {
             return;
         }
         pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
+        self.popup_grab = Some(grab);
     }
 
     fn reposition_request(

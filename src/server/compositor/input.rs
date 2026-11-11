@@ -191,6 +191,9 @@ impl State {
             }
             return;
         }
+        if pressed && !self.press_reaches_popup(button) {
+            self.dismiss_popups();
+        }
         if button == BTN_RIGHT && pressed && self.right_press_on_chrome() {
             return;
         }
@@ -319,6 +322,9 @@ impl State {
             }
         }
         if let Some(key) = key {
+            if dismisses_popups(key) {
+                self.dismiss_popups();
+            }
             self.run_key(key);
         }
     }
@@ -521,6 +527,32 @@ impl State {
         false
     }
 
+    /// Whether a press goes to the client of a pane with a popup open, which
+    /// closes its popup itself, rather than to decade's chrome or another
+    /// pane.
+    fn press_reaches_popup(&self, button: u32) -> bool {
+        let ctrl = self.seat.get_keyboard().unwrap().modifier_state().ctrl;
+        if button == BTN_LEFT && ctrl {
+            return false;
+        }
+        let (x, y) = self.pointer_px();
+        if self.frame(self.current()).hit(x, y).is_some() {
+            return false;
+        }
+        let (column, row) = self.pointer_cell();
+        let layout = self.layout();
+        if (self.bar && layout.bar_hit(column, row).is_some())
+            || layout.chrome_at(column, row).is_some()
+        {
+            return false;
+        }
+        layout
+            .pane_at(column, row)
+            .and_then(|id| layout.pane(id))
+            .and_then(|pane| pane.toplevel())
+            .is_some_and(|toplevel| popups_over(toplevel.wl_surface()).next().is_some())
+    }
+
     /// Open the menu for the chrome under the pointer, and return whether
     /// the pointer was on chrome rather than a client.
     fn right_press_on_chrome(&mut self) -> bool {
@@ -692,6 +724,13 @@ fn repeats(key: Key) -> bool {
     }
 }
 
+/// Whether `key` dismisses open popups before it acts.
+fn dismisses_popups(key: Key) -> bool {
+    // an overlay is open only after its key dismissed the popups, and a
+    // clipboard chord goes to the popup holding the keyboard
+    !matches!(key, Key::Menu(_) | Key::Clipboard(_))
+}
+
 fn super_key(sym: u32, shift: bool) -> Option<Key> {
     let direction = match sym {
         keysyms::KEY_h | keysyms::KEY_H => Some(Direction::Left),
@@ -755,4 +794,19 @@ fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Option<Ke
         _ => MenuKey::Char(sym.key_char().filter(|ch| !ch.is_control())?),
     };
     Some(Key::Menu(key))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_decade_keybind_dismisses_popups_but_a_clipboard_chord_or_overlay_key_does_not() {
+        let focus = super_key(keysyms::KEY_h, false).unwrap();
+        assert!(dismisses_popups(focus));
+        assert!(dismisses_popups(Key::Palette));
+        let paste = super_key(keysyms::KEY_v, false).unwrap();
+        assert!(!dismisses_popups(paste));
+        assert!(!dismisses_popups(Key::Menu(MenuKey::Escape)));
+    }
 }

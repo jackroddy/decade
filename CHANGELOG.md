@@ -163,7 +163,10 @@ command line and what the tool writes.
 - Scroll wheel events reach clients.
 - Menus, popovers and tooltips that a program opens appear over its pane,
   kept inside the pane, and take the pointer and keyboard while they are
-  open. Before, a GTK program such as ghostty froze on its first menu.
+  open. Before, a GTK program such as ghostty froze on its first menu. decade
+  closes them before it acts on a click on its own chrome, a click on
+  another pane or a decade key such as Super+H. Super+C, Super+V and
+  Super+X still go to the open menu.
 - decade is an MCP server over streamable HTTP, at the address in
   `DECADE_MCP` in the environment of everything it starts. Its tools are
   `point`, `panes`, `show`, `highlight` and `clear`; a call becomes
