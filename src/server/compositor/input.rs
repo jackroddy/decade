@@ -271,9 +271,9 @@ impl State {
                 return;
             }
         }
-        if let Some(Overlay::Context(menu)) = &self.overlay {
+        let (x, y) = self.pointer_px();
+        if let Some(Overlay::Context(menu)) = &mut self.overlay {
             if pressed {
-                let (x, y) = self.pointer_px();
                 let outcome = match button {
                     BTN_LEFT => menu.click(x, y),
                     _ if menu.contains(x, y) => Outcome::Open,

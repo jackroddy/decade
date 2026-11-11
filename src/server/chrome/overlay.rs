@@ -65,6 +65,30 @@ pub const LARGE: Size = Size {
     hint_above: 10,
 };
 
+/// The context menu, the name field and the sidebar popover.
+pub const SMALL: Size = Size {
+    face: Face::Chrome,
+    bold: Face::ChromeBold,
+    mockup: 18,
+    row: 22,
+    padding: 6,
+    radius: 8,
+    row_radius: 5,
+    shadow: 4,
+    inset: 6,
+    fill_gap: 1,
+    key_radius: 3,
+    key_padding: 4,
+    key_rise: 1,
+    key_drop: 2,
+    header_gap: 2,
+    header_below: 4,
+    rules: false,
+    rule_above: 0,
+    rule_below: 0,
+    hint_above: 5,
+};
+
 impl Size {
     /// `px`, a length at this size's mockup cell, scaled to `cell_height`.
     pub fn px(&self, px: i32, cell_height: i32) -> i32 {
@@ -201,6 +225,16 @@ impl Layout {
         let at = (
             (width - self.width).max(0) / 2,
             (height - self.height).max(0) / 2,
+        );
+        self.at(at)
+    }
+
+    /// Put the box at `at`, moved left and up as far as it takes to fit
+    /// in `window`.
+    pub fn inside(self, at: (i32, i32), (width, height): (i32, i32)) -> Layout {
+        let at = (
+            at.0.min(width - self.width).max(0),
+            at.1.min(height - self.height).max(0),
         );
         self.at(at)
     }
@@ -621,7 +655,7 @@ pub fn draw_hint(
 mod tests {
     use super::*;
 
-    const CELL: (i32, i32) = (10, 25);
+    const CELL: (i32, i32) = (8, 18);
 
     fn rows() -> [Row<'static>; 4] {
         [
@@ -644,7 +678,7 @@ mod tests {
     }
 
     fn list() -> List {
-        Layout::new(&LARGE, CELL, 200)
+        Layout::new(&SMALL, CELL, 200)
             .list(4)
             .end()
             .at((100, 50))
@@ -740,13 +774,13 @@ mod tests {
         let selected = RowStyle::new(&LARGE, &deny, true);
         assert_eq!(selected.fill, Some(palette::MID_RED));
         assert_eq!(selected.face, Face::MenuBold);
-        let grey = RowStyle::new(&LARGE, &rows()[1], true);
+        let grey = RowStyle::new(&SMALL, &rows()[1], true);
         assert_eq!((grey.fill, grey.text), (None, palette::MUTED));
-        assert_eq!(grey.face, Face::Menu);
-        let plain = RowStyle::new(&LARGE, &rows()[2], true);
+        assert_eq!(grey.face, Face::Chrome);
+        let plain = RowStyle::new(&SMALL, &rows()[2], true);
         assert_eq!(plain.fill, Some(palette::SELECTION));
-        assert_eq!(plain.face, Face::MenuBold);
-        assert_eq!(RowStyle::new(&LARGE, &rows()[2], false).fill, None);
+        assert_eq!(plain.face, Face::ChromeBold);
+        assert_eq!(RowStyle::new(&SMALL, &rows()[2], false).fill, None);
     }
 
     #[test]
@@ -764,6 +798,18 @@ mod tests {
         let hint = header + 3 * 40 + 8 + 1 + 10;
         assert_eq!(layout.hint, Some(hint));
         assert_eq!(layout.height, hint + 25 + 2 * 2 + 2 + 16);
+    }
+
+    #[test]
+    fn a_box_moves_inside_the_window_near_an_edge() {
+        let layout = Layout::new(&SMALL, CELL, 100).list(2).end();
+        let height = layout.height;
+        let near = layout.inside((750, 590), (800, 600));
+        assert_eq!(near.at, (700, 600 - height));
+        let tiny = Layout::new(&SMALL, CELL, 100)
+            .end()
+            .inside((50, 50), (40, 10));
+        assert_eq!(tiny.at, (0, 0));
     }
 
     #[test]

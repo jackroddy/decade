@@ -1,15 +1,11 @@
-use crate::server::chrome::draw::{Face, Scene, scaled};
-use crate::server::chrome::frame::{CARD_RADIUS, POPOVER_PADDING, SHADOW_OFFSET};
+use crate::server::chrome::draw::Scene;
 use crate::server::chrome::menu::{Action, MenuKey, Outcome};
-use crate::server::chrome::palette;
+use crate::server::chrome::overlay::{Cursor, Layout, Row, SMALL, Step};
 use crate::server::chrome::rename::Named;
 use crate::server::workspace::Group;
 
-// the sizes below are in pixels at 18 px rows, for `scaled`
-
-/// The space above and below an entry's text, inside its row.
-const ROW_PADDING: i32 = 3;
-const ROW_RADIUS: i32 = 4;
+/// The fewest cells of text a row has room for.
+const MIN_COLUMNS: i32 = 16;
 
 /// What a right click on decade's chrome landed on, with what its entries
 /// depend on.
@@ -73,6 +69,21 @@ pub enum Command {
 pub struct Entry {
     pub label: String,
     pub command: Command,
+}
+
+impl Entry {
+    fn destructive(&self) -> bool {
+        matches!(self.command, Command::DeleteGroup(_))
+    }
+}
+
+fn rows(entries: &[Entry]) -> Vec<Row<'_>> {
+    (entries.iter())
+        .map(|entry| Row {
+            destructive: entry.destructive(),
+            ..Row::new(&entry.label)
+        })
+        .collect()
 }
 
 /// The entries of the menu for `place`, in the order they are listed, with
@@ -149,18 +160,15 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry> {
 pub struct ContextMenu {
     entries: Vec<Entry>,
 
-    /// The box's top left, in pixels.
-    at: (i32, i32),
-    size: (i32, i32),
-
-    /// The chrome font's cell.
-    cell: (i32, i32),
-    selected: usize,
+    /// The box, in window pixels.
+    layout: Layout,
+    cursor: Cursor,
 }
 
 impl ContextMenu {
     /// The menu of `entries` with its corner at `pointer`, moved left and
     /// up as far as it takes to fit in `window`, or `None` for no entries.
+    /// `cell` is the chrome font's cell.
     pub fn open(
         entries: Vec<Entry>,
         pointer: (i32, i32),
@@ -170,61 +178,40 @@ impl ContextMenu {
         if entries.is_empty() {
             return None;
         }
-        let (cell_width, cell_height) = cell;
         let longest = (entries.iter())
             .map(|entry| entry.label.chars().count())
             .max()
             .unwrap_or(0) as i32;
-        let padding = scaled(POPOVER_PADDING, cell_height);
-        let row = row_height(cell_height);
-        let size = (
-            2 * padding + (longest + 2) * cell_width,
-            2 * padding + entries.len() as i32 * row,
-        );
-        let at = (
-            pointer.0.min(window.0 - size.0).max(0),
-            pointer.1.min(window.1 - size.1).max(0),
-        );
+        let width = SMALL.width(cell, longest.max(MIN_COLUMNS));
+        let layout = (Layout::new(&SMALL, cell, width))
+            .list(entries.len())
+            .end()
+            .inside(pointer, window);
         Some(ContextMenu {
             entries,
-            at,
-            size,
-            cell,
-            selected: 0,
+            layout,
+            cursor: Cursor::default(),
         })
     }
 
     pub fn contains(&self, x: i32, y: i32) -> bool {
-        let (left, top) = self.at;
-        (left..left + self.size.0).contains(&x) && (top..top + self.size.1).contains(&y)
-    }
-
-    /// The index of the entry under pixel `x`, `y`.
-    fn entry_at(&self, x: i32, y: i32) -> Option<usize> {
-        let padding = scaled(POPOVER_PADDING, self.cell.1);
-        let (left, top) = (self.at.0 + padding, self.at.1 + padding);
-        if x < left || x >= self.at.0 + self.size.0 - padding || y < top {
-            return None;
-        }
-        let index = ((y - top) / row_height(self.cell.1)) as usize;
-        (index < self.entries.len()).then_some(index)
+        self.layout.contains(x, y)
     }
 
     /// Select the entry under pixel `x`, `y`, and return whether the
     /// selection moved.
     pub fn hover(&mut self, x: i32, y: i32) -> bool {
-        match self.entry_at(x, y) {
-            Some(index) if index != self.selected => {
-                self.selected = index;
-                true
-            }
-            _ => false,
-        }
+        let Some(list) = self.layout.list_area() else {
+            return false;
+        };
+        self.cursor.hover(&list, &rows(&self.entries), x, y)
     }
 
     /// What a left click at pixel `x`, `y` does.
-    pub fn click(&self, x: i32, y: i32) -> Outcome {
-        match self.entry_at(x, y) {
+    pub fn click(&mut self, x: i32, y: i32) -> Outcome {
+        let list = self.layout.list_area();
+        let clicked = list.and_then(|list| self.cursor.click(&list, &rows(&self.entries), x, y));
+        match clicked {
             Some(index) => self.run(index),
             None if self.contains(x, y) => Outcome::Open,
             None => Outcome::Close,
@@ -232,18 +219,11 @@ impl ContextMenu {
     }
 
     pub fn key(&mut self, key: MenuKey) -> Outcome {
-        match key {
-            MenuKey::Up => self.selected = self.selected.saturating_sub(1),
-            MenuKey::Down => self.selected = (self.selected + 1).min(self.entries.len() - 1),
-            MenuKey::Enter => return self.run(self.selected),
-            MenuKey::Escape => return Outcome::Close,
-            MenuKey::Left
-            | MenuKey::Right
-            | MenuKey::Backspace
-            | MenuKey::Tab
-            | MenuKey::Char(_) => {}
+        match self.cursor.key(key, &rows(&self.entries)) {
+            Step::Run(index) => self.run(index),
+            Step::Close => Outcome::Close,
+            Step::Stay | Step::Pass(_) => Outcome::Open,
         }
-        Outcome::Open
     }
 
     fn run(&self, index: usize) -> Outcome {
@@ -252,45 +232,14 @@ impl ContextMenu {
 
     /// Draw the menu in window pixels, with the chrome font.
     pub fn draw(&self, scene: &mut Scene) {
-        let (left, top) = self.at;
-        let (width, height) = self.size;
-        let (cell_width, cell_height) = self.cell;
-        let padding = scaled(POPOVER_PADDING, cell_height);
-        let radius = scaled(CARD_RADIUS, cell_height);
-        let offset = scaled(SHADOW_OFFSET, cell_height);
-        let shadow = palette::SHADOW;
-        scene.rounded(
-            left + offset,
-            top + offset,
-            self.size,
-            radius,
-            shadow,
-            shadow,
-        );
-        let fill = palette::LIGHTER_BACKGROUND;
-        scene.rounded(left, top, (width, height), radius, fill, palette::BORDER);
-
-        let row = row_height(cell_height);
-        let row_radius = scaled(ROW_RADIUS, cell_height);
-        for (index, entry) in self.entries.iter().enumerate() {
-            let y = top + padding + index as i32 * row;
-            let face = if index == self.selected {
-                let fill = palette::SELECTION;
-                let size = (width - 2 * padding, row);
-                scene.rounded(left + padding, y, size, row_radius, fill, fill);
-                Face::ChromeBold
-            } else {
-                Face::Chrome
-            };
-            let text_y = y + scaled(ROW_PADDING, cell_height);
-            let text_x = left + padding + cell_width;
-            scene.text_px(text_x, text_y, &entry.label, face, palette::FOREGROUND);
+        self.layout.draw_box(scene);
+        let Some(list) = self.layout.list_area() else {
+            return;
+        };
+        for (index, row) in rows(&self.entries).iter().enumerate() {
+            list.draw_row(scene, index, row, index == self.cursor.selected);
         }
     }
-}
-
-fn row_height(cell_height: i32) -> i32 {
-    cell_height + 2 * scaled(ROW_PADDING, cell_height)
 }
 
 #[cfg(test)]
@@ -454,6 +403,17 @@ mod tests {
     }
 
     #[test]
+    fn delete_is_the_only_destructive_entry() {
+        let destructive: Vec<String> = (entries(Place::Group(7), &groups()).into_iter())
+            .filter(Entry::destructive)
+            .map(|entry| entry.label)
+            .collect();
+        assert_eq!(destructive, ["Delete"]);
+        let pane = pane_menu();
+        assert!(!pane.entries.iter().any(Entry::destructive));
+    }
+
+    #[test]
     fn a_tab_pill_offers_rename() {
         assert_eq!(
             entries(Place::Tab(1), &[]),
@@ -464,29 +424,29 @@ mod tests {
     #[test]
     fn the_menu_opens_at_the_pointer_and_moves_inside_the_window_near_an_edge() {
         let menu = pane_menu();
-        assert_eq!(menu.at, (100, 100));
+        assert_eq!(menu.layout.at, (100, 100));
 
-        // "Accept screenshots" is 18 cells, with a cell each side, and
-        // each row is 18 px with 3 above and below
-        let size = (2 * 6 + 20 * 8, 2 * 6 + 5 * 24);
-        assert_eq!(menu.size, size);
+        // "Accept screenshots" is 18 cells, with the padding and the
+        // row inset each side, and each row is 22 px
+        let size = (18 * 8 + 2 * (6 + 6), 2 * 6 + 5 * 22);
+        assert_eq!((menu.layout.width, menu.layout.height), size);
 
         let corner = ContextMenu::open(menu.entries.clone(), (795, 590), WINDOW, CELL).unwrap();
-        assert_eq!(corner.at, (WINDOW.0 - size.0, WINDOW.1 - size.1));
+        assert_eq!(corner.layout.at, (WINDOW.0 - size.0, WINDOW.1 - size.1));
         let tiny = ContextMenu::open(menu.entries.clone(), (50, 50), (40, 40), CELL).unwrap();
-        assert_eq!(tiny.at, (0, 0));
+        assert_eq!(tiny.layout.at, (0, 0));
     }
 
     #[test]
     fn up_and_down_move_the_selection_and_stop_at_the_first_and_last_entry() {
         let mut menu = pane_menu();
-        assert_eq!(menu.selected, 0);
+        assert_eq!(menu.cursor.selected, 0);
         assert_eq!(menu.key(MenuKey::Up), Outcome::Open);
-        assert_eq!(menu.selected, 0);
+        assert_eq!(menu.cursor.selected, 0);
         for _ in 0..5 {
             menu.key(MenuKey::Down);
         }
-        assert_eq!(menu.selected, 4);
+        assert_eq!(menu.cursor.selected, 4);
         assert_eq!(
             menu.key(MenuKey::Enter),
             Outcome::Run(Action::Command(Command::Rename(Named::Pane(4))))
@@ -504,9 +464,9 @@ mod tests {
     #[test]
     fn hovering_selects_an_entry_and_a_click_runs_it_or_dismisses_outside() {
         let mut menu = pane_menu();
-        let (x, y) = (100 + 6 + 8, 100 + 6 + 24 + 10);
+        let (x, y) = (100 + 6 + 8, 100 + 6 + 22 + 10);
         assert!(menu.hover(x, y));
-        assert_eq!(menu.selected, 1);
+        assert_eq!(menu.cursor.selected, 1);
         assert!(!menu.hover(x, y));
         assert_eq!(
             menu.click(x, y),
