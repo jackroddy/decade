@@ -1,0 +1,28 @@
+{
+  "id": "decade-4bb7d9",
+  "title": "A double-click on a pane's name also starts a pane drag",
+  "body": "A double-click on a pane's name on its Ctrl bar opens the rename field (9c9668c). The first press on the name also starts a pane drag, since dragging a pane by its name already exists. The drag does nothing on release, but the drag ghost may flash under the pointer between the two clicks.\n\n## Proposal\n\nA press on the pane's name starts the drag only once the pointer moves a few pixels, so a click or double-click never starts one.",
+  "type": "bug",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T01:06:39.308647629Z",
+  "updated_at": "2026-11-11T01:06:39.308647629Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "da4f5cd",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
