@@ -52,6 +52,9 @@ const POINTED_FILL: f32 = 0.3;
 const CARD_INSET: i32 = 6;
 const CARD_GAP: i32 = 6;
 const CARD_PADDING: i32 = 4;
+
+/// The lines of a card's text: name, path, state, message and usage.
+const CARD_LINES: i32 = 5;
 pub(super) const CARD_RADIUS: i32 = 6;
 const STRIPE: i32 = 3;
 
@@ -181,21 +184,10 @@ impl Entry {
         self.state() >= Some(AgentState::Done)
     }
 
-    /// The lines of the card's text.
-    fn card_lines(&self) -> i32 {
-        let agent = self.agents.first();
-        let message = agent.is_some_and(|agent| agent.message.is_some());
-        let usage = agent.is_some_and(|agent| !usage(agent, usize::MAX).is_empty());
-        3 + message as i32 + usage as i32
-    }
-
-    /// The lines of the popover's text: two for the workspace, each
-    /// agent's state and message, and the hint.
+    /// The lines of the popover's text: two for the workspace, two for
+    /// each agent's state and message, and the hint.
     fn popover_lines(&self) -> i32 {
-        let agents: i32 = (self.agents.iter())
-            .map(|agent| 1 + agent.message.is_some() as i32)
-            .sum();
-        3 + agents.max(1)
+        3 + 2 * self.agents.len().max(1) as i32
     }
 }
 
@@ -798,7 +790,7 @@ impl Frame {
                 if entry.group != id {
                     continue;
                 }
-                let card = 2 * padding + entry.card_lines() * row;
+                let card = 2 * padding + CARD_LINES * row;
                 if top + card > bottom {
                     return (rows, None);
                 }
@@ -1321,16 +1313,14 @@ impl Frame {
         let state = fit(&state_text(agent, others), room);
         scene.text_px(x, line(2), &state, Face::Chrome, agent_tint(agent));
 
-        let mut next = 3;
         if let Some(message) = agent.and_then(|agent| agent.message.as_deref()) {
             let message = fit(message, room.saturating_sub(2));
-            scene.text_px(x + 2 * cell_width, line(next), &message, Face::Chrome, DIM);
-            next += 1;
+            scene.text_px(x + 2 * cell_width, line(3), &message, Face::Chrome, DIM);
         }
         let spans = agent.map_or(Vec::new(), |agent| usage(agent, room.saturating_sub(2)));
         let mut span_x = x + 2 * cell_width;
         for (text, color) in spans {
-            scene.text_px(span_x, line(next), &text, Face::Chrome, color);
+            scene.text_px(span_x, line(4), &text, Face::Chrome, color);
             span_x += text.chars().count() as i32 * cell_width;
         }
     }
@@ -1458,24 +1448,23 @@ impl Frame {
         if entry.agents.is_empty() {
             let state = fit(&state_line(None, 0), room);
             scene.text_px(x, line(next), &state, Face::Chrome, MUTED);
-            next += 1;
+            next += 2;
         }
         for agent in &entry.agents {
             let state = fit(&state_line(Some(agent), 0), room);
             scene.text_px(x, line(next), &state, Face::Chrome, agent_tint(Some(agent)));
-            next += 1;
             if let Some(message) = &agent.message {
                 let message = fit(message, room.saturating_sub(2));
                 let color = palette::FADED_FOREGROUND;
                 scene.text_px(
                     x + 2 * cell_width,
-                    line(next),
+                    line(next + 1),
                     &message,
                     Face::Chrome,
                     color,
                 );
-                next += 1;
             }
+            next += 2;
         }
         scene.text_px(x, line(next), "click to show", Face::Chrome, DIM);
     }
@@ -1610,14 +1599,14 @@ mod tests {
     #[test]
     fn cards_follow_the_heading_and_a_blank_row_with_a_gap_between_them() {
         // at 18 px rows the mockup's sizes are unchanged: a card is
-        // 4 px of padding above and below its lines, with 6 px after it
+        // 4 px of padding above and below its five lines, with 6 px after it
         let (cards, new) = frame(true).cards();
         let tops: Vec<_> = cards
             .iter()
             .map(|&(_, top, height)| (top, height))
             .collect();
-        assert_eq!(tops, [(90, 80), (176, 62), (244, 62), (312, 62), (380, 62)]);
-        assert_eq!(new, Some(454));
+        assert_eq!(tops, [(90, 98), (194, 98), (298, 98), (402, 98), (506, 98)]);
+        assert_eq!(new, Some(616));
     }
 
     #[test]
@@ -1625,15 +1614,15 @@ mod tests {
         let mut frame = frame(true);
         frame.cell = (12, 27);
         let (cards, _) = frame.cards();
-        assert_eq!(cards[0], (0, 5 * 27, 2 * 6 + 4 * 27));
-        assert_eq!(cards[1].1, 5 * 27 + 2 * 6 + 4 * 27 + 9);
+        assert_eq!(cards[0], (0, 5 * 27, 2 * 6 + 5 * 27));
+        assert_eq!(cards[1].1, 5 * 27 + 2 * 6 + 5 * 27 + 9);
         assert_eq!(frame.card_span(), (9, 32 * 12 - 18));
     }
 
     #[test]
     fn cards_that_reach_past_the_bottom_are_left_out() {
         let mut frame = frame(true);
-        frame.rows = 14;
+        frame.rows = 17;
         let (cards, new) = frame.cards();
         assert_eq!(cards.len(), 2);
         assert_eq!(new, None);
@@ -1643,11 +1632,11 @@ mod tests {
     fn a_click_anywhere_on_a_card_shows_its_workspace_and_a_gap_does_nothing() {
         let frame = frame(true);
         assert_eq!(frame.hit(100, 90), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(250, 169), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(100, 170), None);
-        assert_eq!(frame.hit(100, 176), Some(Hit::Show(3)));
-        assert_eq!(frame.hit(100, 418), Some(Hit::Show(0)));
-        assert_eq!(frame.hit(100, 454), Some(Hit::New));
+        assert_eq!(frame.hit(250, 187), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(100, 188), None);
+        assert_eq!(frame.hit(100, 194), Some(Hit::Show(3)));
+        assert_eq!(frame.hit(100, 550), Some(Hit::Show(0)));
+        assert_eq!(frame.hit(100, 616), Some(Hit::New));
         assert_eq!(frame.hit(100, 78), None);
         assert_eq!(frame.hit(32 * 8, 90), None);
     }
@@ -1665,11 +1654,11 @@ mod tests {
         assert_eq!(frame.hit(left - 1, top + 13), Some(Hit::Show(2)));
         assert_eq!(frame.hit(left + 13, top + 26), Some(Hit::Show(2)));
         assert_eq!(frame.hit(6 + 3 + 8, 90 + 4 + 36), Some(Hit::Show(2)));
-        assert_eq!(frame.hit(left + 13, 176 + 4 + 13), Some(Hit::Clear(3)));
+        assert_eq!(frame.hit(left + 13, 194 + 4 + 13), Some(Hit::Clear(3)));
 
         // nail is working and jack has no agent
-        assert_eq!(frame.hit(left + 13, 312 + 4 + 13), Some(Hit::Show(1)));
-        assert_eq!(frame.hit(left + 13, 380 + 4 + 13), Some(Hit::Show(0)));
+        assert_eq!(frame.hit(left + 13, 402 + 4 + 13), Some(Hit::Show(1)));
+        assert_eq!(frame.hit(left + 13, 506 + 4 + 13), Some(Hit::Show(0)));
     }
 
     #[test]
@@ -1782,9 +1771,9 @@ mod tests {
     fn cards_needing_the_person_or_done_breathe_toward_their_tint_unless_hovered() {
         let peak = drawn(None, 1.0);
         assert_eq!(card_fill(&peak, 90), Some(bytes(palette::DARK_RED)));
-        assert_eq!(card_fill(&peak, 176), Some(bytes(palette::DARK_GREEN)));
-        assert_eq!(card_fill(&peak, 312), None);
-        assert_eq!(card_fill(&peak, 380), Some(bytes(CURRENT)));
+        assert_eq!(card_fill(&peak, 194), Some(bytes(palette::DARK_GREEN)));
+        assert_eq!(card_fill(&peak, 402), None);
+        assert_eq!(card_fill(&peak, 506), Some(bytes(CURRENT)));
         let hovered = drawn(Some(Hit::Show(2)), 1.0);
         assert_eq!(
             card_fill(&hovered, 90),
@@ -1812,11 +1801,11 @@ mod tests {
         assert_eq!(popover.at, (5 * 8 + 6, 45 - 5));
         assert_eq!(popover.size, (34 * 8, 2 * 6 + 5 * 18));
 
-        // jack has no message, so its popover is a line shorter
+        // jack has no agent, and its popover is as tall as the others
         frame.hover = Some(Hit::Show(0));
         let popover = frame.popover().unwrap();
         assert_eq!(popover.at, (46, 193 - 5));
-        assert_eq!(popover.size.1, 2 * 6 + 4 * 18);
+        assert_eq!(popover.size.1, 2 * 6 + 5 * 18);
 
         frame.hover = Some(Hit::New);
         assert!(frame.popover().is_none());
@@ -1860,7 +1849,7 @@ mod tests {
         frame.hover = Some(Hit::Show(1));
         let popover = frame.popover().unwrap();
         assert_eq!(popover.at.1 + popover.size.1, 12 * 18);
-        assert_eq!(popover.at.1, 12 * 18 - (2 * 6 + 4 * 18));
+        assert_eq!(popover.at.1, 12 * 18 - (2 * 6 + 5 * 18));
 
         frame.columns = 30;
         let popover = frame.popover().unwrap();
@@ -2139,11 +2128,12 @@ mod tests {
     }
 
     #[test]
-    fn a_card_with_usage_takes_a_line_more() {
+    fn every_card_is_five_lines_tall_whatever_its_agent_reports() {
         let mut frame = frame(true);
         frame.entries[1].agents[0].model = Some("opus".to_string());
+        frame.entries[1].agents[0].message = Some("building".to_string());
         let (cards, _) = frame.cards();
-        assert_eq!(cards[1].2, 2 * 4 + 4 * 18);
+        assert!(cards.iter().all(|&(_, _, height)| height == 2 * 4 + 5 * 18));
     }
 
     #[test]
@@ -2216,9 +2206,9 @@ mod tests {
         frame.hover = Some(Hit::Show(2));
         let popover = frame.popover().unwrap();
 
-        // the name, the path, three agents of which two have a
-        // message, and the hint
-        assert_eq!(popover.size.1, 2 * 6 + 8 * 18);
+        // the name, the path, three agents of two lines each, and
+        // the hint
+        assert_eq!(popover.size.1, 2 * 6 + 9 * 18);
     }
 
     #[test]
@@ -2289,29 +2279,29 @@ mod tests {
         assert_eq!(
             rows,
             [
-                (Row::Card(0), 90, 80),
-                (Row::Card(1), 176, 62),
-                (Row::Header(0), 250, 26),
-                (Row::Card(2), 282, 62),
-                (Row::Card(3), 350, 62),
-                (Row::Header(1), 424, 26),
-                (Row::Card(4), 456, 62),
+                (Row::Card(0), 90, 98),
+                (Row::Card(1), 194, 98),
+                (Row::Header(0), 304, 26),
+                (Row::Card(2), 336, 98),
+                (Row::Card(3), 440, 98),
+                (Row::Header(1), 550, 26),
+                (Row::Card(4), 582, 98),
             ]
         );
-        assert_eq!(new, Some(530));
-        assert_eq!(frame.hit(100, 250), Some(Hit::Group(5)));
-        assert_eq!(frame.hit(100, 275), Some(Hit::Group(5)));
-        assert_eq!(frame.hit(100, 282), Some(Hit::Show(3)));
-        assert_eq!(frame.hit(100, 430), Some(Hit::Group(6)));
+        assert_eq!(new, Some(692));
+        assert_eq!(frame.hit(100, 304), Some(Hit::Group(5)));
+        assert_eq!(frame.hit(100, 329), Some(Hit::Group(5)));
+        assert_eq!(frame.hit(100, 336), Some(Hit::Show(3)));
+        assert_eq!(frame.hit(100, 556), Some(Hit::Group(6)));
     }
 
     #[test]
     fn a_folded_group_shows_its_header_and_none_of_its_cards() {
         let frame = grouped(true, true);
         let (rows, new) = frame.sidebar_rows();
-        assert_eq!(rows.last(), Some(&(Row::Header(1), 424, 26)));
-        assert_eq!(new, Some(424 + 26 + 6 + 6));
-        assert_eq!(frame.hit(100, 490), None);
+        assert_eq!(rows.last(), Some(&(Row::Header(1), 550, 26)));
+        assert_eq!(new, Some(550 + 26 + 6 + 6));
+        assert_eq!(frame.hit(100, 620), None);
         assert_eq!(frame.workspace_name_at(4), None);
     }
 
@@ -2319,14 +2309,14 @@ mod tests {
     fn a_drop_lands_in_the_group_whose_header_is_above_it_or_ungrouped_above_every_header() {
         let frame = grouped(true, false);
         assert_eq!(frame.section_at(100), None);
-        assert_eq!(frame.section_at(243), None);
-        assert_eq!(frame.section_at(244), Some(5));
-        assert_eq!(frame.section_at(417), Some(5));
-        assert_eq!(frame.section_at(418), Some(6));
+        assert_eq!(frame.section_at(297), None);
+        assert_eq!(frame.section_at(298), Some(5));
+        assert_eq!(frame.section_at(543), Some(5));
+        assert_eq!(frame.section_at(544), Some(6));
         assert_eq!(frame.section_at(700), Some(6));
         assert_eq!(frame.group_slot(100), 0);
         assert_eq!(frame.group_slot(300), 0);
-        assert_eq!(frame.group_slot(500), 1);
+        assert_eq!(frame.group_slot(600), 1);
     }
 
     #[test]
@@ -2392,7 +2382,7 @@ mod tests {
         assert!(room > 10);
         // where the name of a header after sufr's card would start
         let ((_, y), _) = frame.new_group_at();
-        assert_eq!(y, 456 + 62 + 6 + 6 + 4);
+        assert_eq!(y, 582 + 98 + 6 + 6 + 4);
     }
 
     #[test]
@@ -2409,7 +2399,7 @@ mod tests {
                 _ => None,
             })
         };
-        assert_eq!(ring(300), Some((244, 350 + 62 + 3)));
+        assert_eq!(ring(300), Some((298, 440 + 98 + 3)));
         assert_eq!(ring(100), None);
     }
 }
