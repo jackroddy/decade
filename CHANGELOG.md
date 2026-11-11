@@ -237,19 +237,20 @@ command line and what the tool writes.
   program. A right click on empty space in the open sidebar offers New
   group. A pane's menu also offers Accept screenshots.
 - The person can rename a workspace, a tab or a pane. Rename in the right
-  click menu opens the name as a text field where it is drawn, and so does a
-  double click on the name. The field sits on the workspace's card or in its
-  tile's popover, on the tab's pill, or on the pane's bar. The first key
-  replaces the old name. Enter keeps the new name. Escape or a click
-  elsewhere cancels. decade refuses an empty name. It refuses a name that
-  another workspace holds, that another tab of the workspace holds, or that
-  another pane of the workspace answers to. A pane name may not hold `&`,
-  `=` or a space. When decade refuses a name, the field stays open with the
-  reason under it. A tab with a name shows it on its pill in place of what
-  runs in it. A renamed pane answers to its former names for as long as it
-  lives. A message, a hello or an MCP call that gives a former name reaches
-  the pane, and so does a terminal started under that name. `panes` lists
-  only the current name. A new pane cannot take a former name.
+  click menu opens a text field over the name, and so does a double click on
+  the name. The field's text starts where the name was drawn on the
+  workspace's card or in its tile's popover, on the tab's pill, or on the
+  pane's bar. The first key replaces the old name. Enter keeps the new name.
+  Escape or a click elsewhere cancels. decade refuses an empty name. It
+  refuses a name that another workspace holds, that another tab of the
+  workspace holds, or that another pane of the workspace answers to. A pane
+  name may not hold `&`, `=` or a space. When decade refuses a name, the
+  field stays open with the reason under it. A tab with a name shows it on
+  its pill in place of what runs in it. A renamed pane answers to its former
+  names for as long as it lives. A message, a hello or an MCP call that
+  gives a former name reaches the pane, and so does a terminal started under
+  that name. `panes` lists only the current name. A new pane cannot take a
+  former name.
 - The person can put workspaces in named groups in the sidebar. New group
   asks for the group's name in a text field at the bottom of the list. The
   new group goes below the others. Ungrouped workspaces come first. Each
@@ -267,24 +268,24 @@ command line and what the tool writes.
   every group. A click on a card in the open sidebar now acts on release,
   so that a press can start a drag.
 - The MCP tool `screenshot` takes `pane` and answers with a PNG of the
-  pane's client area, at the screen's pixels and without its bar or
-  outline. decade refuses a pane in a tab that is not shown. Each pane has
-  an accept screenshots mode, which starts off and is never saved. The
-  person turns it on and off with a button on the Ctrl bar or from the
-  pane's right click menu. With the mode off, decade opens a dialog in the
-  middle of the window on every viewer, dims everything behind it, and
-  points at the pane. The dialog names the agent, the workspace and the
-  pane. It offers allow once, allow and turn the mode on, and deny,
-  answered with a click or with y, a or n. Escape denies. While the dialog
-  is up, no key or click reaches a pane, the chrome or a keybind. Keys and
-  clicks in its first half second do nothing. A deny, or no answer
-  within 30 seconds, fails the call with the reason. A pane with
-  the mode on carries a camera tag at the left end of its outline's top
-  edge. The tag flashes at each capture. When a pane is too narrow for
-  every tag, the camera tag is the last to go. On each capture decade
-  also lays a white layer over the pane's client area. The layer starts
-  at 30% opacity and fades out over 300 ms. decade takes the PNG before
-  it draws the layer, so the PNG never shows it.
+  pane's client area, at the screen's pixels and without its bar or outline.
+  decade refuses a pane in a tab that is not shown. Each pane has an accept
+  screenshots mode, which starts off and is never saved. The person turns it
+  on and off with a button on the Ctrl bar or from the pane's right click
+  menu. With the mode off, decade opens a dialog in the middle of the window
+  on every viewer, dims everything behind it, and points at the pane. The
+  dialog names the agent, the workspace and the pane. It lists allow once,
+  allow and turn the mode on, and deny, with the first selected. Up and Down
+  move the selection and Enter answers with it. A click, or y, a or n,
+  answers at once. Escape denies. While the dialog is up, no key or click
+  reaches a pane, the chrome or a keybind. Keys and clicks in its first half
+  second do nothing. A deny, or no answer within 30 seconds, fails the call
+  with the reason. A pane with the mode on carries a camera tag at the left
+  end of its outline's top edge. The tag flashes at each capture. When a
+  pane is too narrow for every tag, the camera tag is the last to go. On
+  each capture decade also lays a white layer over the pane's client area.
+  The layer starts at 30% opacity and fades out over 300 ms. decade takes
+  the PNG before it draws the layer, so the PNG never shows it.
 - A program's hello may give each verb in `accepts` a description of one
   sentence, as an object with `name` and `description` in place of the
   bare name. `panes`, on the socket and over MCP, lists each pane's
@@ -312,15 +313,31 @@ command line and what the tool writes.
 - The window opens on a headless Hyprland output during development; see
   `scripts/devscreen`.
 - Clients in panes render on the same GPU as decade.
-- The palette, the New workspace browser and the settings panel share one
-  width and one top edge. The palette is as tall as its rows. A dim scrim
-  covers the window behind the palette, the settings panel and the picker.
-  Each of them ends with a line of key hints. Each key's name sits in a
-  small rounded cap. The palette and the panel are rounded boxes in the bar
-  colour with a thin border and a shadow. The title is bold, with › between
-  the steps of a path. The selected row has a rounded highlight and a bold
-  label. Close tab, Close workspace and their confirm rows turn red when
-  selected. The panel shows each value in a rounded pill.
+- The palette and the New workspace browser share one width and one top
+  edge. The palette is as tall as its rows. A dim scrim covers the window
+  behind the palette, the settings panel and the picker. Each of them ends
+  with a line of key hints. Each key's name sits in a small key cap. The
+  panel shows each value in a rounded pill.
+- decade draws its own overlays from one set of parts in two sizes. The
+  palette, the settings panel and the screenshot dialog take the large size,
+  in the palette font. The right click menu, the name field and a tile's
+  popover take the small size, in the chrome font, beside what they belong
+  to. Each is a rounded box with a grey border and a shadow. Its corners
+  grow with the font. A list's selected row has a highlight and a bold
+  label. A row that closes or deletes something is red, and a brighter red
+  when selected. A row that cannot be chosen yet is grey. A row's key, when
+  it has one, sits in a key cap at the row's right end and runs it. In every
+  list, Up and Down move the selection, Enter runs the selected row and
+  Escape closes the overlay. The palette and the settings panel now take the
+  pointer as the right click menu does. The pointer selects the row under
+  it, and a click runs that row. The palette's search line starts with an
+  orange ›. While it is empty it shows "type to search", after the submenu's
+  name when one is open. The settings panel opens in the middle of the
+  window with a title and a line saying that Left and Right change the
+  value. A click on a value's ‹ or › changes it. The name field is a small
+  box titled for what it renames, such as Rename pane, with the palette's
+  search line. The reason for a refused name shows in a red row under the
+  line. Key hints for Enter and Escape end the box.
 - The picker frames each workspace in a rounded outline. The selected
   workspace's outline is two strokes thick. Each label starts with the mark
   of its workspace's agent state. The current workspace's name is bold.

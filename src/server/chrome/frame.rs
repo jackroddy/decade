@@ -4,6 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::server::chrome::draw::{Face, Scene, scaled};
+use crate::server::chrome::overlay::{SMALL, draw_box};
 use crate::server::chrome::palette;
 use crate::server::chrome::palette::Rgba;
 use crate::server::chrome::text::{fit, tail};
@@ -41,7 +42,6 @@ const CURRENT: Rgba = palette::SELECTION;
 const TEXT: Rgba = palette::FOREGROUND;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 const MUTED: Rgba = palette::MUTED;
-const SHADOW: Rgba = palette::SHADOW;
 const POINTED: Rgba = palette::MAGENTA;
 
 /// How far toward `POINTED` a pulsing pill, card or tile is filled at
@@ -55,7 +55,7 @@ const CARD_PADDING: i32 = 4;
 
 /// The lines of a card's text: name, path, state, message and usage.
 const CARD_LINES: i32 = 5;
-pub(super) const CARD_RADIUS: i32 = 6;
+const CARD_RADIUS: i32 = 6;
 const STRIPE: i32 = 3;
 
 /// The state disc's width, and its gap to the card's right edge.
@@ -84,8 +84,6 @@ const DROP_RING: i32 = 2;
 
 /// How far the popover's top sits above its tile's.
 const POPOVER_RISE: i32 = 5;
-pub(super) const POPOVER_PADDING: i32 = 6;
-pub(super) const SHADOW_OFFSET: i32 = 4;
 
 /// The popover's width in columns.
 const POPOVER_WIDTH: u32 = 34;
@@ -717,7 +715,7 @@ impl Frame {
         let lines = self.entries[i].popover_lines();
         let size = (
             POPOVER_WIDTH as i32 * cell_width,
-            2 * self.scaled(POPOVER_PADDING) + lines * cell_height,
+            2 * SMALL.padding(cell_height) + lines * cell_height,
         );
         let (right, bottom) = (
             self.columns as i32 * cell_width,
@@ -917,7 +915,7 @@ impl Frame {
         if !self.open {
             let popover = self.popover_of(id)?;
             let (left, top) = popover.at;
-            let at = (left + cell_width, top + self.scaled(POPOVER_PADDING));
+            let at = (left + cell_width, top + SMALL.padding(self.cell.1));
             return Some((at, popover.size.0 / cell_width - 2));
         }
         let (cards, _) = self.cards();
@@ -1421,16 +1419,12 @@ impl Frame {
         };
         let entry = &self.entries[entry];
         let (cell_width, cell_height) = self.cell;
-        let radius = self.scaled(CARD_RADIUS);
-        let offset = self.scaled(SHADOW_OFFSET);
-        let size = (width, height);
-        scene.rounded(left + offset, top + offset, size, radius, SHADOW, SHADOW);
-        scene.rounded(left, top, size, radius, BAR, palette::BORDER);
+        draw_box(scene, &SMALL, (left, top), (width, height));
 
         let x = left + cell_width;
         let right = left + width - cell_width;
         let room = ((right - x) / cell_width).max(0) as usize;
-        let line = |n: i32| top + self.scaled(POPOVER_PADDING) + n * cell_height;
+        let line = |n: i32| top + SMALL.padding(cell_height) + n * cell_height;
 
         let branch = entry.branch.as_deref().map(|branch| fit(branch, room / 2));
         let branch_width = branch.as_ref().map_or(0, |b| b.chars().count());
