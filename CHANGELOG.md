@@ -271,11 +271,14 @@ command line and what the tool writes.
   outline. decade refuses a pane in a tab that is not shown. Each pane has
   an accept screenshots mode, which starts off and is never saved. The
   person turns it on and off with a button on the Ctrl bar or from the
-  pane's right click menu. With the mode off, decade draws a prompt over
-  the pane that names the agent, and points at the pane. The prompt offers
-  allow once, allow and turn the mode on, and deny, answered with a click
-  or with y, a or n while the pane has focus. Escape denies. A deny, or no
-  answer within 30 seconds, fails the call with the reason. A pane with
+  pane's right click menu. With the mode off, decade opens a dialog in the
+  middle of the window on every viewer, dims everything behind it, and
+  points at the pane. The dialog names the agent, the workspace and the
+  pane. It offers allow once, allow and turn the mode on, and deny,
+  answered with a click or with y, a or n. Escape denies. While the dialog
+  is up, no key or click reaches a pane, the chrome or a keybind. Keys and
+  clicks in its first half second do nothing. A deny, or no answer
+  within 30 seconds, fails the call with the reason. A pane with
   the mode on carries a camera tag at the left end of its outline's top
   edge. The tag flashes at each capture. When a pane is too narrow for
   every tag, the camera tag is the last to go.

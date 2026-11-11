@@ -154,9 +154,8 @@ pub struct State {
     groups: Vec<Group>,
     next_group: u32,
 
-    /// The screenshots waiting on the person's answer.
-    asking: Vec<screenshot::Asking>,
-    next_asking: u64,
+    /// The screenshot waiting on the person's answer to the dialog.
+    asking: Option<screenshot::Asking>,
     unplaced: Vec<ToplevelSurface>,
     popups: PopupManager,
 
@@ -265,8 +264,7 @@ pub fn run() {
         workspaces: Vec::new(),
         groups: Vec::new(),
         next_group: 0,
-        asking: Vec::new(),
-        next_asking: 0,
+        asking: None,
         unplaced: Vec::new(),
         popups: PopupManager::default(),
         popup_grab: None,

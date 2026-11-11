@@ -274,13 +274,18 @@ shown.
 Each pane has an accept screenshots mode, which the person turns on and
 off from the pane's Ctrl bar or its right click menu. The mode starts off.
 decade never saves it. A restored workspace has it off on every pane. With
-the mode on, decade captures the pane at once. With it off, decade draws a
-prompt over the pane that names the agent. decade also points at the pane,
-as `point` does. The prompt offers allow once, allow and turn the mode on,
-and deny. The person answers with a click, or with y, a or n while the
-pane has focus. Escape denies. A deny, or no answer within 30
-seconds, ends the call with a tool error that gives the reason. decade
-refuses a second `screenshot` of a pane whose prompt is still up. While
+the mode on, decade captures the pane at once. With it off, decade opens a
+dialog in the middle of the window and dims everything behind it. Every
+viewer shows the dialog, on whatever workspace it has up. The dialog names
+the agent, the workspace and the pane. decade also points at the pane, as
+`point` does. The dialog offers allow once, allow and turn the mode on,
+and deny. While it is up, every key and click goes to it. None reaches a
+pane, decade's chrome or decade's keybinds. The person answers with a
+click on a choice, or with y, a or n. Escape denies. Keys and clicks in
+the dialog's first half second do nothing. The first answer from any
+viewer counts. A deny, or no answer within 30 seconds, ends the call with
+a tool error that gives the reason. decade refuses a `screenshot` that
+would ask while the dialog is up. While
 the mode is on, the pane carries a camera tag at the left end of its
 outline's top edge. The tag flashes at each capture.
 

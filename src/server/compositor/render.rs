@@ -50,7 +50,7 @@ impl State {
             self.workspaces[workspace].name_agents();
         }
         let frame = picker_grid.is_none().then(|| self.frame(workspace));
-        let prompts = self.prompts(workspace);
+        let prompt = self.prompt();
         let State {
             gpu,
             size,
@@ -114,6 +114,11 @@ impl State {
             scale,
         };
         let mut elements: Vec<Element> = Vec::new();
+        if let Some(prompt) = &prompt {
+            let mut scene = Scene::new(&paint.text.chrome);
+            prompt.draw(&mut scene);
+            paint.scene(&mut elements, &scene, Point::default(), None);
+        }
 
         let overlay_origin = |box_size: Size<i32, Physical>| -> Point<i32, Physical> {
             let top = (size.h / 7).min((size.h - box_size.h).max(0));
@@ -155,7 +160,7 @@ impl State {
         }
         let scrimmed =
             |overlay: &Overlay| !matches!(overlay, Overlay::Context(_) | Overlay::Rename(_));
-        if overlay.is_some_and(scrimmed) {
+        if prompt.is_some() || overlay.is_some_and(scrimmed) {
             let mut scrim = Scene::new(&paint.text.chrome);
             scrim.rect(0, 0, size.w, size.h, SCRIM);
             paint.scene(&mut elements, &scrim, Point::default(), None);
@@ -174,9 +179,6 @@ impl State {
 
         let mut above = Scene::new(&paint.text.chrome);
         layout.draw_bars(&mut above, chrome);
-        for (_, prompt) in &prompts {
-            prompt.draw(&mut above);
-        }
         if let Some(frame) = &frame {
             frame.draw_above(&mut above);
         }

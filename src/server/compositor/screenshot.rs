@@ -16,14 +16,12 @@ use super::State;
 /// How long decade waits for the person to answer before it refuses.
 const ASK_FOR: Duration = Duration::from_secs(30);
 
-/// How long after the prompt appears its keys start to answer it, so a
-/// key typed into the pane as it appears does not.
+/// How long after the dialog appears its keys and clicks start to answer
+/// it, so a key typed or a click made as it appears does not.
 const ARMED_AFTER: Duration = Duration::from_millis(500);
 
-/// A screenshot waiting on the person's answer, with its prompt drawn over
-/// the pane.
+/// A screenshot waiting on the person's answer to the dialog.
 pub(super) struct Asking {
-    id: u64,
     workspace: u32,
     pane: String,
     agent: String,
@@ -32,9 +30,20 @@ pub(super) struct Asking {
     timer: Option<RegistrationToken>,
 }
 
+impl Asking {
+    pub(super) fn armed(&self, now: Instant) -> bool {
+        armed(self.since, now)
+    }
+}
+
+/// Whether a dialog put up at `since` takes answers at `now`.
+fn armed(since: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(since) >= ARMED_AFTER
+}
+
 impl State {
     /// Answer a `screenshot` of pane `pane` at once when the pane accepts
-    /// screenshots, or else once the person answers its prompt.
+    /// screenshots, or else once the person answers the dialog.
     pub(super) fn screenshot(
         &mut self,
         workspace: usize,
@@ -73,25 +82,28 @@ impl State {
         Ok((pane.name.clone(), pane.screenshots))
     }
 
-    /// Put up the prompt for a screenshot of the pane named `pane` and
-    /// point at the pane.
+    /// Put up the dialog for a screenshot of the pane named `pane`, take
+    /// every key and click from the panes and chrome, and point at the
+    /// pane.
     fn ask(&mut self, workspace: usize, pane: String, caller: Option<&str>, reply: Reply) {
-        let shown = &self.workspaces[workspace];
-        let id = shown.id;
-        if (self.asking.iter()).any(|asking| asking.workspace == id && asking.pane == pane) {
-            let reason =
-                format!("a screenshot of pane {pane} already waits for the person's answer");
+        if self.asking.is_some() {
+            let reason = "decade is already asking the person about another screenshot".to_string();
             let _ = reply.send(Err(reason));
             return;
         }
+        let shown = &self.workspaces[workspace];
+        let id = shown.id;
         let agent = (shown.router.agents.list.iter())
             .find(|agent| agent.connected && caller.is_some() && agent.pane.as_deref() == caller)
             .map_or_else(|| "An agent".to_string(), |agent| agent.name.clone());
-        let asking = self.next_asking;
-        self.next_asking += 1;
         let timer = Timer::from_duration(ASK_FOR);
-        let timer = self.loop_handle.insert_source(timer, move |_, _, state| {
-            state.answer_screenshot(asking, None);
+        let timer = self.loop_handle.insert_source(timer, |_, _, state| {
+            state.answer_screenshot(None);
+            TimeoutAction::Drop
+        });
+        let armed = Timer::from_duration(ARMED_AFTER);
+        let _ = self.loop_handle.insert_source(armed, |_, _, state| {
+            state.request_redraw();
             TimeoutAction::Drop
         });
         let now = Instant::now();
@@ -100,8 +112,12 @@ impl State {
         // point_at fails only for an unknown name, and
         // screenshot_target gave the pane's own
         let _ = self.workspaces[workspace].point_at(&pane, note, now);
-        self.asking.push(Asking {
-            id: asking,
+        if self.overlay.is_some() {
+            self.close_overlay();
+        }
+        self.dismiss_popups();
+        self.block_input();
+        self.asking = Some(Asking {
             workspace: id,
             pane,
             agent,
@@ -113,16 +129,16 @@ impl State {
         self.request_redraw();
     }
 
-    /// Answer the screenshot `id` waits on with the person's `answer`, or
-    /// refuse it for `None`, when its time ran out.
-    fn answer_screenshot(&mut self, id: u64, answer: Option<Answer>) {
-        let Some(index) = self.asking.iter().position(|asking| asking.id == id) else {
+    /// Answer the screenshot the dialog asks about with the person's
+    /// `answer`, or refuse it for `None`, when its time ran out.
+    pub(super) fn answer_screenshot(&mut self, answer: Option<Answer>) {
+        let Some(asking) = self.asking.take() else {
             return;
         };
-        let asking = self.asking.remove(index);
         if let Some(timer) = asking.timer.filter(|_| answer.is_some()) {
             self.loop_handle.remove(timer);
         }
+        self.unblock_input();
         let pane = &asking.pane;
         let workspace = self.workspace_index(asking.workspace);
         if let Some(workspace) = workspace {
@@ -165,53 +181,22 @@ impl State {
         }
     }
 
-    /// The prompts drawn over panes of the workspace, each with the id of
-    /// the screenshot it asks about.
-    pub(super) fn prompts(&self, workspace: usize) -> Vec<(u64, Prompt)> {
-        let shown = &self.workspaces[workspace];
-        let layout = shown.layout();
+    /// The dialog every viewer shows while a screenshot waits on the
+    /// person's answer.
+    pub(super) fn prompt(&self) -> Option<Prompt> {
+        let asking = self.asking.as_ref()?;
+        let workspace = (self.workspace_index(asking.workspace))
+            .map(|index| self.workspaces[index].name.clone())
+            .unwrap_or_default();
         let font = &self.text.chrome;
-        let cell = (font.cell_width as i32, font.cell_height as i32);
-        (self.asking.iter())
-            .filter(|asking| asking.workspace == shown.id)
-            .filter_map(|asking| {
-                let pane = layout.pane(layout.by_name(&asking.pane)?)?;
-                let rect = font.px_rect(pane.client_rect());
-                let area = ((rect.loc.x, rect.loc.y), (rect.size.w, rect.size.h));
-                let agent = asking.agent.clone();
-                Some((asking.id, Prompt { agent, area, cell }))
-            })
-            .collect()
-    }
-
-    /// What a left press at the pointer does to a prompt on screen: the
-    /// screenshot it asks about and the answer pressed, if any, or `None`
-    /// off every prompt.
-    pub(super) fn prompt_hit(&self, (x, y): (i32, i32)) -> Option<(u64, Option<Answer>)> {
-        (self.prompts(self.current()).into_iter())
-            .find_map(|(id, prompt)| prompt.hit(x, y).map(|answer| (id, answer)))
-    }
-
-    /// The screenshot whose prompt takes keys: the one over the focused
-    /// pane on screen, once it has been up for `ARMED_AFTER`.
-    pub(super) fn prompt_for_keys(&self) -> Option<u64> {
-        if self.overlay.is_some() {
-            return None;
-        }
-        let shown = &self.workspaces[self.current()];
-        let layout = shown.layout();
-        let focused = &layout.pane(layout.focused)?.name;
-        (self.asking.iter())
-            .find(|asking| {
-                asking.workspace == shown.id
-                    && asking.pane == *focused
-                    && asking.since.elapsed() >= ARMED_AFTER
-            })
-            .map(|asking| asking.id)
-    }
-
-    pub(super) fn answer_prompt(&mut self, id: u64, answer: Answer) {
-        self.answer_screenshot(id, Some(answer));
+        Some(Prompt {
+            agent: asking.agent.clone(),
+            workspace,
+            pane: asking.pane.clone(),
+            armed: asking.armed(Instant::now()),
+            window: (self.size.w, self.size.h),
+            cell: (font.cell_width as i32, font.cell_height as i32),
+        })
     }
 
     /// A PNG of the client area of pane `pane`, drawn as the workspace
@@ -303,6 +288,15 @@ fn crop(rgba: &[u8], width: i32, rect: Rectangle<i32, Physical>) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_dialog_takes_answers_only_once_it_has_been_up_for_half_a_second() {
+        let since = Instant::now();
+        assert!(!armed(since, since));
+        assert!(!armed(since, since + Duration::from_millis(499)));
+        assert!(armed(since, since + ARMED_AFTER));
+        assert!(!armed(since + Duration::from_secs(1), since));
+    }
 
     #[test]
     fn a_crop_keeps_the_rows_and_columns_of_its_rectangle() {

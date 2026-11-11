@@ -64,8 +64,48 @@ impl State {
         self.show_bar(false);
     }
 
+    /// Take the keyboard and pointer from every client and end decade's
+    /// own presses and hover, while the screenshot dialog is up.
+    pub(super) fn block_input(&mut self) {
+        self.stop_repeat();
+        self.cancel_ctrl_timer();
+        self.show_bar(false);
+        self.drag = None;
+        self.frame_hover = None;
+        self.hover = None;
+        self.tab_hover = None;
+        self.last_name_press = None;
+        let keyboard = self.seat.get_keyboard().unwrap();
+        keyboard.set_focus(self, None, SERIAL_COUNTER.next_serial());
+        let pointer = self.seat.get_pointer().unwrap();
+        let time = self.now();
+        pointer.unset_grab(self, SERIAL_COUNTER.next_serial(), time);
+        pointer.motion(
+            self,
+            None,
+            &MotionEvent {
+                location: self.pointer,
+                serial: SERIAL_COUNTER.next_serial(),
+                time,
+            },
+        );
+        pointer.frame(self);
+        self.request_redraw();
+    }
+
+    /// Give the keyboard back to the focused pane and the pointer to what
+    /// is under it, once the screenshot dialog has closed.
+    pub(super) fn unblock_input(&mut self) {
+        let focused = self.layout().focused;
+        self.focus(focused);
+        self.pointer_moved(self.pointer, self.now());
+    }
+
     pub(super) fn pointer_moved(&mut self, location: Point<f64, Logical>, time: u32) {
         self.pointer = location;
+        if self.asking.is_some() {
+            return;
+        }
         if matches!(self.overlay, Some(Overlay::Picker { .. })) {
             let point = self.pointer.to_physical(self.scale).to_i32_round();
             let ids = self.workspace_ids();
@@ -177,6 +217,21 @@ impl State {
     }
 
     pub(super) fn pointer_button(&mut self, button: u32, pressed: bool, time: u32) {
+        if let Some(asking) = &self.asking {
+            if pressed {
+                let armed = asking.armed(Instant::now());
+                let (x, y) = self.pointer_px();
+                let hit = self.prompt().and_then(|prompt| prompt.hit(x, y));
+                if let Some(answer) = dialog_press(button, armed, hit) {
+                    self.answer_screenshot(Some(answer));
+                }
+            } else {
+                // smithay needs the release of a press made before
+                // the dialog opened. No client has the pointer to get it
+                self.forward_button(button, pressed, time);
+            }
+            return;
+        }
         if matches!(self.overlay, Some(Overlay::Picker { .. })) {
             if button == BTN_LEFT {
                 let point = self.pointer.to_physical(self.scale).to_i32_round();
@@ -213,15 +268,6 @@ impl State {
                 return;
             }
             self.close_overlay();
-        }
-        if button == BTN_LEFT
-            && pressed
-            && let Some((id, answer)) = self.prompt_hit(self.pointer_px())
-        {
-            if let Some(answer) = answer {
-                self.answer_prompt(id, answer);
-            }
-            return;
         }
         if pressed && !self.press_reaches_popup(button) {
             self.dismiss_popups();
@@ -262,6 +308,10 @@ impl State {
                 return;
             }
         }
+        self.forward_button(button, pressed, time);
+    }
+
+    fn forward_button(&mut self, button: u32, pressed: bool, time: u32) {
         let pointer = self.seat.get_pointer().unwrap();
         let state = if pressed {
             ButtonState::Pressed
@@ -281,6 +331,9 @@ impl State {
     }
 
     pub(super) fn pointer_scroll(&mut self, scroll: wire::Scroll) {
+        if self.asking.is_some() {
+            return;
+        }
         let source = match scroll.source {
             1 => AxisSource::Finger,
             2 => AxisSource::Continuous,
@@ -318,7 +371,7 @@ impl State {
             KeyState::Released
         };
         let palette = self.overlay.is_some();
-        let prompt = self.prompt_for_keys();
+        let dialog = (self.asking.as_ref()).map(|asking| asking.armed(Instant::now()));
         let restartable = self
             .layout()
             .pane(self.layout().focused)
@@ -333,6 +386,9 @@ impl State {
             |_, modifiers, handle| {
                 let sym = handle.modified_sym().raw();
                 control_key = sym == keysyms::KEY_Control_L || sym == keysyms::KEY_Control_R;
+                if let Some(armed) = dialog {
+                    return dialog_key(pressed, armed, modifiers, handle.modified_sym());
+                }
                 if palette {
                     return FilterResult::Intercept(menu_key(
                         pressed,
@@ -341,18 +397,6 @@ impl State {
                     ));
                 }
                 let plain = !modifiers.logo && !modifiers.ctrl && !modifiers.alt;
-                if let Some(id) = prompt.filter(|_| pressed && plain) {
-                    let answer = match sym {
-                        keysyms::KEY_Escape => Some(Answer::Deny),
-                        _ => handle
-                            .modified_sym()
-                            .key_char()
-                            .and_then(prompt::answer_for),
-                    };
-                    if let Some(answer) = answer {
-                        return FilterResult::Intercept(Some(Key::Answer(id, answer)));
-                    }
-                }
                 if restartable && pressed && plain && sym == keysyms::KEY_Return {
                     return FilterResult::Intercept(Some(Key::Restart));
                 }
@@ -367,7 +411,7 @@ impl State {
         );
         let key = key.flatten();
         match (control_key, pressed) {
-            (true, true) if palette => {}
+            (true, true) if palette || dialog.is_some() => {}
             (true, true) => self.ctrl_pressed(),
             (true, false) => self.ctrl_released(),
             (false, true) => self.cancel_ctrl_timer(),
@@ -516,7 +560,7 @@ impl State {
                 let focused = self.layout().focused;
                 self.restart_pane(self.current(), focused);
             }
-            Key::Answer(id, answer) => self.answer_prompt(id, answer),
+            Key::Answer(answer) => self.answer_screenshot(Some(answer)),
             Key::Menu(key) => {
                 let (ids, grid) = (self.workspace_ids(), self.picker_grid());
                 let outcome = match &mut self.overlay {
@@ -832,9 +876,8 @@ enum Key {
     Clipboard(Chord),
     Menu(MenuKey),
 
-    /// An answer to the screenshot prompt over the focused pane, with the
-    /// screenshot's id.
-    Answer(u64, Answer),
+    /// An answer to the screenshot dialog.
+    Answer(Answer),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -918,6 +961,32 @@ fn super_key(sym: u32, shift: bool) -> Option<Key> {
     }
 }
 
+/// What a key does while the screenshot dialog is up. A press answers the
+/// dialog or is swallowed. A release goes on to smithay and reaches no client.
+fn dialog_key(
+    pressed: bool,
+    armed: bool,
+    modifiers: &ModifiersState,
+    sym: Keysym,
+) -> FilterResult<Option<Key>> {
+    if !pressed {
+        return FilterResult::Forward;
+    }
+    let plain = !modifiers.logo && !modifiers.ctrl && !modifiers.alt;
+    let answer = match sym.raw() {
+        keysyms::KEY_Escape => Some(Answer::Deny),
+        _ if plain => sym.key_char().and_then(prompt::answer_for),
+        _ => None,
+    };
+    FilterResult::Intercept(answer.filter(|_| armed).map(Key::Answer))
+}
+
+/// The answer a press of `button` on choice `hit` gives while the
+/// screenshot dialog is up.
+fn dialog_press(button: u32, armed: bool, hit: Option<Answer>) -> Option<Answer> {
+    hit.filter(|_| armed && button == BTN_LEFT)
+}
+
 /// The key an overlay takes, or `None` for one it swallows.
 fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Option<Key> {
     if !pressed {
@@ -947,6 +1016,65 @@ fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Option<Ke
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dialog_answer(pressed: bool, armed: bool, mods: ModifiersState, sym: u32) -> Option<Key> {
+        match dialog_key(pressed, armed, &mods, Keysym::from(sym)) {
+            FilterResult::Intercept(key) => key,
+            FilterResult::Forward => panic!("the key went on to the client"),
+        }
+    }
+
+    #[test]
+    fn the_dialog_swallows_every_key_press_and_lets_only_releases_through() {
+        let plain = ModifiersState::default();
+        let logo = ModifiersState {
+            logo: true,
+            ..ModifiersState::default()
+        };
+        let ctrl = ModifiersState {
+            ctrl: true,
+            ..ModifiersState::default()
+        };
+        assert_eq!(dialog_answer(true, true, plain, keysyms::KEY_x), None);
+        assert_eq!(dialog_answer(true, true, plain, keysyms::KEY_Return), None);
+        assert_eq!(dialog_answer(true, true, logo, keysyms::KEY_h), None);
+        assert_eq!(dialog_answer(true, true, logo, keysyms::KEY_Tab), None);
+        assert_eq!(dialog_answer(true, true, ctrl, keysyms::KEY_y), None);
+        let release = dialog_key(false, true, &plain, Keysym::from(keysyms::KEY_y));
+        assert!(matches!(release, FilterResult::Forward));
+    }
+
+    #[test]
+    fn y_a_n_and_escape_answer_the_dialog_once_it_is_armed() {
+        let plain = ModifiersState::default();
+        let answer = |sym| dialog_answer(true, true, plain, sym);
+        assert_eq!(answer(keysyms::KEY_y), Some(Key::Answer(Answer::Once)));
+        assert_eq!(answer(keysyms::KEY_a), Some(Key::Answer(Answer::Always)));
+        assert_eq!(answer(keysyms::KEY_n), Some(Key::Answer(Answer::Deny)));
+        assert_eq!(answer(keysyms::KEY_Escape), Some(Key::Answer(Answer::Deny)));
+    }
+
+    #[test]
+    fn keys_pressed_before_the_dialog_is_armed_are_swallowed_without_answering() {
+        let plain = ModifiersState::default();
+        for sym in [
+            keysyms::KEY_y,
+            keysyms::KEY_a,
+            keysyms::KEY_n,
+            keysyms::KEY_Escape,
+        ] {
+            assert_eq!(dialog_answer(true, false, plain, sym), None);
+        }
+    }
+
+    #[test]
+    fn only_a_left_press_on_a_choice_of_an_armed_dialog_answers_it() {
+        let once = Some(Answer::Once);
+        assert_eq!(dialog_press(BTN_LEFT, true, once), once);
+        assert_eq!(dialog_press(BTN_LEFT, false, once), None);
+        assert_eq!(dialog_press(BTN_RIGHT, true, once), None);
+        assert_eq!(dialog_press(BTN_LEFT, true, None), None);
+    }
 
     #[test]
     fn a_decade_keybind_dismisses_popups_but_a_clipboard_chord_or_overlay_key_does_not() {
