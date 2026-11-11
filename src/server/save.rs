@@ -9,7 +9,7 @@ use crate::server::panes::{Axis, CellRect, Layout, Node, Pane};
 use crate::server::proc;
 use crate::server::workspace::Workspace;
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 pub struct File {
@@ -51,6 +51,9 @@ struct SavedV1 {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct SavedTab {
+    /// The name the person gave the tab; version 2 has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     focused: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     zoom: Option<String>,
@@ -129,7 +132,14 @@ fn read(text: &str) -> Result<File, String> {
                 workspaces,
             })
         }
-        VERSION => toml::from_str(text).map_err(error),
+        // version 3 adds only the optional tab name
+        2 | VERSION => {
+            let file: File = toml::from_str(text).map_err(error)?;
+            Ok(File {
+                version: VERSION,
+                ..file
+            })
+        }
         other => Err(format!("version {other} is not one this decade reads")),
     }
 }
@@ -157,7 +167,10 @@ fn saved(workspace: &Workspace) -> Saved {
         tabs: workspace
             .tabs
             .iter()
-            .map(|tab| saved_tab(&tab.layout))
+            .map(|tab| SavedTab {
+                name: tab.name.clone(),
+                ..saved_tab(&tab.layout)
+            })
             .collect(),
     }
 }
@@ -202,6 +215,7 @@ fn saved_tab(layout: &Layout) -> SavedTab {
         })
         .collect();
     SavedTab {
+        name: None,
         focused: name_of(layout.focused),
         zoom: layout.zoom.map(name_of),
         tree: saved_node(layout.root(), &name_of),
@@ -258,6 +272,9 @@ impl Saved {
             layouts,
             self.active_tab,
         );
+        for (tab, saved) in restored.tabs.iter_mut().zip(&self.tabs) {
+            tab.name = saved.name.clone();
+        }
         if let Some(name) = &self.scratch
             && restored.by_name(name).is_some()
         {
@@ -526,6 +543,7 @@ cwd = "/tmp"
         assert!(file.sidebar_open);
         let back = &file.workspaces[0];
         assert_eq!(back.active_tab, 0);
+        assert_eq!(back.tabs[0].name, None);
         let layouts = back.layouts(crate::server::panes::tests::AREA).unwrap();
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].panes.len(), 2);
@@ -574,5 +592,25 @@ cwd = "/tmp"
             .collect();
         assert_eq!(restored, expected);
         assert!(!text.contains("tabs = []"));
+    }
+
+    #[test]
+    fn a_tab_name_reads_back_and_a_version_2_file_reads_with_unnamed_tabs() {
+        let mut workspace = workspace();
+        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.rename_tab(1, "logs").unwrap();
+        let text = to_text(vec![saved(&workspace)], true).unwrap();
+        assert!(text.starts_with("version = 3"));
+        let file = read(&text).unwrap();
+        let (back, _) = (file.workspaces[0])
+            .workspace(2, crate::server::panes::tests::AREA)
+            .unwrap();
+        let names: Vec<_> = back.tabs.iter().map(|tab| tab.name.as_deref()).collect();
+        assert_eq!(names, [None, Some("logs")]);
+
+        let old = text.replacen("version = 3", "version = 2", 1);
+        let old = old.replace("name = \"logs\"\n", "");
+        let file = read(&old).unwrap();
+        assert!(file.workspaces[0].tabs.iter().all(|tab| tab.name.is_none()));
     }
 }

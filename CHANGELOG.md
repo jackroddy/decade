@@ -114,9 +114,11 @@ command line and what the tool writes.
 - A tab closes by itself once no pane in it holds a client or a running
   program, and none is pinned or the scratch pane. A workspace's only tab
   stays, with an empty pane.
-- `workspaces.toml` is now version 2. It holds each workspace's tabs, the
-  tab each workspace shows, and whether the sidebar is open. decade still
-  reads a version 1 file, as one tab per workspace with the sidebar open.
+- `workspaces.toml` is now version 3. It holds each workspace's tabs, the
+  name the person gave each tab, the tab each workspace shows, and whether
+  the sidebar is open. decade still reads a version 2 file, whose tabs
+  have no names. It reads a version 1 file as one tab per workspace with
+  the sidebar open.
 - Panes are a split tree. A new window with no anchor of its own, or
   Super+Shift+Return, splits the focused pane along its longer side; a pane
   made that way closes when its client exits.
@@ -224,14 +226,28 @@ command line and what the tool writes.
   beside it. The x on the Ctrl bar closes the tab shown. decade saves the
   directory of each terminal tab and starts those terminals again.
 - A right click on decade's own chrome opens a menu at the pointer. A
-  pane's bar or outline offers Pin, Zoom and Mark as scratch. Each entry is
-  named for what a click on it does, so a pinned pane offers Unpin. A
-  workspace's card or tile offers Clear when its agent is done or needs
-  attention. Up and Down move the selection, Enter runs the selected entry
-  and Escape closes the menu. A click on an entry runs it. A click outside
-  closes the menu and goes no further. A right click inside a program's
-  window still goes to that program. A right click on a tab's pill or on
-  empty sidebar space opens nothing.
+  pane's bar or outline offers Pin, Zoom, Mark as scratch and Rename. Each
+  entry is named for what a click on it does, so a pinned pane offers
+  Unpin. A workspace's card or tile offers Rename, and Clear when its agent
+  is done or needs attention. A tab's pill offers Rename. Up and Down move
+  the selection, Enter runs the selected entry and Escape closes the menu.
+  A click on an entry runs it. A click outside closes the menu and goes no
+  further. A right click inside a program's window still goes to that
+  program. A right click on empty sidebar space opens nothing.
+- The person can rename a workspace, a tab or a pane. Rename in the right
+  click menu opens the name as a text field where it is drawn, and so does a
+  double click on the name. The field sits on the workspace's card or in its
+  tile's popover, on the tab's pill, or on the pane's bar. The first key
+  replaces the old name. Enter keeps the new name. Escape or a click
+  elsewhere cancels. decade refuses an empty name. It refuses a name that
+  another workspace holds, that another tab of the workspace holds, or that
+  another pane of the workspace answers to. A pane name may not hold `&`,
+  `=` or a space. When decade refuses a name, the field stays open with the
+  reason under it. A tab with a name shows it on its pill in place of what
+  runs in it. A renamed pane answers to its former names for as long as it
+  lives. A message, a hello or an MCP call that gives a former name reaches
+  the pane, and so does a terminal started under that name. `panes` lists
+  only the current name. A new pane cannot take a former name.
 
 ### Changed
 

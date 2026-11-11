@@ -124,6 +124,11 @@ impl State {
                 menu.draw(&mut scene);
                 paint.scene(&mut elements, &scene, Point::default(), None);
             }
+            Some(Overlay::Rename(field)) => {
+                let mut scene = Scene::new(&paint.text.chrome);
+                field.draw(&mut scene);
+                paint.scene(&mut elements, &scene, Point::default(), None);
+            }
             Some(Overlay::Panel(panel)) => {
                 let mut scene = Scene::new(&paint.text.menu);
                 let box_size = panel.draw(&mut scene, settings);
@@ -142,7 +147,9 @@ impl State {
             }
             None => {}
         }
-        if overlay.is_some_and(|overlay| !matches!(overlay, Overlay::Context(_))) {
+        let scrimmed =
+            |overlay: &Overlay| !matches!(overlay, Overlay::Context(_) | Overlay::Rename(_));
+        if overlay.is_some_and(scrimmed) {
             let mut scrim = Scene::new(&paint.text.chrome);
             scrim.rect(0, 0, size.w, size.h, SCRIM);
             paint.scene(&mut elements, &scrim, Point::default(), None);
@@ -247,9 +254,13 @@ impl State {
                     })
                     .filter_map(|agent| agent.report.state)
                     .max();
-                let label = tab.layout.pane(tab.layout.focused);
+                let focused = tab.layout.pane(tab.layout.focused);
+                let label = match &tab.name {
+                    Some(name) => name.clone(),
+                    None => focused.map(|pane| pane.running_label()).unwrap_or_default(),
+                };
                 frame::Tab {
-                    label: label.map(|pane| pane.running_label()).unwrap_or_default(),
+                    label,
                     state,
                     pulse: pulse(shown).filter(|_| pointed_tab == Some(index)),
                 }

@@ -2,6 +2,7 @@ use crate::server::chrome::draw::{Face, Scene, scaled};
 use crate::server::chrome::frame::{CARD_RADIUS, POPOVER_PADDING, SHADOW_OFFSET};
 use crate::server::chrome::menu::{Action, MenuKey, Outcome};
 use crate::server::chrome::palette;
+use crate::server::chrome::rename::Named;
 
 // the sizes below are in pixels at 18 px rows, for `scaled`
 
@@ -24,8 +25,8 @@ pub enum Place {
     /// A workspace's card or tile in the sidebar.
     Workspace { id: u32, clearable: bool },
 
-    /// A tab's pill on the top bar.
-    Tab,
+    /// A tab's pill on the top bar, by index.
+    Tab(usize),
 
     /// The sidebar outside the cards and tiles.
     Sidebar,
@@ -40,6 +41,7 @@ pub enum Command {
 
     /// Return the workspace's agents that are done or need attention to idle.
     Clear(u32),
+    Rename(Named),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,16 +70,18 @@ pub fn entries(place: Place) -> Vec<Entry> {
                 },
                 Command::Scratch(id),
             ),
+            entry("Rename", Command::Rename(Named::Pane(id))),
         ],
-        Place::Workspace {
-            id,
-            clearable: true,
-        } => vec![entry("Clear", Command::Clear(id))],
-        Place::Workspace {
-            clearable: false, ..
+        Place::Workspace { id, clearable } => {
+            let rename = entry("Rename", Command::Rename(Named::Workspace(id)));
+            if clearable {
+                vec![entry("Clear", Command::Clear(id)), rename]
+            } else {
+                vec![rename]
+            }
         }
-        | Place::Tab
-        | Place::Sidebar => Vec::new(),
+        Place::Tab(index) => vec![entry("Rename", Command::Rename(Named::Tab(index)))],
+        Place::Sidebar => Vec::new(),
     }
 }
 
@@ -251,18 +255,23 @@ mod tests {
     }
 
     #[test]
-    fn a_pane_offers_pin_zoom_and_scratch_labelled_for_what_a_click_does() {
+    fn a_pane_offers_pin_zoom_scratch_and_rename_labelled_for_what_a_click_does() {
         let plain = Place::Pane {
             id: 4,
             pinned: false,
             zoomed: false,
             scratch: false,
         };
-        assert_eq!(labels(plain), ["Pin", "Zoom", "Mark as scratch"]);
+        assert_eq!(labels(plain), ["Pin", "Zoom", "Mark as scratch", "Rename"]);
         let commands: Vec<Command> = entries(plain).iter().map(|e| e.command).collect();
         assert_eq!(
             commands,
-            [Command::Pin(4), Command::Zoom(4), Command::Scratch(4)]
+            [
+                Command::Pin(4),
+                Command::Zoom(4),
+                Command::Scratch(4),
+                Command::Rename(Named::Pane(4))
+            ]
         );
         let set = Place::Pane {
             id: 4,
@@ -270,35 +279,44 @@ mod tests {
             zoomed: true,
             scratch: true,
         };
-        assert_eq!(labels(set), ["Unpin", "Unzoom", "Unmark as scratch"]);
+        assert_eq!(
+            labels(set),
+            ["Unpin", "Unzoom", "Unmark as scratch", "Rename"]
+        );
     }
 
     #[test]
-    fn a_workspace_offers_clear_only_when_its_agent_is_done_or_needs_attention() {
+    fn a_workspace_offers_rename_and_clear_only_when_its_agent_is_done_or_needs_attention() {
         let done = Place::Workspace {
             id: 2,
             clearable: true,
         };
-        assert_eq!(
-            entries(done),
-            [Entry {
-                label: "Clear",
-                command: Command::Clear(2)
-            }]
-        );
+        let rename = Entry {
+            label: "Rename",
+            command: Command::Rename(Named::Workspace(2)),
+        };
+        let clear = Entry {
+            label: "Clear",
+            command: Command::Clear(2),
+        };
+        assert_eq!(entries(done), [clear, rename]);
         let working = Place::Workspace {
             id: 2,
             clearable: false,
         };
-        assert!(entries(working).is_empty());
-        assert!(ContextMenu::open(entries(working), (0, 0), WINDOW, CELL).is_none());
+        assert_eq!(entries(working), [rename]);
     }
 
     #[test]
-    fn a_tab_pill_and_empty_sidebar_space_open_no_menu() {
-        for place in [Place::Tab, Place::Sidebar] {
-            assert!(ContextMenu::open(entries(place), (0, 0), WINDOW, CELL).is_none());
-        }
+    fn a_tab_pill_offers_rename_and_empty_sidebar_space_opens_no_menu() {
+        assert_eq!(
+            entries(Place::Tab(1)),
+            [Entry {
+                label: "Rename",
+                command: Command::Rename(Named::Tab(1))
+            }]
+        );
+        assert!(ContextMenu::open(entries(Place::Sidebar), (0, 0), WINDOW, CELL).is_none());
     }
 
     #[test]
@@ -308,7 +326,7 @@ mod tests {
 
         // "Mark as scratch" is 15 cells, with a cell each side, and
         // each row is 18 px with 3 above and below
-        let size = (2 * 6 + 17 * 8, 2 * 6 + 3 * 24);
+        let size = (2 * 6 + 17 * 8, 2 * 6 + 4 * 24);
         assert_eq!(menu.size, size);
 
         let corner = ContextMenu::open(menu.entries.clone(), (795, 590), WINDOW, CELL).unwrap();
@@ -323,14 +341,15 @@ mod tests {
         assert_eq!(menu.selected, 0);
         assert_eq!(menu.key(MenuKey::Up), Outcome::Open);
         assert_eq!(menu.selected, 0);
-        menu.key(MenuKey::Down);
-        menu.key(MenuKey::Down);
-        menu.key(MenuKey::Down);
-        assert_eq!(menu.selected, 2);
+        for _ in 0..4 {
+            menu.key(MenuKey::Down);
+        }
+        assert_eq!(menu.selected, 3);
         assert_eq!(
             menu.key(MenuKey::Enter),
-            Outcome::Run(Action::Command(Command::Scratch(4)))
+            Outcome::Run(Action::Command(Command::Rename(Named::Pane(4))))
         );
+        menu.key(MenuKey::Up);
         menu.key(MenuKey::Up);
         assert_eq!(
             menu.key(MenuKey::Enter),

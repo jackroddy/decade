@@ -94,6 +94,9 @@ pub enum Action {
     },
     ChangeSettings(Settings),
     Command(Command),
+
+    /// Rename what the open name field names to the text typed in it.
+    Rename,
 }
 
 /// The result of a key or a click in an overlay.

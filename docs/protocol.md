@@ -16,6 +16,12 @@ A client reaches only the panes of the workspace whose socket it connected
 to. Every pane name below means a pane in that workspace. Each direction
 carries one JSON object per line.
 
+The person can rename a pane. A pane answers to its former names for as
+long as it lives, so a program started before the rename can keep using
+the name in its `DECADE_PANE` and `DECADE_MCP`. A hello, a `to` and the
+`pane` of an MCP call or address may give a former name. decade's replies
+give only the current name, in `welcome` and in `panes`.
+
 ## Hello
 
 The first line a client sends:

@@ -654,6 +654,11 @@ impl Frame {
         let Some(Hit::Show(id)) = self.hover.filter(|_| !self.open) else {
             return None;
         };
+        self.popover_of(id)
+    }
+
+    /// The popover for workspace `id`'s tile, kept inside the window.
+    fn popover_of(&self, id: u32) -> Option<Popover> {
         let (i, tile) = self
             .tiles()
             .into_iter()
@@ -726,6 +731,33 @@ impl Frame {
         }
         let new = top + gap;
         (cards, (new + row <= bottom).then_some(new))
+    }
+
+    /// Where the pill of tab `index` starts its label, in pixels, and the
+    /// cells the label takes.
+    pub fn tab_name_at(&self, index: usize) -> Option<((i32, i32), i32)> {
+        let pill = (self.tab_pills().into_iter()).find(|pill| pill.hit == Hit::Tab(index))?;
+        let x = (pill.column + 1) as i32 * self.cell.0;
+        Some(((x, self.cell.1 / 2), pill.width() as i32 - 2))
+    }
+
+    /// Where workspace `id`'s name starts on its card, or in its tile's
+    /// popover when the sidebar is closed, in pixels, and the cells the
+    /// name may take.
+    pub fn workspace_name_at(&self, id: u32) -> Option<((i32, i32), i32)> {
+        let (cell_width, _) = self.cell;
+        if !self.open {
+            let popover = self.popover_of(id)?;
+            let (left, top) = popover.at;
+            let at = (left + cell_width, top + self.scaled(POPOVER_PADDING));
+            return Some((at, popover.size.0 / cell_width - 2));
+        }
+        let (cards, _) = self.cards();
+        let &(_, top, _) = cards.iter().find(|&&(i, _, _)| self.entries[i].id == id)?;
+        let x = self.card_text();
+        let (disc, _, _) = self.disc(top);
+        let room = (disc - self.scaled(DISC_GAP) - x) / cell_width;
+        Some(((x, top + self.scaled(CARD_PADDING)), room))
     }
 
     /// What a click at pixel `x`, `y` does.
@@ -1842,5 +1874,26 @@ mod tests {
         // the name, the path, three agents of which two have a
         // message, and the hint
         assert_eq!(popover.size.1, 2 * 6 + 8 * 18);
+    }
+
+    #[test]
+    fn a_name_field_opens_on_a_tab_pill_a_card_or_a_tiles_popover() {
+        let open = frame(true);
+        let ((x, y), room) = open.tab_name_at(1).unwrap();
+        assert_eq!(hit_cell(&open, x / 8, 0), Some(Hit::Tab(1)));
+        assert_eq!(y, 9);
+        assert_eq!(room, " 2 cargo ".len() as i32 - 2);
+        assert_eq!(open.tab_name_at(5), None);
+
+        let ((x, y), room) = open.workspace_name_at(2).unwrap();
+        assert_eq!(open.hit(x, y), Some(Hit::Show(2)));
+        assert!(room > 4);
+
+        let closed = frame(false);
+        let ((x, y), _) = closed.workspace_name_at(2).unwrap();
+        assert!(x > CLOSED_WIDTH as i32 * 8);
+        let mut hovered = frame(false);
+        hovered.hover = Some(Hit::Show(2));
+        assert_eq!(hovered.hit(x, y), Some(Hit::Show(2)));
     }
 }

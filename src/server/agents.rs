@@ -192,6 +192,15 @@ impl Agents {
         }
     }
 
+    /// Move every agent in pane `old` to its new name `new`.
+    pub fn rename(&mut self, old: &str, new: &str) {
+        for agent in &mut self.list {
+            if agent.pane.as_deref() == Some(old) {
+                agent.pane = Some(new.to_string());
+            }
+        }
+    }
+
     /// Drop the agents disconnected for `KEEP_FOR` by `now`, and return
     /// whether any went.
     pub fn expire(&mut self, now: Instant) -> bool {

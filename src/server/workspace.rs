@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use smithay::reexports::calloop::RegistrationToken;
 
-use crate::server::channel::{Out, Router};
+use crate::server::channel::{Out, PaneNames, Router};
 use crate::server::panes::{CellRect, Layout, Pane};
 use crate::server::scratch::Scratch;
 use decade_channel::AgentState;
@@ -40,6 +40,9 @@ pub struct Point {
 pub struct Tab {
     pub layout: Layout,
 
+    /// The name the person gave the tab, shown in place of its label.
+    pub name: Option<String>,
+
     /// Whether the tab goes once its last client has.
     pub closing: bool,
 }
@@ -72,11 +75,27 @@ impl Point {
     }
 }
 
-fn pane_names(tabs: &[Tab]) -> Vec<&str> {
-    (tabs.iter())
-        .flat_map(|tab| &tab.layout.panes)
-        .map(|pane| pane.name.as_str())
-        .collect()
+fn pane_names(tabs: &[Tab]) -> PaneNames<'_> {
+    let panes = || tabs.iter().flat_map(|tab| &tab.layout.panes);
+    PaneNames {
+        current: panes().map(|pane| pane.name.as_str()).collect(),
+        former: panes()
+            .flat_map(|pane| {
+                (pane.aliases.iter()).map(|alias| (alias.as_str(), pane.name.as_str()))
+            })
+            .collect(),
+    }
+}
+
+/// Refuse an empty name, and one that `taken` says something else holds.
+pub fn check_name(name: &str, taken: bool) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("a name cannot be empty".to_string());
+    }
+    if taken {
+        return Err(format!("{name} is taken"));
+    }
+    Ok(())
 }
 
 /// The app id prefix of a terminal started for one of the workspace's panes.
@@ -148,6 +167,7 @@ impl Workspace {
             .into_iter()
             .map(|layout| Tab {
                 layout,
+                name: None,
                 closing: false,
             })
             .collect();
@@ -219,8 +239,8 @@ impl Workspace {
         verb: String,
         payload: Value,
     ) -> Result<(usize, String), String> {
-        let panes = pane_names(&self.tabs);
-        self.router.send(AGENT, to, verb, payload, &panes)
+        self.router
+            .send(AGENT, to, verb, payload, &pane_names(&self.tabs))
     }
 
     /// The pane an agent's show, highlight or clear of `kind` goes to.
@@ -231,8 +251,9 @@ impl Workspace {
     /// Every pane in tab order and the name of the client occupying it,
     /// marking the scratch pane and the pane `you`.
     pub fn pane_list(&self, you: Option<&str>) -> Vec<decade_channel::Pane> {
-        self.router
-            .panes(&pane_names(&self.tabs), self.scratch_pane(), you)
+        let names = pane_names(&self.tabs);
+        let you = you.and_then(|you| names.resolve(you));
+        self.router.panes(&names, self.scratch_pane(), you)
     }
 
     /// The layout of the active tab.
@@ -283,9 +304,55 @@ impl Workspace {
         layout.panes[0].cwd = Some(self.cwd.clone());
         self.tabs.push(Tab {
             layout,
+            name: None,
             closing: false,
         });
         (self.tabs.len() - 1, name)
+    }
+
+    /// Rename pane `id` of tab `tab` to `name`, which no other pane may
+    /// answer to. Its old name stays an alias, and what the workspace keeps
+    /// by pane name follows it.
+    pub fn rename_pane(&mut self, tab: usize, id: usize, name: &str) -> Result<(), String> {
+        let old = (self.tabs.get(tab))
+            .and_then(|entry| entry.layout.pane(id))
+            .map(|pane| pane.name.clone())
+            .ok_or("the pane has gone")?;
+        if name == old {
+            return Ok(());
+        }
+        if name.contains(['&', '=', ' ']) {
+            return Err("a pane name holds no &, = or space".to_string());
+        }
+        let taken = self.by_name(name).is_some_and(|found| found != (tab, id));
+        check_name(name, taken)?;
+        if let Some(pane) = self.tabs[tab].layout.pane_mut(id) {
+            pane.rename(name.to_string());
+        }
+        self.router.rename(&old, name);
+        if let Some(scratch) = &mut self.scratch
+            && scratch.pane == old
+        {
+            scratch.pane = name.to_string();
+        }
+        if let Some(point) = &mut self.point
+            && point.pane == old
+        {
+            point.pane = name.to_string();
+        }
+        Ok(())
+    }
+
+    /// Name tab `tab` `name`, which no other tab may hold.
+    pub fn rename_tab(&mut self, tab: usize, name: &str) -> Result<(), String> {
+        if tab >= self.tabs.len() {
+            return Err("the tab has gone".to_string());
+        }
+        let taken = (self.tabs.iter().enumerate())
+            .any(|(index, other)| index != tab && other.name.as_deref() == Some(name));
+        check_name(name, taken)?;
+        self.tabs[tab].name = Some(name.to_string());
+        Ok(())
     }
 
     /// Whether every tab goes once its last client has.
@@ -332,11 +399,12 @@ impl Workspace {
         note: Option<String>,
         now: Instant,
     ) -> Result<(), String> {
-        if self.by_name(pane).is_none() {
+        let Some((tab, id)) = self.by_name(pane) else {
             return Err(format!("no pane named {pane}"));
-        }
+        };
+        let pane = &self.tabs[tab].layout.pane(id).unwrap().name;
         self.point = Some(Point {
-            pane: pane.to_string(),
+            pane: pane.clone(),
             note,
             since: now,
         });
@@ -731,5 +799,82 @@ mod tests {
             .unwrap();
         workspace.remove_tab(1);
         assert!(workspace.point.is_none());
+    }
+
+    #[test]
+    fn a_renamed_pane_keeps_its_claims_and_its_old_name_still_reaches_it() {
+        let mut workspace = at_home();
+        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.channel_line(
+            1,
+            r#"{"hello": {"name": "coax", "pane": "terminal2", "accepts": ["ping"], "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#,
+        );
+        workspace.toggle_scratch("terminal2");
+        workspace
+            .point_at("terminal2", None, Instant::now())
+            .unwrap();
+        workspace.rename_pane(1, 0, "build").unwrap();
+
+        assert_eq!(workspace.by_name("build"), Some((1, 0)));
+        assert_eq!(workspace.by_name("terminal2"), Some((1, 0)));
+        assert_eq!(workspace.scratch_pane(), Some("build"));
+        assert_eq!(workspace.point.as_ref().unwrap().pane, "build");
+        assert_eq!(
+            workspace.router.agents.list[0].pane.as_deref(),
+            Some("build")
+        );
+        assert!(workspace.router.occupant("build").is_some());
+
+        let (client, _) = (workspace.agent_send("terminal2", "ping".into(), Value::Null)).unwrap();
+        assert_eq!(client, 1);
+        let listed: Vec<_> = (workspace.pane_list(Some("terminal2")).into_iter())
+            .map(|pane| (pane.name, pane.you))
+            .collect();
+        assert_eq!(
+            listed,
+            [("terminal".to_string(), false), ("build".to_string(), true)]
+        );
+        workspace
+            .point_at("terminal2", None, Instant::now())
+            .unwrap();
+        assert_eq!(workspace.point.as_ref().unwrap().pane, "build");
+    }
+
+    #[test]
+    fn a_pane_name_must_be_new_to_the_workspace_and_hold_no_address_characters() {
+        let mut workspace = at_home();
+        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.rename_pane(1, 0, "build").unwrap();
+        for name in ["", "a b", "a&b", "a=b", "build"] {
+            assert!(workspace.rename_pane(0, 0, name).is_err(), "{name:?}");
+        }
+        assert!(workspace.rename_pane(0, 0, "terminal2").is_err());
+        assert_eq!(workspace.tabs[0].layout.panes[0].name, "terminal");
+
+        // a pane may take back a name it had
+        workspace.rename_pane(1, 0, "terminal2").unwrap();
+        assert_eq!(workspace.tabs[1].layout.panes[0].aliases, ["build"]);
+        workspace.rename_pane(1, 0, "build").unwrap();
+        assert_eq!(workspace.tabs[1].layout.panes[0].aliases, ["terminal2"]);
+    }
+
+    #[test]
+    fn a_new_pane_does_not_take_a_name_a_renamed_pane_answers_to() {
+        let mut workspace = at_home();
+        workspace.rename_pane(0, 0, "shell").unwrap();
+        let id = workspace.add_pane(0, "terminal", None);
+        assert_eq!(workspace.tabs[0].layout.pane(id).unwrap().name, "terminal2");
+    }
+
+    #[test]
+    fn a_tab_name_must_be_new_among_the_tabs_and_not_empty() {
+        let mut workspace = at_home();
+        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.rename_tab(0, "work").unwrap();
+        assert!(workspace.rename_tab(1, "work").is_err());
+        assert!(workspace.rename_tab(1, "").is_err());
+        workspace.rename_tab(0, "work").unwrap();
+        workspace.rename_tab(1, "play").unwrap();
+        assert_eq!(workspace.tabs[1].name.as_deref(), Some("play"));
     }
 }

@@ -13,6 +13,7 @@ use smithay::utils::{Logical, Physical, Point, SERIAL_COUNTER};
 use crate::server::chrome::context_menu::Place;
 use crate::server::chrome::frame::Hit;
 use crate::server::chrome::menu::{MenuKey, Outcome};
+use crate::server::chrome::rename::Named;
 use crate::server::panes;
 use crate::server::panes::{BarButton, Boundary, Direction, Drop};
 use crate::wire::{self, BTN_LEFT, BTN_RIGHT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
@@ -24,6 +25,9 @@ const KEY_V: u32 = 47;
 const KEY_X: u32 = 45;
 const KEY_RIGHTMETA: u32 = 126;
 const RESIZE_STEP: u32 = 2;
+
+/// The longest time between two presses on a name that opens it for renaming.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 impl State {
     fn show_bar(&mut self, show: bool) {
@@ -191,8 +195,26 @@ impl State {
             }
             return;
         }
+        if let Some(Overlay::Rename(field)) = &self.overlay
+            && pressed
+        {
+            let (x, y) = self.pointer_px();
+            if field.contains(x, y) {
+                return;
+            }
+            self.close_overlay();
+        }
         if pressed && !self.press_reaches_popup(button) {
             self.dismiss_popups();
+        }
+        if button == BTN_LEFT && pressed {
+            let named = self.name_under_pointer();
+            if self.double_click(named)
+                && let Some(named) = named
+            {
+                self.open_rename(named);
+                return;
+            }
         }
         if button == BTN_RIGHT && pressed && self.right_press_on_chrome() {
             return;
@@ -459,6 +481,7 @@ impl State {
                 let outcome = match &mut self.overlay {
                     Some(Overlay::Menu(menu)) => menu.key(key),
                     Some(Overlay::Context(menu)) => menu.key(key),
+                    Some(Overlay::Rename(field)) => field.key(key),
                     Some(Overlay::Panel(panel)) => panel.key(key, &self.settings),
                     Some(Overlay::Picker { picker, .. }) => picker.key(key, &ids, &grid),
                     None => Outcome::Open,
@@ -527,6 +550,44 @@ impl State {
         false
     }
 
+    /// The workspace, tab or pane whose name is under the pointer: on a
+    /// card or a tile's popover, a tab's pill, or a shown pane bar.
+    fn name_under_pointer(&self) -> Option<Named> {
+        let (x, y) = self.pointer_px();
+        let frame = self.frame(self.current());
+        match frame.hit(x, y) {
+            Some(Hit::Show(id)) => {
+                let ((left, top), room) = frame.workspace_name_at(id)?;
+                let width = room * self.text.chrome.cell_width as i32;
+                let height = self.text.chrome.cell_height as i32;
+                let on_name = (left..left + width).contains(&x) && (top..top + height).contains(&y);
+                on_name.then_some(Named::Workspace(id))
+            }
+            Some(Hit::Tab(index)) => Some(Named::Tab(index)),
+            Some(_) => None,
+            None if self.bar => {
+                let (column, row) = self.pointer_cell();
+                match self.layout().bar_hit(column, row)? {
+                    (id, BarButton::Name) => Some(Named::Pane(id)),
+                    _ => None,
+                }
+            }
+            None => None,
+        }
+    }
+
+    /// Record a left press on `named`, and return whether it is the second
+    /// press on the same name within `DOUBLE_CLICK`.
+    fn double_click(&mut self, named: Option<Named>) -> bool {
+        let now = Instant::now();
+        let double = named.is_some()
+            && self.last_name_press.is_some_and(|(at, before)| {
+                Some(before) == named && now.duration_since(at) < DOUBLE_CLICK
+            });
+        self.last_name_press = named.filter(|_| !double).map(|named| (now, named));
+        double
+    }
+
     /// Whether a press goes to the client of a pane with a popup open, which
     /// closes its popup itself, rather than to decade's chrome or another
     /// pane.
@@ -563,7 +624,7 @@ impl State {
                 id,
                 clearable: frame.clearable(id),
             }),
-            Some(Hit::Tab(_)) => Some(Place::Tab),
+            Some(Hit::Tab(index)) => Some(Place::Tab(index)),
             Some(Hit::New) => Some(Place::Sidebar),
             Some(_) => None,
             None => {

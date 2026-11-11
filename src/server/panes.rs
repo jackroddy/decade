@@ -201,6 +201,9 @@ pub struct Pane {
     pub id: usize,
     pub name: String,
 
+    /// The names the pane had before it was renamed, which still reach it.
+    pub aliases: Vec<String>,
+
     /// Whether the pane stays, waiting for its program, when its last
     /// client goes.
     pub pinned: bool,
@@ -230,6 +233,23 @@ pub struct Pane {
 }
 
 impl Pane {
+    /// Whether `name` is the pane's name or one it had before.
+    pub fn answers_to(&self, name: &str) -> bool {
+        self.name == name || self.aliases.iter().any(|alias| alias == name)
+    }
+
+    /// The pane's name, then the names it had before.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.name.as_str()).chain(self.aliases.iter().map(String::as_str))
+    }
+
+    /// Give the pane the name `name`, keeping its current name as an alias.
+    pub fn rename(&mut self, name: String) {
+        self.aliases.retain(|alias| *alias != name);
+        let old = std::mem::replace(&mut self.name, name);
+        self.aliases.push(old);
+    }
+
     /// Whether the pane is a pinned terminal whose shell has exited.
     pub fn restartable(&self) -> bool {
         self.clients.is_empty() && self.cwd.is_some() && self.pinned
@@ -337,6 +357,7 @@ impl Pane {
         Pane {
             id,
             name,
+            aliases: Vec::new(),
             pinned: false,
             rect: CellRect::EMPTY,
             clients: Vec::new(),
@@ -508,7 +529,7 @@ impl Layout {
     pub fn by_name(&self, name: &str) -> Option<usize> {
         self.panes
             .iter()
-            .find(|pane| pane.name == name)
+            .find(|pane| pane.answers_to(name))
             .map(|pane| pane.id)
     }
 
@@ -594,14 +615,14 @@ impl Layout {
         if let Some(pane) = self
             .panes
             .iter()
-            .find(|pane| is_terminal_tab(app_id, prefix, &pane.name))
+            .find(|pane| (pane.names()).any(|name| is_terminal_tab(app_id, prefix, name)))
         {
             return Some((pane.id, true));
         }
 
         // a restored pane's own terminal can arrive after its tabs
         if let Some(pane) = self.panes.iter().find(|pane| {
-            app_id.strip_prefix(prefix) == Some(&pane.name)
+            (app_id.strip_prefix(prefix)).is_some_and(|name| pane.answers_to(name))
                 && pane.clients.iter().all(|client| client.terminal_tab)
         }) {
             return Some((pane.id, false));
@@ -729,6 +750,18 @@ impl Layout {
     }
 
     /// The pane and Ctrl bar button under the cell, were the bar shown.
+    /// Where pane `id`'s name starts on its bar, as a column and row, and
+    /// the cells the name may take.
+    pub fn name_cell(&self, id: usize) -> Option<(u32, u32, u32)> {
+        let inner = self.pane(id)?.rect.inner();
+        if inner.is_empty() {
+            return None;
+        }
+        let buttons = bar_buttons(inner.column, inner.columns);
+        let room = buttons[0].1.saturating_sub(inner.column + 2);
+        Some((inner.column + 1, inner.row, room))
+    }
+
     pub fn bar_hit(&self, column: u32, row: u32) -> Option<(usize, BarButton)> {
         for pane in self.visible() {
             let inner = pane.rect.inner();
@@ -1686,6 +1719,26 @@ pub(super) mod tests {
         assert_eq!(layout.bar_hit(scratch - 1, 1), Some((0, BarButton::Name)));
         assert_eq!(layout.bar_hit(2, 1), Some((0, BarButton::Name)));
         assert_eq!(layout.bar_hit(2, 5), None);
+    }
+
+    #[test]
+    fn a_terminal_started_under_a_former_name_lands_in_the_renamed_pane() {
+        let mut layout = three_anchors();
+        let id = layout.add_transient("terminal2".to_string());
+        layout.pane_mut(id).unwrap().rename("build".to_string());
+        assert_eq!(layout.by_name("terminal2"), Some(id));
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal2"), "decade.w0."),
+            Some((id, false))
+        );
+        assert_eq!(
+            layout.place(Some("decade.w0.terminal2.t3"), "decade.w0."),
+            Some((id, true))
+        );
+        assert_eq!(
+            layout.place(Some("decade.w0.build.t2"), "decade.w0."),
+            Some((id, true))
+        );
     }
 
     #[test]

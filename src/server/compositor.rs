@@ -77,6 +77,7 @@ use crate::server::chrome::frame::{self, Hit};
 use crate::server::chrome::menu::{Action, Menu, Outcome};
 use crate::server::chrome::panel::Panel;
 use crate::server::chrome::picker::{Grid, Picker};
+use crate::server::chrome::rename::{NameField, Named};
 use crate::server::chrome::settings::{self, Settings};
 use crate::server::chrome::text::Text;
 use crate::server::mcp;
@@ -103,6 +104,7 @@ const PULSE_EVERY: Duration = Duration::from_millis(33);
 enum Overlay {
     Menu(Menu),
     Context(ContextMenu),
+    Rename(NameField),
     Panel(Panel),
     Picker {
         picker: Picker,
@@ -171,6 +173,9 @@ pub struct State {
 
     /// The top bar or sidebar item under the pointer.
     frame_hover: Option<Hit>,
+
+    /// When the last left press on a name was, and what it named.
+    last_name_press: Option<(Instant, Named)>,
     ctrl_timer: Option<RegistrationToken>,
 
     /// The timer that draws frames while a point pulses.
@@ -263,6 +268,7 @@ pub fn run() {
         hover: None,
         tab_hover: None,
         frame_hover: None,
+        last_name_press: None,
         ctrl_timer: None,
         pulse_timer: None,
         scale,
@@ -854,6 +860,7 @@ impl State {
                 self.settings_changed(before);
             }
             Action::Command(command) => self.run_command(command),
+            Action::Rename => self.apply_rename(),
         }
     }
 
@@ -867,7 +874,79 @@ impl State {
                     self.clear_agents(index);
                 }
             }
+            Command::Rename(named) => self.open_rename(named),
         }
+    }
+
+    /// Turn the name of `named`, on the workspace and tab on screen, into
+    /// a text field where the name is drawn.
+    fn open_rename(&mut self, named: Named) {
+        let current = self.current();
+        let shown = &self.workspaces[current];
+        let frame = self.frame(current);
+        let font = &self.text.chrome;
+        let cell = (font.cell_width as i32, font.cell_height as i32);
+        let place = match named {
+            Named::Workspace(id) => (self.workspaces.iter())
+                .find(|workspace| workspace.id == id)
+                .zip(frame.workspace_name_at(id))
+                .map(|(workspace, at)| (workspace.name.clone(), at)),
+            Named::Tab(index) => (frame.tabs.get(index))
+                .zip(frame.tab_name_at(index))
+                .map(|(tab, at)| (tab.label.clone(), at)),
+            Named::Pane(id) => {
+                let layout = shown.layout();
+                (layout.pane(id))
+                    .zip(layout.name_cell(id))
+                    .map(|(pane, (column, row, room))| {
+                        let at = (column as i32 * cell.0, row as i32 * cell.1);
+                        (pane.name.clone(), (at, room as i32))
+                    })
+            }
+        };
+        let Some((name, (at, room))) = place else {
+            return;
+        };
+        let field = NameField::open(named, shown.active_tab, name, at, room, cell);
+        self.close_overlay();
+        self.overlay = Some(Overlay::Rename(field));
+        self.request_redraw();
+    }
+
+    /// Give what the open name field names the name typed in it, or keep
+    /// the field open with the reason the name was refused.
+    fn apply_rename(&mut self) {
+        let Some(Overlay::Rename(field)) = &self.overlay else {
+            return;
+        };
+        let (named, tab, name) = (field.named, field.tab, field.text.clone());
+        let current = self.current();
+        let renamed = match named {
+            Named::Workspace(id) => self.rename_workspace(id, &name),
+            Named::Tab(index) => self.workspaces[current].rename_tab(index, &name),
+            Named::Pane(id) => self.workspaces[current].rename_pane(tab, id, &name),
+        };
+        match renamed {
+            Ok(()) => {
+                self.close_overlay();
+                self.schedule_save();
+            }
+            Err(reason) => {
+                if let Some(Overlay::Rename(field)) = &mut self.overlay {
+                    field.error = Some(reason);
+                }
+            }
+        }
+    }
+
+    fn rename_workspace(&mut self, id: u32, name: &str) -> Result<(), String> {
+        let taken =
+            (self.workspaces.iter()).any(|workspace| workspace.id != id && workspace.name == name);
+        workspace::check_name(name, taken)?;
+        let index = self.workspace_index(id).ok_or("the workspace has gone")?;
+        self.workspaces[index].name = name.to_string();
+        self.send_workspace_list();
+        Ok(())
     }
 
     /// Open the menu for `place` at the pointer, when it has entries.
@@ -889,7 +968,7 @@ impl State {
     fn workspace_shown(&mut self) {
         // the menu's entries name panes and state of the
         // workspace and tab it was opened on
-        if matches!(self.overlay, Some(Overlay::Context(_))) {
+        if matches!(self.overlay, Some(Overlay::Context(_) | Overlay::Rename(_))) {
             self.close_overlay();
         }
         self.drag = None;

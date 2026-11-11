@@ -5,5 +5,6 @@ pub(super) mod menu;
 pub(crate) mod palette;
 pub(super) mod panel;
 pub(super) mod picker;
+pub(super) mod rename;
 pub(super) mod settings;
 pub(super) mod text;
