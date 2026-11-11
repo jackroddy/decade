@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-11T03:04:22.311986506Z",
   "defer_until": null,
   "created_at": "2026-11-11T02:49:22.300354507Z",
-  "updated_at": "2026-11-11T02:49:22.311986506Z",
+  "updated_at": "2026-11-11T02:57:53.540178815Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "6815a6f8",
+      "at": "2026-11-11T02:57:53.540177955Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "Jack approved the prototype at tmp-claude/2026-11-10-overlays/index.html (large: 16 px text, 40 px rows, 12 px corners; small: 13 px text, 22 px rows, 8 px corners) and asked for it to be built.",
+      "commit": "ad0a585",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "ad0a585",
