@@ -1,8 +1,8 @@
 {
   "slug": "linear-frames-do-not-render",
-  "text": "On Jack's GPU the server cannot render into a linear XRGB8888 dmabuf: binding it fails with 'Failed to bind Framebuffer', and GBM reports the buffer's modifier as INVALID. So decade reads frames back through the renderer (copy_framebuffer) instead of mapping a linear buffer: decade script in read in src/script.rs, and the screenshot tool in src/server/compositor/screenshot.rs, which renders into a GlesRenderbuffer. Found by trial on 2026-11-07.",
+  "text": "On Jack's GPU the server cannot render into a linear XRGB8888 dmabuf: binding fails with 'Failed to bind Framebuffer' and GBM reports the modifier as INVALID. decade reads frames back through the renderer with copy_framebuffer instead: read in src/script.rs, and the screenshot tool in src/server/compositor/screenshot.rs, which renders into a GlesRenderbuffer. Found by trial on 2026-11-07.",
   "created_at": "2026-11-08T07:22:33.567875364Z",
-  "updated_at": "2026-11-11T01:06:09.390196994Z",
+  "updated_at": "2026-11-11T01:06:16.324835765Z",
   "stamp": {
     "commit": "da4f5cd",
     "branch": "dev"
