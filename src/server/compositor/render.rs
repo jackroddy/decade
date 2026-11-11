@@ -119,6 +119,11 @@ impl State {
                 let box_size = menu.draw(&mut scene);
                 paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
             }
+            Some(Overlay::Context(menu)) => {
+                let mut scene = Scene::new(&paint.text.chrome);
+                menu.draw(&mut scene);
+                paint.scene(&mut elements, &scene, Point::default(), None);
+            }
             Some(Overlay::Panel(panel)) => {
                 let mut scene = Scene::new(&paint.text.menu);
                 let box_size = panel.draw(&mut scene, settings);
@@ -137,7 +142,7 @@ impl State {
             }
             None => {}
         }
-        if overlay.is_some() {
+        if overlay.is_some_and(|overlay| !matches!(overlay, Overlay::Context(_))) {
             let mut scrim = Scene::new(&paint.text.chrome);
             scrim.rect(0, 0, size.w, size.h, SCRIM);
             paint.scene(&mut elements, &scrim, Point::default(), None);

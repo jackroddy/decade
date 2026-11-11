@@ -72,6 +72,7 @@ use crate::files;
 use crate::gpu::Gpu;
 use crate::server::apps;
 use crate::server::children::Children;
+use crate::server::chrome::context_menu::{self, Command, ContextMenu, Place};
 use crate::server::chrome::frame::{self, Hit};
 use crate::server::chrome::menu::{Action, Menu, Outcome};
 use crate::server::chrome::panel::Panel;
@@ -101,6 +102,7 @@ const PULSE_EVERY: Duration = Duration::from_millis(33);
 /// The box or grid drawn over the workspace that takes the keys while it is open.
 enum Overlay {
     Menu(Menu),
+    Context(ContextMenu),
     Panel(Panel),
     Picker {
         picker: Picker,
@@ -847,10 +849,45 @@ impl State {
                 let before = std::mem::replace(&mut self.settings, settings);
                 self.settings_changed(before);
             }
+            Action::Command(command) => self.run_command(command),
         }
     }
 
+    fn run_command(&mut self, command: Command) {
+        match command {
+            Command::Pin(id) => self.toggle_pin(id),
+            Command::Zoom(id) => self.toggle_zoom(id),
+            Command::Scratch(id) => self.toggle_scratch(id),
+            Command::Clear(id) => {
+                if let Some(index) = self.workspace_index(id) {
+                    self.clear_agents(index);
+                }
+            }
+        }
+    }
+
+    /// Open the menu for `place` at the pointer, when it has entries.
+    fn open_context_menu(&mut self, place: Place) {
+        let pointer = self.pointer.to_physical(self.scale).to_i32_round();
+        let font = &self.text.chrome;
+        let Some(menu) = ContextMenu::open(
+            context_menu::entries(place),
+            (pointer.x, pointer.y),
+            (self.size.w, self.size.h),
+            (font.cell_width as i32, font.cell_height as i32),
+        ) else {
+            return;
+        };
+        self.close_overlay();
+        self.overlay = Some(Overlay::Context(menu));
+    }
+
     fn workspace_shown(&mut self) {
+        // the menu's entries name panes and state of the
+        // workspace and tab it was opened on
+        if matches!(self.overlay, Some(Overlay::Context(_))) {
+            self.close_overlay();
+        }
         self.drag = None;
         self.bar = false;
         self.hover = None;
@@ -929,11 +966,7 @@ impl State {
     fn frame_hit(&mut self, hit: Hit) {
         match hit {
             Hit::Show(id) => self.show_on_active(id),
-            Hit::Clear(id) => {
-                if let Some(index) = self.workspace_index(id) {
-                    self.clear_agents(index);
-                }
-            }
+            Hit::Clear(id) => self.run_command(Command::Clear(id)),
             Hit::New => self.start_new_workspace(),
             Hit::Palette => self.open_palette(),
             Hit::Sidebar => self.toggle_sidebar(),
@@ -1250,6 +1283,11 @@ impl State {
             self.resize_layouts();
             self.relayout_all();
         }
+    }
+
+    fn toggle_zoom(&mut self, id: usize) {
+        self.layout_mut().toggle_zoom(id);
+        self.relayout();
     }
 
     fn toggle_pin(&mut self, id: usize) {

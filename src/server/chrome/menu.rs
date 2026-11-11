@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use smithay::utils::{Physical, Size};
 
 use crate::server::apps::App;
+use crate::server::chrome::context_menu::Command;
 use crate::server::chrome::draw::{Face, Scene};
 use crate::server::chrome::palette::{self, Rgba};
 use crate::server::chrome::settings::Settings;
@@ -71,8 +72,8 @@ pub enum MenuKey {
     Char(char),
 }
 
-/// What the palette, the settings panel and the workspace picker ask the
-/// compositor to do.
+/// What the palette, the settings panel, the workspace picker and the
+/// context menu ask the compositor to do.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Action {
     Launch(Vec<String>),
@@ -92,6 +93,7 @@ pub enum Action {
         to: usize,
     },
     ChangeSettings(Settings),
+    Command(Command),
 }
 
 /// The result of a key or a click in an overlay.

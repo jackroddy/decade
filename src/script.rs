@@ -11,8 +11,8 @@ use smithay::utils::Rectangle;
 use crate::control;
 use crate::gpu::Gpu;
 use crate::wire::{
-    self, BTN_LEFT, Decoder, Format, KEY_LEFTALT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
-    Outbox, SCALE, ServerMessage, ViewerMessage,
+    self, BTN_LEFT, BTN_RIGHT, Decoder, Format, KEY_LEFTALT, KEY_LEFTCTRL, KEY_LEFTMETA,
+    KEY_LEFTSHIFT, Outbox, SCALE, ServerMessage, ViewerMessage,
 };
 const SIZE: (u32, u32) = (1600, 900);
 const STEP: u64 = 60;
@@ -135,25 +135,30 @@ impl Session {
                 };
                 self.pointer(x, y)?;
             }
-            "click" => {
+            "click" | "right-click" => {
                 let [x, y] = numbers()?[..] else {
-                    return Err("click takes x and y".into());
+                    return Err(format!("{command} takes x and y"));
+                };
+                let button = if command == "click" {
+                    BTN_LEFT
+                } else {
+                    BTN_RIGHT
                 };
                 self.pointer(x, y)?;
-                self.button(true)?;
-                self.button(false)?;
+                self.button(button, true)?;
+                self.button(button, false)?;
             }
             "drag" => {
                 let [x1, y1, x2, y2] = numbers()?[..] else {
                     return Err("drag takes x1 y1 x2 y2".into());
                 };
                 self.pointer(x1, y1)?;
-                self.button(true)?;
+                self.button(BTN_LEFT, true)?;
                 for i in 1..=8 {
                     let t = i as f64 / 8.0;
                     self.pointer(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)?;
                 }
-                self.button(false)?;
+                self.button(BTN_LEFT, false)?;
             }
             "size" => {
                 let [width, height] = numbers()?[..] else {
@@ -209,11 +214,11 @@ impl Session {
         self.pump(STEP / 3)
     }
 
-    fn button(&mut self, pressed: bool) -> Result<(), String> {
+    fn button(&mut self, button: u32, pressed: bool) -> Result<(), String> {
         let time = self.time();
         self.send(ViewerMessage::Button {
             time,
-            button: BTN_LEFT,
+            button,
             pressed,
         })?;
         self.pump(STEP)

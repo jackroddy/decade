@@ -196,8 +196,9 @@ command line and what the tool writes.
   frames it draws as PNG files, for checking the UI without a window. It
   connects as a viewer and runs one command per line: `key super+tab`,
   `type text`, `press ctrl` and `release ctrl`, `hold ctrl 400`,
-  `move x y`, `click x y`, `drag x1 y1 x2 y2`, `size width height`,
-  `wait ms` and `shot file.png`. Lines starting with `#` are comments.
+  `move x y`, `click x y`, `right-click x y`, `drag x1 y1 x2 y2`,
+  `size width height`, `wait ms` and `shot file.png`. Lines starting with
+  `#` are comments.
 - `--class <app id>` sets the window's app id, for window rules. The default
   is `decade`.
 - Super with h, j, k or l moves focus between panes by direction,
@@ -219,6 +220,15 @@ command line and what the tool writes.
   shows that tab. When a tab's program exits, decade shows the tab
   beside it. The x on the Ctrl bar closes the tab shown. decade saves the
   directory of each terminal tab and starts those terminals again.
+- A right click on decade's own chrome opens a menu at the pointer. A
+  pane's bar or outline offers Pin, Zoom and Mark as scratch. Each entry is
+  named for what a click on it does, so a pinned pane offers Unpin. A
+  workspace's card or tile offers Clear when its agent is done or needs
+  attention. Up and Down move the selection, Enter runs the selected entry
+  and Escape closes the menu. A click on an entry runs it. A click outside
+  closes the menu and goes no further. A right click inside a program's
+  window still goes to that program. A right click on a tab's pill or on
+  empty sidebar space opens nothing.
 
 ### Changed
 

@@ -51,7 +51,7 @@ const POINTED_FILL: f32 = 0.3;
 const CARD_INSET: i32 = 6;
 const CARD_GAP: i32 = 6;
 const CARD_PADDING: i32 = 4;
-const CARD_RADIUS: i32 = 6;
+pub(super) const CARD_RADIUS: i32 = 6;
 const STRIPE: i32 = 3;
 
 /// The state disc's width, and its gap to the card's right edge.
@@ -73,8 +73,8 @@ const POPOVER_GAP: i32 = 6;
 
 /// How far the popover's top sits above its tile's.
 const POPOVER_RISE: i32 = 5;
-const POPOVER_PADDING: i32 = 6;
-const SHADOW_OFFSET: i32 = 4;
+pub(super) const POPOVER_PADDING: i32 = 6;
+pub(super) const SHADOW_OFFSET: i32 = 4;
 
 /// The popover's width in columns.
 const POPOVER_WIDTH: u32 = 34;
@@ -539,6 +539,11 @@ impl Frame {
             .map(|step| &self.entries[(current + step) % count])
             .find(|entry| entry.state() == Some(state))
             .map(|entry| entry.id)
+    }
+
+    /// Whether the workspace's card offers to return its agents to idle.
+    pub fn clearable(&self, id: u32) -> bool {
+        (self.entries.iter()).any(|entry| entry.id == id && entry.clearable())
     }
 
     /// The current workspace's name, cut to fit the top bar.

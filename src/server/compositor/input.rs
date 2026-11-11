@@ -10,10 +10,12 @@ use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::{Logical, Physical, Point, SERIAL_COUNTER};
 
+use crate::server::chrome::context_menu::Place;
+use crate::server::chrome::frame::Hit;
 use crate::server::chrome::menu::{MenuKey, Outcome};
 use crate::server::panes;
 use crate::server::panes::{BarButton, Boundary, Direction, Drop};
-use crate::wire::{self, BTN_LEFT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
+use crate::wire::{self, BTN_LEFT, BTN_RIGHT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
 
 use super::{Overlay, State, popups_over};
 
@@ -64,6 +66,15 @@ impl State {
             let ids = self.workspace_ids();
             if let Some(Overlay::Picker { picker, .. }) = &mut self.overlay
                 && picker.motion(point, &ids)
+            {
+                self.request_redraw();
+            }
+            return;
+        }
+        if matches!(self.overlay, Some(Overlay::Context(_))) {
+            let (x, y) = self.pointer_px();
+            if let Some(Overlay::Context(menu)) = &mut self.overlay
+                && menu.hover(x, y)
             {
                 self.request_redraw();
             }
@@ -166,6 +177,21 @@ impl State {
                 };
                 self.act(outcome);
             }
+            return;
+        }
+        if let Some(Overlay::Context(menu)) = &self.overlay {
+            if pressed {
+                let (x, y) = self.pointer_px();
+                let outcome = match button {
+                    BTN_LEFT => menu.click(x, y),
+                    _ if menu.contains(x, y) => Outcome::Open,
+                    _ => Outcome::Close,
+                };
+                self.act(outcome);
+            }
+            return;
+        }
+        if button == BTN_RIGHT && pressed && self.right_press_on_chrome() {
             return;
         }
         if button == BTN_LEFT && pressed {
@@ -373,11 +399,7 @@ impl State {
     fn run_key(&mut self, key: Key) {
         match key {
             Key::Clipboard(chord) => self.send_chord(chord),
-            Key::Zoom => {
-                let focused = self.layout().focused;
-                self.layout_mut().toggle_zoom(focused);
-                self.relayout();
-            }
+            Key::Zoom => self.toggle_zoom(self.layout().focused),
             Key::Focus(direction) => {
                 if let Some(id) = self.layout().neighbour(direction) {
                     self.focus(id);
@@ -430,6 +452,7 @@ impl State {
                 let (ids, grid) = (self.workspace_ids(), self.picker_grid());
                 let outcome = match &mut self.overlay {
                     Some(Overlay::Menu(menu)) => menu.key(key),
+                    Some(Overlay::Context(menu)) => menu.key(key),
                     Some(Overlay::Panel(panel)) => panel.key(key, &self.settings),
                     Some(Overlay::Picker { picker, .. }) => picker.key(key, &ids, &grid),
                     None => Outcome::Open,
@@ -451,8 +474,7 @@ impl State {
                 return true;
             }
             Some((id, BarButton::Zoom)) => {
-                self.layout_mut().toggle_zoom(id);
-                self.relayout();
+                self.toggle_zoom(id);
                 return true;
             }
             Some((id, BarButton::Pin)) => {
@@ -497,6 +519,55 @@ impl State {
             self.focus(id);
         }
         false
+    }
+
+    /// Open the menu for the chrome under the pointer, and return whether
+    /// the pointer was on chrome rather than a client.
+    fn right_press_on_chrome(&mut self) -> bool {
+        let (x, y) = self.pointer_px();
+        let frame = self.frame(self.current());
+        let place = match frame.hit(x, y) {
+            Some(Hit::Show(id) | Hit::Clear(id)) => Some(Place::Workspace {
+                id,
+                clearable: frame.clearable(id),
+            }),
+            Some(Hit::Tab(_)) => Some(Place::Tab),
+            Some(Hit::New) => Some(Place::Sidebar),
+            Some(_) => None,
+            None => {
+                let (column, row) = self.pointer_cell();
+                let area = self.pane_area();
+                let bar = (self.bar)
+                    .then(|| self.layout().bar_hit(column, row))
+                    .flatten()
+                    .map(|(id, _)| id);
+                if row < area.row {
+                    None
+                } else if column < area.column {
+                    Some(Place::Sidebar)
+                } else if let Some(id) = bar.or_else(|| self.layout().chrome_at(column, row)) {
+                    self.pane_place(id)
+                } else {
+                    return false;
+                }
+            }
+        };
+        if let Some(place) = place {
+            self.open_context_menu(place);
+        }
+        true
+    }
+
+    fn pane_place(&self, id: usize) -> Option<Place> {
+        let shown = &self.workspaces[self.current()];
+        let layout = shown.layout();
+        let pane = layout.pane(id)?;
+        Some(Place::Pane {
+            id,
+            pinned: pane.pinned,
+            zoomed: layout.zoom == Some(id),
+            scratch: shown.scratch_pane() == Some(pane.name.as_str()),
+        })
     }
 
     fn start_pane_drag(&mut self, id: usize) {

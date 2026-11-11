@@ -522,6 +522,16 @@ impl Layout {
             .map(|pane| pane.id)
     }
 
+    /// The pane whose outline or tab strip is under the cell, or the empty
+    /// pane the cell is in.
+    pub fn chrome_at(&self, column: u32, row: u32) -> Option<usize> {
+        let pane = self
+            .visible()
+            .find(|pane| pane.rect.contains(column, row))?;
+        let on_client = !pane.clients.is_empty() && pane.client_rect().contains(column, row);
+        (!on_client).then_some(pane.id)
+    }
+
     pub fn neighbour(&self, direction: Direction) -> Option<usize> {
         let (x, y) = self.pane(self.focused)?.rect.center();
         let mut best: Option<(i64, usize)> = None;
