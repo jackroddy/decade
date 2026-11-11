@@ -1,0 +1,28 @@
+{
+  "id": "decade-3581eb",
+  "title": "The name field has no cursor, so only the end of a name can be edited",
+  "body": "The name field that rename and new group open (`NameField` in `src/server/chrome/rename.rs`, from 9c9668c) takes typed characters and Backspace only. The first key typed replaces the old name. Left, Right, Home and End do nothing, so fixing a typo in the middle of a long name means deleting back to it.\n\n## Proposal\n\nThe field keeps a cursor that Left, Right, Home and End move, and typing and Backspace act at the cursor. The first key still replaces the whole name unless it is a movement key.",
+  "type": "feature",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T01:06:39.29694682Z",
+  "updated_at": "2026-11-11T01:06:39.29694682Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "da4f5cd",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
