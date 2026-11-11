@@ -1,10 +1,10 @@
 {
   "slug": "ghostty-class-needs-gtk-app-id",
-  "text": "ghostty --class=NAME sets the Wayland app id, but GTK accepts only a valid application id: reverse-DNS with dots, every element starting with a letter. A bare word like 'extra' is rejected and the app id falls back to com.mitchellh.ghostty. decade places terminals by app id, using decade.w<id>.<pane> and decade.w<id>.<pane>.t<n> for pane tabs (Children::ghostty in src/server/children.rs, called by spawn_terminal and spawn_pane_tab in src/server/compositor.rs). Seen on 2026-11-06.",
+  "text": "ghostty --class=NAME sets the Wayland app id, but GTK takes only a valid application id (reverse-DNS, each element starting with a letter); a bare word falls back to com.mitchellh.ghostty. decade places terminals by app id decade.w<id>.<pane>, or decade.w<id>.<pane>.t<n> for pane tabs (Children::ghostty in src/server/children.rs). Layout::place also matches a renamed pane's former names (Pane::answers_to in src/server/panes.rs). Seen 2026-11-06.",
   "created_at": "2026-11-07T05:27:44.902972172Z",
-  "updated_at": "2026-11-09T20:40:46.605917245Z",
+  "updated_at": "2026-11-11T01:06:16.3358105Z",
   "stamp": {
-    "commit": "e37ba45",
+    "commit": "da4f5cd",
     "branch": "dev"
   }
 }
