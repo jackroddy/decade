@@ -1,0 +1,10 @@
+{
+  "slug": "restart-from-a-pane-needs-setsid",
+  "text": "A server that stops kills the programs it started (run in src/server/compositor.rs calls children.kill_all on exit), so an agent inside a decade pane dies with it. To restart the server from inside a pane, run decade restart in its own session, as in setsid -f sh -c 'target/debug/decade restart' with output to a file. decade restart sends SIGTERM, waits for the save, then starts the new build. Viewers close when the server sends Close, by design. Tried 2026-11-10.",
+  "created_at": "2026-11-11T05:13:56.555498707Z",
+  "updated_at": "2026-11-11T05:13:56.555498707Z",
+  "stamp": {
+    "commit": "2d00018",
+    "branch": "dev"
+  }
+}
