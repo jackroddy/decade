@@ -8,6 +8,8 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::{Buffer, Physical, Rectangle, Size};
 
 use crate::png;
+use crate::server::chrome::menu::MenuKey;
+use crate::server::chrome::overlay::Cursor;
 use crate::server::chrome::prompt::{Answer, Prompt};
 use crate::server::mcp::{self, Reply};
 
@@ -28,6 +30,9 @@ pub(super) struct Asking {
     since: Instant,
     reply: Reply,
     timer: Option<RegistrationToken>,
+
+    /// The dialog's selected choice.
+    cursor: Cursor,
 }
 
 impl Asking {
@@ -124,6 +129,7 @@ impl State {
             since: now,
             reply,
             timer: timer.ok(),
+            cursor: Cursor::default(),
         });
         self.start_pulse();
         self.request_redraw();
@@ -188,15 +194,36 @@ impl State {
         let workspace = (self.workspace_index(asking.workspace))
             .map(|index| self.workspaces[index].name.clone())
             .unwrap_or_default();
-        let font = &self.text.chrome;
         Some(Prompt {
             agent: asking.agent.clone(),
             workspace,
             pane: asking.pane.clone(),
             armed: asking.armed(Instant::now()),
-            window: (self.size.w, self.size.h),
-            cell: (font.cell_width as i32, font.cell_height as i32),
+            selected: asking.cursor.selected,
+            window: self.window(),
+            cell: self.menu_cell(),
         })
+    }
+
+    /// Answer the dialog with what `key` gives, or move its selection.
+    pub(super) fn dialog_key(&mut self, key: MenuKey) {
+        let (Some(prompt), Some(asking)) = (self.prompt(), self.asking.as_mut()) else {
+            return;
+        };
+        match prompt.key(&mut asking.cursor, key) {
+            Some(answer) => self.answer_screenshot(Some(answer)),
+            None => self.request_redraw(),
+        }
+    }
+
+    /// Select the dialog's choice under pixel `x`, `y`.
+    pub(super) fn dialog_hover(&mut self, x: i32, y: i32) {
+        let (Some(prompt), Some(asking)) = (self.prompt(), self.asking.as_mut()) else {
+            return;
+        };
+        if prompt.hover(&mut asking.cursor, x, y) {
+            self.request_redraw();
+        }
     }
 
     /// A PNG of the client area of pane `pane`, drawn as the workspace

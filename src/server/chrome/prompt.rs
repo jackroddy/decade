@@ -1,16 +1,7 @@
-use crate::server::chrome::draw::{Face, Scene, scaled};
-use crate::server::chrome::frame::{CARD_RADIUS, SHADOW_OFFSET};
-use crate::server::chrome::palette;
+use crate::server::chrome::draw::Scene;
+use crate::server::chrome::menu::MenuKey;
+use crate::server::chrome::overlay::{Cursor, LARGE, LARGE_COLUMNS, Layout, Row, Step};
 use crate::server::chrome::text::fit;
-
-// the sizes below are in pixels at 18 px rows, for `scaled`
-
-const PADDING: i32 = 12;
-
-/// The space above and below a choice's text, inside its row.
-const ROW_PADDING: i32 = 3;
-const ROW_GAP: i32 = 4;
-const ROW_RADIUS: i32 = 4;
 
 /// How the person answers decade's question whether an agent may take a
 /// screenshot of a pane.
@@ -23,24 +14,18 @@ pub enum Answer {
     Deny,
 }
 
-const CHOICES: [(Answer, &str); 3] = [
-    (Answer::Once, "y  Allow once"),
-    (Answer::Always, "a  Allow and accept screenshots"),
-    (Answer::Deny, "n  Deny"),
+const CHOICES: [(Answer, &str, char); 3] = [
+    (Answer::Once, "Allow once", 'y'),
+    (Answer::Always, "Allow and accept screenshots", 'a'),
+    (Answer::Deny, "Deny", 'n'),
 ];
 
 /// The answer a key gives, for y, a and n.
 pub fn answer_for(key: char) -> Option<Answer> {
-    match key {
-        'y' => Some(Answer::Once),
-        'a' => Some(Answer::Always),
-        'n' => Some(Answer::Deny),
-        _ => None,
-    }
+    (CHOICES.iter())
+        .find(|&&(_, _, choice)| choice == key)
+        .map(|&(answer, _, _)| answer)
 }
-
-/// A box of pixels: its top left and size.
-type Bounds = ((i32, i32), (i32, i32));
 
 /// The dialog in the middle of the window that asks the person whether
 /// `agent` may take a screenshot of pane `pane` in workspace `workspace`.
@@ -52,99 +37,82 @@ pub struct Prompt {
     /// Whether the dialog has been up long enough to take an answer.
     pub armed: bool,
 
+    /// The choice the dialog shows selected.
+    pub selected: usize,
+
     /// The window's size in pixels.
     pub window: (i32, i32),
 
-    /// The chrome font's cell.
+    /// The palette font's cell.
     pub cell: (i32, i32),
 }
 
 impl Prompt {
-    fn lines(&self, room: usize) -> [String; 2] {
-        [
-            fit(&format!("{} asks for a screenshot", self.agent), room),
-            fit(
-                &format!("of pane {} in workspace {}", self.pane, self.workspace),
-                room,
-            ),
-        ]
+    fn rows(&self) -> [Row<'static>; 3] {
+        CHOICES.map(|(answer, label, key)| Row {
+            key: Some(key),
+            destructive: answer == Answer::Deny,
+            available: self.armed,
+            ..Row::new(label)
+        })
     }
 
-    /// The dialog and each choice's row in it.
-    fn layout(&self) -> (Bounds, [(Answer, Bounds); 3]) {
-        let (width, height) = self.window;
-        let (cell_width, cell_height) = self.cell;
-        let padding = scaled(PADDING, cell_height);
-        let row = cell_height + 2 * scaled(ROW_PADDING, cell_height);
-        let gap = scaled(ROW_GAP, cell_height);
-        let longest = (CHOICES.iter().map(|(_, label)| label.chars().count()))
-            .chain(self.lines(usize::MAX).map(|line| line.chars().count()))
-            .max()
-            .unwrap_or(0) as i32;
-        let size = (
-            (2 * padding + (longest + 2) * cell_width).min(width),
-            2 * padding + 2 * cell_height + 3 * gap + 3 * row + 2 * gap,
-        );
-        let at = ((width - size.0).max(0) / 2, (height - size.1).max(0) / 2);
-        let first = at.1 + padding + 2 * cell_height + 3 * gap;
-        let rows = [0, 1, 2].map(|i| {
-            let (answer, _) = CHOICES[i];
-            let y = first + i as i32 * (row + gap);
-            (answer, ((at.0 + padding, y), (size.0 - 2 * padding, row)))
-        });
-        ((at, size), rows)
+    fn layout(&self) -> Layout {
+        let width = LARGE.width(self.cell, LARGE_COLUMNS).min(self.window.0);
+        (Layout::new(&LARGE, self.cell, width))
+            .header(true)
+            .list(CHOICES.len())
+            .end()
+            .centred(self.window)
+    }
+
+    /// The answer `key` gives, moving `cursor` for Up and Down. Escape
+    /// denies.
+    pub fn key(&self, cursor: &mut Cursor, key: MenuKey) -> Option<Answer> {
+        match cursor.key(key, &self.rows()) {
+            Step::Run(index) => Some(CHOICES[index].0),
+            Step::Close => Some(Answer::Deny),
+            Step::Stay | Step::Pass(_) => None,
+        }
+    }
+
+    /// Select the choice under pixel `x`, `y`, and return whether the
+    /// selection moved.
+    pub fn hover(&self, cursor: &mut Cursor, x: i32, y: i32) -> bool {
+        let Some(list) = self.layout().list_area() else {
+            return false;
+        };
+        cursor.hover(&list, &self.rows(), x, y)
     }
 
     /// The choice under pixel `x`, `y`, if any.
     pub fn hit(&self, x: i32, y: i32) -> Option<Answer> {
-        let inside = |((left, top), (width, height)): Bounds| {
-            (left..left + width).contains(&x) && (top..top + height).contains(&y)
-        };
-        let (_, rows) = self.layout();
-        (rows.into_iter()).find_map(|(answer, row)| inside(row).then_some(answer))
+        let list = self.layout().list_area()?;
+        let mut cursor = Cursor::default();
+        let index = cursor.click(&list, &self.rows(), x, y)?;
+        Some(CHOICES[index].0)
     }
 
-    /// Draw the dialog in window pixels, with the chrome font.
+    /// Draw the dialog in window pixels, with the palette font.
     pub fn draw(&self, scene: &mut Scene) {
-        let (((left, top), size), rows) = self.layout();
-        let (cell_width, cell_height) = self.cell;
-        let padding = scaled(PADDING, cell_height);
-        let radius = scaled(CARD_RADIUS, cell_height);
-        let offset = scaled(SHADOW_OFFSET, cell_height);
-        let shadow = palette::SHADOW;
-        scene.rounded(left + offset, top + offset, size, radius, shadow, shadow);
-        scene.rounded(
-            left,
-            top,
-            size,
-            radius,
-            palette::LIGHTER_BACKGROUND,
-            palette::MAGENTA,
-        );
-        let room = ((size.0 - 2 * padding) / cell_width - 2).max(0) as usize;
-        let [question, place] = self.lines(room);
-        let x = left + padding + cell_width;
-        let y = top + padding;
-        scene.text_px(x, y, &question, Face::ChromeBold, palette::FOREGROUND);
-        let y = y + cell_height + scaled(ROW_GAP, cell_height);
-        scene.text_px(x, y, &place, Face::Chrome, palette::LIGHT_FOREGROUND);
-
-        let row_radius = scaled(ROW_RADIUS, cell_height);
-        let text = if self.armed {
-            palette::FOREGROUND
-        } else {
-            palette::MUTED
+        let layout = self.layout();
+        layout.draw_box(scene);
+        let (cell_width, _) = self.cell;
+        let room = ((layout.width - 2 * LARGE.text_left(self.cell.1)) / cell_width).max(0);
+        let room = room as usize;
+        let question = fit(&format!("{} asks for a screenshot", self.agent), room);
+        let place = format!("of pane {} in workspace {}", self.pane, self.workspace);
+        layout.draw_header(scene, &question, Some(&fit(&place, room)));
+        let Some(list) = layout.list_area() else {
+            return;
         };
-        for ((answer, ((row_left, row_top), row_size)), (_, label)) in rows.into_iter().zip(CHOICES)
-        {
-            let fill = match answer {
-                Answer::Deny => palette::DARK_RED,
-                _ => palette::SELECTION,
+        for (i, row) in self.rows().iter().enumerate() {
+            let label = fit(row.label, room.saturating_sub(4));
+            let row = Row {
+                label: &label,
+                ..*row
             };
-            scene.rounded(row_left, row_top, row_size, row_radius, fill, fill);
-            let text_y = row_top + scaled(ROW_PADDING, cell_height);
-            let label = fit(label, room);
-            scene.text_px(x, text_y, &label, Face::Chrome, text);
+            list.draw_row(scene, i, &row, i == self.selected);
         }
     }
 }
@@ -159,8 +127,9 @@ mod tests {
             workspace: "decade".to_string(),
             pane: "terminal".to_string(),
             armed: true,
+            selected: 0,
             window: (800, 600),
-            cell: (8, 18),
+            cell: (10, 25),
         }
     }
 
@@ -175,14 +144,16 @@ mod tests {
     #[test]
     fn the_dialog_is_centred_in_the_window_and_a_press_on_a_choice_answers() {
         let prompt = prompt();
-        let (((left, top), (width, height)), rows) = prompt.layout();
+        let layout = prompt.layout();
+        let ((left, top), (width, height)) = (layout.at, (layout.width, layout.height));
         assert!((left - (800 - (left + width))).abs() <= 1);
         assert!((top - (600 - (top + height))).abs() <= 1);
-        for (answer, ((x, y), (w, h))) in rows {
-            assert_eq!(prompt.hit(x + w / 2, y + h / 2), Some(answer));
+        let list = layout.list_area().unwrap();
+        for (i, (answer, _, _)) in CHOICES.into_iter().enumerate() {
+            assert_eq!(prompt.hit(list.left(), list.text_y(i)), Some(answer));
         }
         assert_eq!(prompt.hit(left + 1, top + 1), None);
-        assert_eq!(prompt.hit(left - 1, top + 1), None);
+        assert_eq!(prompt.hit(left - 1, list.text_y(0)), None);
     }
 
     #[test]
@@ -191,7 +162,62 @@ mod tests {
             window: (120, 600),
             ..prompt()
         };
-        let (((left, _), (width, _)), _) = prompt.layout();
-        assert_eq!((left, width), (0, 120));
+        let layout = prompt.layout();
+        assert_eq!((layout.at.0, layout.width), (0, 120));
+    }
+
+    #[test]
+    fn arrows_move_the_selection_and_enter_gives_the_selected_answer() {
+        let prompt = prompt();
+        let mut cursor = Cursor::default();
+        assert_eq!(prompt.key(&mut cursor, MenuKey::Enter), Some(Answer::Once));
+        assert_eq!(prompt.key(&mut cursor, MenuKey::Down), None);
+        assert_eq!(
+            prompt.key(&mut cursor, MenuKey::Enter),
+            Some(Answer::Always)
+        );
+        prompt.key(&mut cursor, MenuKey::Down);
+        prompt.key(&mut cursor, MenuKey::Down);
+        assert_eq!(prompt.key(&mut cursor, MenuKey::Enter), Some(Answer::Deny));
+        prompt.key(&mut cursor, MenuKey::Up);
+        prompt.key(&mut cursor, MenuKey::Up);
+        prompt.key(&mut cursor, MenuKey::Up);
+        assert_eq!(cursor.selected, 0);
+    }
+
+    #[test]
+    fn the_key_caps_and_escape_answer_and_other_keys_do_not() {
+        let prompt = prompt();
+        let mut cursor = Cursor::default();
+        let key = |cursor: &mut Cursor, ch| prompt.key(cursor, MenuKey::Char(ch));
+        assert_eq!(key(&mut cursor, 'a'), Some(Answer::Always));
+        assert_eq!(key(&mut cursor, 'n'), Some(Answer::Deny));
+        assert_eq!(key(&mut cursor, 'x'), None);
+        let escape = prompt.key(&mut cursor, MenuKey::Escape);
+        assert_eq!(escape, Some(Answer::Deny));
+    }
+
+    #[test]
+    fn an_unarmed_dialog_greys_its_choices_and_ignores_the_pointer() {
+        let prompt = Prompt {
+            armed: false,
+            ..prompt()
+        };
+        assert!(prompt.rows().iter().all(|row| !row.available));
+        let list = prompt.layout().list_area().unwrap();
+        let (x, y) = (list.left(), list.text_y(1));
+        let mut cursor = Cursor::default();
+        assert!(!prompt.hover(&mut cursor, x, y));
+        assert_eq!(prompt.hit(x, y), None);
+        assert_eq!(prompt.key(&mut cursor, MenuKey::Char('y')), None);
+    }
+
+    #[test]
+    fn hovering_an_armed_choice_selects_it() {
+        let prompt = prompt();
+        let list = prompt.layout().list_area().unwrap();
+        let mut cursor = Cursor::default();
+        assert!(prompt.hover(&mut cursor, list.left(), list.text_y(2)));
+        assert_eq!(cursor.selected, 2);
     }
 }

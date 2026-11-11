@@ -104,6 +104,8 @@ impl State {
     pub(super) fn pointer_moved(&mut self, location: Point<f64, Logical>, time: u32) {
         self.pointer = location;
         if self.asking.is_some() {
+            let (x, y) = self.pointer_px();
+            self.dialog_hover(x, y);
             return;
         }
         if matches!(self.overlay, Some(Overlay::Picker { .. })) {
@@ -581,7 +583,7 @@ impl State {
                 let focused = self.layout().focused;
                 self.restart_pane(self.current(), focused);
             }
-            Key::Answer(answer) => self.answer_screenshot(Some(answer)),
+            Key::Dialog(key) => self.dialog_key(key),
             Key::Menu(key) => {
                 let (ids, grid) = (self.workspace_ids(), self.picker_grid());
                 let outcome = match &mut self.overlay {
@@ -907,8 +909,8 @@ enum Key {
     Clipboard(Chord),
     Menu(MenuKey),
 
-    /// An answer to the screenshot dialog.
-    Answer(Answer),
+    /// A key the screenshot dialog takes.
+    Dialog(MenuKey),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -942,7 +944,7 @@ fn repeats(key: Key) -> bool {
         | Key::Sidebar
         | Key::NextNeeding
         | Key::Clipboard(_)
-        | Key::Answer(..) => false,
+        | Key::Dialog(_) => false,
     }
 }
 
@@ -992,7 +994,7 @@ fn super_key(sym: u32, shift: bool) -> Option<Key> {
     }
 }
 
-/// What a key does while the screenshot dialog is up. A press answers the
+/// What a key does while the screenshot dialog is up. A press goes to the
 /// dialog or is swallowed. A release goes on to smithay and reaches no client.
 fn dialog_key(
     pressed: bool,
@@ -1004,12 +1006,17 @@ fn dialog_key(
         return FilterResult::Forward;
     }
     let plain = !modifiers.logo && !modifiers.ctrl && !modifiers.alt;
-    let answer = match sym.raw() {
-        keysyms::KEY_Escape => Some(Answer::Deny),
-        _ if plain => sym.key_char().and_then(prompt::answer_for),
+    let key = match sym.raw() {
+        keysyms::KEY_Escape => Some(MenuKey::Escape),
+        keysyms::KEY_Return | keysyms::KEY_KP_Enter if plain => Some(MenuKey::Enter),
+        keysyms::KEY_Up if plain => Some(MenuKey::Up),
+        keysyms::KEY_Down if plain => Some(MenuKey::Down),
+        _ if plain => (sym.key_char())
+            .filter(|&ch| prompt::answer_for(ch).is_some())
+            .map(MenuKey::Char),
         _ => None,
     };
-    FilterResult::Intercept(answer.filter(|_| armed).map(Key::Answer))
+    FilterResult::Intercept(key.filter(|_| armed).map(Key::Dialog))
 }
 
 /// The answer a press of `button` on choice `hit` gives while the
@@ -1067,7 +1074,7 @@ mod tests {
             ..ModifiersState::default()
         };
         assert_eq!(dialog_answer(true, true, plain, keysyms::KEY_x), None);
-        assert_eq!(dialog_answer(true, true, plain, keysyms::KEY_Return), None);
+        assert_eq!(dialog_answer(true, true, ctrl, keysyms::KEY_Return), None);
         assert_eq!(dialog_answer(true, true, logo, keysyms::KEY_h), None);
         assert_eq!(dialog_answer(true, true, logo, keysyms::KEY_Tab), None);
         assert_eq!(dialog_answer(true, true, ctrl, keysyms::KEY_y), None);
@@ -1076,13 +1083,18 @@ mod tests {
     }
 
     #[test]
-    fn y_a_n_and_escape_answer_the_dialog_once_it_is_armed() {
+    fn y_a_n_arrows_enter_and_escape_go_to_the_dialog_once_it_is_armed() {
         let plain = ModifiersState::default();
-        let answer = |sym| dialog_answer(true, true, plain, sym);
-        assert_eq!(answer(keysyms::KEY_y), Some(Key::Answer(Answer::Once)));
-        assert_eq!(answer(keysyms::KEY_a), Some(Key::Answer(Answer::Always)));
-        assert_eq!(answer(keysyms::KEY_n), Some(Key::Answer(Answer::Deny)));
-        assert_eq!(answer(keysyms::KEY_Escape), Some(Key::Answer(Answer::Deny)));
+        let key = |sym| dialog_answer(true, true, plain, sym);
+        let dialog = |key| Some(Key::Dialog(key));
+        assert_eq!(key(keysyms::KEY_y), dialog(MenuKey::Char('y')));
+        assert_eq!(key(keysyms::KEY_a), dialog(MenuKey::Char('a')));
+        assert_eq!(key(keysyms::KEY_n), dialog(MenuKey::Char('n')));
+        assert_eq!(key(keysyms::KEY_Escape), dialog(MenuKey::Escape));
+        assert_eq!(key(keysyms::KEY_Up), dialog(MenuKey::Up));
+        assert_eq!(key(keysyms::KEY_Down), dialog(MenuKey::Down));
+        assert_eq!(key(keysyms::KEY_Return), dialog(MenuKey::Enter));
+        assert_eq!(key(keysyms::KEY_KP_Enter), dialog(MenuKey::Enter));
     }
 
     #[test]
@@ -1093,6 +1105,8 @@ mod tests {
             keysyms::KEY_a,
             keysyms::KEY_n,
             keysyms::KEY_Escape,
+            keysyms::KEY_Down,
+            keysyms::KEY_Return,
         ] {
             assert_eq!(dialog_answer(true, false, plain, sym), None);
         }

@@ -118,7 +118,7 @@ impl State {
         };
         let mut elements: Vec<Element> = Vec::new();
         if let Some(prompt) = &prompt {
-            let mut scene = Scene::new(&paint.text.chrome);
+            let mut scene = Scene::new(&paint.text.menu);
             prompt.draw(&mut scene);
             paint.scene(&mut elements, &scene, Point::default(), None);
         }
