@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T02:49:22.300354507Z",
-  "updated_at": "2026-11-11T04:00:09.1681644Z",
+  "updated_at": "2026-11-11T05:13:56.590503099Z",
   "closed_at": "2026-11-11T04:00:09.1681644Z",
   "close_reason": "Landed in 31d7f25 (shared parts in src/server/chrome/overlay.rs, palette and settings), 8f2351d (screenshot dialog), 77d54a5 (context menu), 7629b71 (name field) and 2d00018 (sidebar popover), to the prototype Jack approved.",
   "resolution": "done",
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/7403d304",
       "text": "Jack approved the prototype at tmp-claude/2026-11-10-overlays/index.html (large: 16 px text, 40 px rows, 12 px corners; small: 13 px text, 22 px rows, 8 px corners) and asked for it to be built.",
       "commit": "ad0a585",
+      "branch": "dev"
+    },
+    {
+      "id": "961ebf39",
+      "at": "2026-11-11T05:13:56.590502529Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "Jack tried it on a server built from 2d00018, including the screenshot dialog with arrows and Enter, and said it looks good.",
+      "commit": "2d00018",
       "branch": "dev"
     }
   ],
