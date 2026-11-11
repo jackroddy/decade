@@ -1,0 +1,28 @@
+{
+  "id": "decade-e4c93f",
+  "title": "decade's overlays are built separately and look and behave differently",
+  "body": "decade draws six overlays of its own, and they share little. The palette and the settings panel share `draw_box` and `Rows` in `src/server/chrome/menu.rs`. The context menu (`context_menu.rs`), the screenshot dialog (`prompt.rs`), the name field (`rename.rs`) and the sidebar popover (`frame.rs`) each draw their own box. They differ in corner radius (12 against 6), shadow, border colour (grey, magenta, accent), font (`Face::Menu` against `Face::Chrome`) and row height. Their input differs as much. The dialog takes only y, a and n, the settings panel ignores Enter, and the palette and panel take no mouse input. Jack found the screenshot dialog bad to look at and expected arrows and Enter to work on it.\n\n## Proposal\n\nOne set of parts in `src/server/chrome/` builds every overlay:\n\n- a box: one border colour, one shadow, corners that scale with the font\n- a list: one selected style, hover moves the selection, a click runs the row, an optional key cap per row, a red style for a destructive row, a grey style for an unavailable one\n- a header: a title and a dim second line, for dialogs\n- a text field: the palette's query line, also used by rename and new group\n- one keyboard model: Up and Down move, Enter acts, Escape closes, and key-cap letters act as shortcuts\n\nThe parts come in two sizes. The large size is centred over the dim layer and serves the palette, settings and dialogs. The small size is anchored with no dim layer and serves the context menu, name field and popover. The look starts from the palette's.\n\nThe screenshot dialog becomes a header and a three-row list, with the first row selected and Deny in the red style.\n\nA web prototype of all six in the unified style comes first, for Jack to judge before anything is built.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T02:49:22.300354507Z",
+  "updated_at": "2026-11-11T02:49:22.300354507Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "ad0a585",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
