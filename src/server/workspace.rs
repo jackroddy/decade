@@ -27,6 +27,19 @@ pub struct Workspace {
 
     /// The pane the workspace's agent points at.
     pub point: Option<Point>,
+
+    /// The id of the sidebar group the workspace is in.
+    pub group: Option<u32>,
+}
+
+/// A named set of workspaces, which only the sidebar shows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Group {
+    pub id: u32,
+    pub name: String,
+
+    /// Whether the open sidebar shows only the group's header.
+    pub folded: bool,
 }
 
 /// An agent pointing at a pane, from the MCP tool `point`.
@@ -183,6 +196,7 @@ impl Workspace {
             branch: None,
             branch_read: None,
             point: None,
+            group: None,
         }
     }
 

@@ -1,4 +1,5 @@
 mod channels;
+mod groups;
 mod input;
 mod pool;
 mod render;
@@ -83,7 +84,7 @@ use crate::server::chrome::text::Text;
 use crate::server::mcp;
 use crate::server::panes::{self as panes, BarButton, CellRect, Layout, Pane};
 use crate::server::save::{self, TerminalTab};
-use crate::server::workspace::{self, Workspace};
+use crate::server::workspace::{self, Group, Workspace};
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
 use decade_channel::AgentState;
 
@@ -147,6 +148,10 @@ pub struct State {
     text: Text,
     workspaces: Vec<Workspace>,
     next_workspace: u32,
+
+    /// The sidebar's groups, in the order it lists them.
+    groups: Vec<Group>,
+    next_group: u32,
     unplaced: Vec<ToplevelSurface>,
     popups: PopupManager,
 
@@ -253,6 +258,8 @@ pub fn run() {
         rounded,
         next_workspace: 0,
         workspaces: Vec::new(),
+        groups: Vec::new(),
+        next_group: 0,
         unplaced: Vec::new(),
         popups: PopupManager::default(),
         popup_grab: None,
@@ -523,9 +530,11 @@ impl State {
                     return Ok(Vec::new());
                 };
                 self.sidebar_open = file.sidebar_open;
+                self.groups = file.groups();
+                self.next_group = self.groups.len() as u32;
                 let area = self.pane_area();
                 (file.workspaces.iter().enumerate())
-                    .map(|(id, saved)| saved.workspace(id as u32, area))
+                    .map(|(id, saved)| saved.workspace(id as u32, area, &self.groups))
                     .collect::<Result<Vec<_>, String>>()
             });
             match restored {
@@ -543,6 +552,8 @@ impl State {
                     );
                     self.save_path = None;
                     self.sidebar_open = true;
+                    self.groups.clear();
+                    self.next_group = 0;
                 }
             }
         }
@@ -875,6 +886,9 @@ impl State {
                 }
             }
             Command::Rename(named) => self.open_rename(named),
+            Command::NewGroup => self.open_rename(Named::NewGroup),
+            Command::DeleteGroup(id) => self.delete_group(id),
+            Command::MoveToGroup { workspace, group } => self.move_to_group(workspace, group),
         }
     }
 
@@ -894,6 +908,11 @@ impl State {
             Named::Tab(index) => (frame.tabs.get(index))
                 .zip(frame.tab_name_at(index))
                 .map(|(tab, at)| (tab.label.clone(), at)),
+            Named::Group(id) => (self.groups.iter())
+                .find(|group| group.id == id)
+                .zip(frame.group_name_at(id))
+                .map(|(group, at)| (group.name.clone(), at)),
+            Named::NewGroup => Some((String::new(), frame.new_group_at())),
             Named::Pane(id) => {
                 let layout = shown.layout();
                 (layout.pane(id))
@@ -925,6 +944,8 @@ impl State {
             Named::Workspace(id) => self.rename_workspace(id, &name),
             Named::Tab(index) => self.workspaces[current].rename_tab(index, &name),
             Named::Pane(id) => self.workspaces[current].rename_pane(tab, id, &name),
+            Named::Group(id) => self.rename_group(id, &name),
+            Named::NewGroup => self.add_group(&name),
         };
         match renamed {
             Ok(()) => {
@@ -954,7 +975,7 @@ impl State {
         let pointer = self.pointer.to_physical(self.scale).to_i32_round();
         let font = &self.text.chrome;
         let Some(menu) = ContextMenu::open(
-            context_menu::entries(place),
+            context_menu::entries(place, &self.groups),
             (pointer.x, pointer.y),
             (self.size.w, self.size.h),
             (font.cell_width as i32, font.cell_height as i32),
@@ -1050,6 +1071,7 @@ impl State {
         match hit {
             Hit::Show(id) => self.show_on_active(id),
             Hit::Clear(id) => self.run_command(Command::Clear(id)),
+            Hit::Group(id) => self.toggle_fold(id),
             Hit::New => self.start_new_workspace(),
             Hit::Palette => self.open_palette(),
             Hit::Sidebar => self.toggle_sidebar(),
@@ -1112,7 +1134,7 @@ impl State {
         let Some(path) = &self.save_path else {
             return;
         };
-        if let Err(error) = save::save(path, &self.workspaces, self.sidebar_open) {
+        if let Err(error) = save::save(path, &self.workspaces, &self.groups, self.sidebar_open) {
             eprintln!("decade: could not save to {}: {error}", path.display());
         }
     }

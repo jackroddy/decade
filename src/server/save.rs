@@ -7,16 +7,27 @@ use serde::{Deserialize, Serialize};
 use crate::files;
 use crate::server::panes::{Axis, CellRect, Layout, Node, Pane};
 use crate::server::proc;
-use crate::server::workspace::Workspace;
+use crate::server::workspace::{Group, Workspace};
 
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 
 #[derive(Serialize, Deserialize)]
 pub struct File {
     version: u32,
     pub sidebar_open: bool,
+
+    /// The sidebar's groups, in the order it lists them.
+    #[serde(default, rename = "group", skip_serializing_if = "Vec::is_empty")]
+    groups: Vec<SavedGroup>,
     #[serde(default, rename = "workspace")]
     pub workspaces: Vec<Saved>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct SavedGroup {
+    name: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    folded: bool,
 }
 
 /// One workspace as the file holds it.
@@ -29,6 +40,10 @@ pub struct Saved {
     /// The name of the scratch pane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scratch: Option<String>,
+
+    /// The name of the group the workspace is in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group: Option<String>,
     #[serde(rename = "tab")]
     tabs: Vec<SavedTab>,
 }
@@ -123,17 +138,20 @@ fn read(text: &str) -> Result<File, String> {
                     cwd: old.cwd,
                     active_tab: 0,
                     scratch: None,
+                    group: None,
                     tabs: vec![old.tab],
                 })
                 .collect();
             Ok(File {
                 version: VERSION,
                 sidebar_open: true,
+                groups: Vec::new(),
                 workspaces,
             })
         }
-        // version 3 adds only the optional tab name
-        2 | VERSION => {
+        // version 3 adds only the optional tab name, and version 4
+        // only the optional groups
+        2 | 3 | VERSION => {
             let file: File = toml::from_str(text).map_err(error)?;
             Ok(File {
                 version: VERSION,
@@ -144,26 +162,62 @@ fn read(text: &str) -> Result<File, String> {
     }
 }
 
-pub fn save(path: &Path, workspaces: &[Workspace], sidebar_open: bool) -> io::Result<()> {
-    let text =
-        to_text(workspaces.iter().map(saved).collect(), sidebar_open).map_err(io::Error::other)?;
+impl File {
+    /// The saved groups, with ids from 0 in the order they are listed.
+    pub fn groups(&self) -> Vec<Group> {
+        (self.groups.iter().zip(0..))
+            .map(|(saved, id)| Group {
+                id,
+                name: saved.name.clone(),
+                folded: saved.folded,
+            })
+            .collect()
+    }
+}
+
+pub fn save(
+    path: &Path,
+    workspaces: &[Workspace],
+    groups: &[Group],
+    sidebar_open: bool,
+) -> io::Result<()> {
+    let saved = workspaces
+        .iter()
+        .map(|workspace| saved(workspace, groups))
+        .collect();
+    let text = to_text(saved, groups, sidebar_open).map_err(io::Error::other)?;
     files::write(path, &text)
 }
 
-fn to_text(workspaces: Vec<Saved>, sidebar_open: bool) -> Result<String, toml::ser::Error> {
+fn to_text(
+    workspaces: Vec<Saved>,
+    groups: &[Group],
+    sidebar_open: bool,
+) -> Result<String, toml::ser::Error> {
+    let groups = (groups.iter())
+        .map(|group| SavedGroup {
+            name: group.name.clone(),
+            folded: group.folded,
+        })
+        .collect();
     toml::to_string(&File {
         version: VERSION,
         sidebar_open,
+        groups,
         workspaces,
     })
 }
 
-fn saved(workspace: &Workspace) -> Saved {
+fn saved(workspace: &Workspace, groups: &[Group]) -> Saved {
+    let group = (groups.iter())
+        .find(|group| Some(group.id) == workspace.group)
+        .map(|group| group.name.clone());
     Saved {
         name: workspace.name.clone(),
         cwd: workspace.cwd.clone(),
         active_tab: workspace.active_tab,
         scratch: workspace.scratch_pane().map(str::to_string),
+        group,
         tabs: workspace
             .tabs
             .iter()
@@ -257,12 +311,13 @@ pub struct TerminalTab {
 }
 
 impl Saved {
-    /// Rebuild the workspace with the id `id`, and list the terminal tabs
-    /// to start in its panes.
+    /// Rebuild the workspace with the id `id`, in its group among `groups`,
+    /// and list the terminal tabs to start in its panes.
     pub fn workspace(
         &self,
         id: u32,
         area: CellRect,
+        groups: &[Group],
     ) -> Result<(Workspace, Vec<TerminalTab>), String> {
         let layouts = self.layouts(area)?;
         let mut restored = Workspace::with_tabs(
@@ -275,6 +330,9 @@ impl Saved {
         for (tab, saved) in restored.tabs.iter_mut().zip(&self.tabs) {
             tab.name = saved.name.clone();
         }
+        restored.group = (groups.iter())
+            .find(|group| Some(&group.name) == self.group.as_ref())
+            .map(|group| group.id);
         if let Some(name) = &self.scratch
             && restored.by_name(name).is_some()
         {
@@ -412,10 +470,10 @@ mod tests {
     #[test]
     fn a_saved_workspace_reads_back_with_the_same_tree_and_panes() {
         let workspace = workspace();
-        let text = to_text(vec![saved(&workspace)], true).unwrap();
+        let text = to_text(vec![saved(&workspace, &[])], &[], true).unwrap();
         let file = read(&text).unwrap();
         let back = &file.workspaces[0];
-        assert_eq!(back, &saved(&workspace));
+        assert_eq!(back, &saved(&workspace, &[]));
         let layout = first_layout(back);
         let rects: Vec<_> = layout.panes.iter().map(|pane| pane.rect).collect();
         let before: Vec<_> = workspace
@@ -438,7 +496,7 @@ mod tests {
         workspace
             .layout_mut()
             .pin(0, "decade.w2.terminal".to_string());
-        let layout = first_layout(&saved(&workspace));
+        let layout = first_layout(&saved(&workspace, &[]));
         let pinned: Vec<bool> = layout.panes.iter().map(|pane| pane.pinned).collect();
         assert_eq!(pinned, [true, false, true]);
         assert_eq!(
@@ -458,7 +516,7 @@ mod tests {
         let layout = workspace.layout_mut();
         layout.unpin(2);
         layout.pane_mut(2).unwrap().app_id = Some("org.gnome.Nautilus".to_string());
-        let layout = first_layout(&saved(&workspace));
+        let layout = first_layout(&saved(&workspace, &[]));
         assert_eq!(
             layout.place(Some("org.gnome.Nautilus"), "decade.w0."),
             Some((2, false))
@@ -467,7 +525,7 @@ mod tests {
 
     #[test]
     fn a_tree_naming_a_missing_pane_is_refused() {
-        let mut saved = saved(&workspace());
+        let mut saved = saved(&workspace(), &[]);
         saved.tabs[0].panes.pop();
         assert!(saved.layouts(crate::server::panes::tests::AREA).is_err());
     }
@@ -480,11 +538,11 @@ mod tests {
             .layout
             .add_transient("logs".to_string());
         workspace.active_tab = second;
-        let text = to_text(vec![saved(&workspace)], false).unwrap();
+        let text = to_text(vec![saved(&workspace, &[])], &[], false).unwrap();
         let file = read(&text).unwrap();
         assert!(!file.sidebar_open);
         let back = &file.workspaces[0];
-        assert_eq!(back, &saved(&workspace));
+        assert_eq!(back, &saved(&workspace, &[]));
         assert_eq!(back.active_tab, 1);
         let layouts = back.layouts(crate::server::panes::tests::AREA).unwrap();
         let names: Vec<Vec<&str>> = layouts
@@ -505,7 +563,12 @@ mod tests {
     fn the_scratch_pane_reads_back_by_name() {
         let mut workspace = workspace();
         workspace.toggle_scratch("nautilus");
-        let text = to_text(vec![saved(&workspace), saved(&self::workspace())], true).unwrap();
+        let text = to_text(
+            vec![saved(&workspace, &[]), saved(&self::workspace(), &[])],
+            &[],
+            true,
+        )
+        .unwrap();
         let file = read(&text).unwrap();
         assert_eq!(file.workspaces[0].scratch.as_deref(), Some("nautilus"));
         assert_eq!(file.workspaces[1].scratch, None);
@@ -556,7 +619,7 @@ cwd = "/tmp"
         workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.tabs[1].layout.panes[0].name = "code".to_string();
         assert!(
-            saved(&workspace)
+            saved(&workspace, &[])
                 .layouts(crate::server::panes::tests::AREA)
                 .is_err()
         );
@@ -574,13 +637,13 @@ cwd = "/tmp"
 
     #[test]
     fn the_directories_of_a_panes_terminal_tabs_read_back_with_the_pane() {
-        let mut saved = saved(&workspace());
+        let mut saved = saved(&workspace(), &[]);
         let tabs = vec![PathBuf::from("/tmp"), PathBuf::from("/home/jack")];
         saved.tabs[0].panes[1].tabs = tabs.clone();
-        let text = to_text(vec![saved], true).unwrap();
+        let text = to_text(vec![saved], &[], true).unwrap();
         let back = &read(&text).unwrap().workspaces[0];
         let (_, restored) = back
-            .workspace(0, crate::server::panes::tests::AREA)
+            .workspace(0, crate::server::panes::tests::AREA, &[])
             .unwrap();
         let expected: Vec<TerminalTab> = tabs
             .into_iter()
@@ -599,18 +662,61 @@ cwd = "/tmp"
         let mut workspace = workspace();
         workspace.add_tab(crate::server::panes::tests::AREA);
         workspace.rename_tab(1, "logs").unwrap();
-        let text = to_text(vec![saved(&workspace)], true).unwrap();
-        assert!(text.starts_with("version = 3"));
+        let text = to_text(vec![saved(&workspace, &[])], &[], true).unwrap();
+        assert!(text.starts_with("version = 4"));
         let file = read(&text).unwrap();
         let (back, _) = (file.workspaces[0])
-            .workspace(2, crate::server::panes::tests::AREA)
+            .workspace(2, crate::server::panes::tests::AREA, &[])
             .unwrap();
         let names: Vec<_> = back.tabs.iter().map(|tab| tab.name.as_deref()).collect();
         assert_eq!(names, [None, Some("logs")]);
 
-        let old = text.replacen("version = 3", "version = 2", 1);
+        let old = text.replacen("version = 4", "version = 2", 1);
         let old = old.replace("name = \"logs\"\n", "");
         let file = read(&old).unwrap();
         assert!(file.workspaces[0].tabs.iter().all(|tab| tab.name.is_none()));
+    }
+
+    #[test]
+    fn groups_read_back_in_order_with_their_members_and_folds() {
+        let groups = vec![
+            Group {
+                id: 3,
+                name: "work".to_string(),
+                folded: true,
+            },
+            Group {
+                id: 8,
+                name: "home".to_string(),
+                folded: false,
+            },
+        ];
+        let mut grouped = workspace();
+        grouped.group = Some(8);
+        let saved = vec![saved(&grouped, &groups), saved(&workspace(), &groups)];
+        let text = to_text(saved, &groups, true).unwrap();
+        let file = read(&text).unwrap();
+        let back = file.groups();
+        let names: Vec<_> = back.iter().map(|group| group.name.as_str()).collect();
+        assert_eq!(names, ["work", "home"]);
+        let folds: Vec<_> = back.iter().map(|group| group.folded).collect();
+        assert_eq!(folds, [true, false]);
+        let area = crate::server::panes::tests::AREA;
+        let (first, _) = file.workspaces[0].workspace(0, area, &back).unwrap();
+        let (second, _) = file.workspaces[1].workspace(1, area, &back).unwrap();
+        assert_eq!(first.group, Some(back[1].id));
+        assert_eq!(second.group, None);
+    }
+
+    #[test]
+    fn a_version_3_file_reads_with_no_groups() {
+        let text = to_text(vec![saved(&workspace(), &[])], &[], true).unwrap();
+        assert!(!text.contains("[[group]]"));
+        let old = text.replacen("version = 4", "version = 3", 1);
+        let file = read(&old).unwrap();
+        assert!(file.groups().is_empty());
+        let area = crate::server::panes::tests::AREA;
+        let (back, _) = file.workspaces[0].workspace(0, area, &[]).unwrap();
+        assert_eq!(back.group, None);
     }
 }

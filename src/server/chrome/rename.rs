@@ -16,6 +16,12 @@ pub enum Named {
 
     /// A pane of the tab on screen, by id.
     Pane(usize),
+
+    /// A group in the sidebar, by id.
+    Group(u32),
+
+    /// The group the field adds once a name is typed in it.
+    NewGroup,
 }
 
 /// The text field a name turns into while the person renames it, drawn

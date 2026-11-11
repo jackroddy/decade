@@ -114,10 +114,11 @@ command line and what the tool writes.
 - A tab closes by itself once no pane in it holds a client or a running
   program, and none is pinned or the scratch pane. A workspace's only tab
   stays, with an empty pane.
-- `workspaces.toml` is now version 3. It holds each workspace's tabs, the
-  name the person gave each tab, the tab each workspace shows, and whether
-  the sidebar is open. decade still reads a version 2 file, whose tabs
-  have no names. It reads a version 1 file as one tab per workspace with
+- `workspaces.toml` is now version 4. It holds each workspace's tabs, the
+  name the person gave each tab, the tab each workspace shows, whether
+  the sidebar is open, and the sidebar's groups with their members and
+  folds. decade still reads a version 3 file, which has no groups, and a
+  version 2 file, whose tabs have no names either. It reads a version 1 file as one tab per workspace with
   the sidebar open.
 - Panes are a split tree. A new window with no anchor of its own, or
   Super+Shift+Return, splits the focused pane along its longer side; a pane
@@ -233,7 +234,8 @@ command line and what the tool writes.
   the selection, Enter runs the selected entry and Escape closes the menu.
   A click on an entry runs it. A click outside closes the menu and goes no
   further. A right click inside a program's window still goes to that
-  program. A right click on empty sidebar space opens nothing.
+  program. A right click on empty space in the open sidebar offers New
+  group.
 - The person can rename a workspace, a tab or a pane. Rename in the right
   click menu opens the name as a text field where it is drawn, and so does a
   double click on the name. The field sits on the workspace's card or in its
@@ -248,6 +250,22 @@ command line and what the tool writes.
   lives. A message, a hello or an MCP call that gives a former name reaches
   the pane, and so does a terminal started under that name. `panes` lists
   only the current name. A new pane cannot take a former name.
+- The person can put workspaces in named groups in the sidebar. New group
+  asks for the group's name in a text field at the bottom of the list. The
+  new group goes below the others. Ungrouped workspaces come first. Each
+  group follows under a header with its name. Its cards are ordered by
+  agent state like the ungrouped ones. Dragging a card onto a group moves
+  the workspace there. Dragging it above the first header takes it out of
+  its group. A card's menu also offers a move to each other group and out
+  of its own. Dragging a header moves its group among the others. A click
+  on a header folds the group to its header. A folded header counts the
+  group's workspaces in each state, such as `! 1  ✓ 2`. It breathes like a
+  card while one of them is done or needs attention. A header's menu
+  offers Rename and Delete. Deleting a group returns its workspaces to
+  ungrouped. The closed sidebar draws a thin rule between one group's
+  tiles and the next. Super+A and the state counts on the top bar cover
+  every group. A click on a card in the open sidebar now acts on release,
+  so that a press can start a drag.
 
 ### Changed
 

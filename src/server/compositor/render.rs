@@ -219,7 +219,8 @@ impl State {
 
     /// The top bar and sidebar drawn around the workspace's panes.
     pub(super) fn frame(&self, shown: usize) -> frame::Frame {
-        let hover = self.frame_hover.filter(|_| shown == self.current());
+        let on_screen = shown == self.current();
+        let hover = self.frame_hover.filter(|_| on_screen);
         let home = workspace::home();
         let now = Instant::now();
         let pulse =
@@ -235,6 +236,7 @@ impl State {
                     .collect(),
                 current: i == shown,
                 pulse: pulse(workspace).filter(|_| i != shown),
+                group: workspace.group,
             })
             .collect();
         let shown = &self.workspaces[shown];
@@ -274,7 +276,7 @@ impl State {
         let mut frame = frame::Frame::new(
             self.grid(),
             self.sidebar_open,
-            entries,
+            (entries, self.groups.clone()),
             (tabs, shown.active_tab),
             title,
             layout.zoom.is_some(),
@@ -285,6 +287,13 @@ impl State {
         );
         frame.hover = hover;
         frame.breath = frame::breath(self.start.elapsed());
+        if let Some(Drag::Sidebar {
+            hit, moved: true, ..
+        }) = self.drag.as_ref().filter(|_| on_screen)
+        {
+            let pointer = self.pointer.to_physical(self.scale);
+            frame.drag = Some((*hit, (pointer.x as i32, pointer.y as i32)));
+        }
         frame
     }
 }

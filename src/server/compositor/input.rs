@@ -85,6 +85,8 @@ impl State {
             return;
         }
         let (column, row) = self.pointer_cell();
+        let (x, y) = self.pointer_px();
+        let threshold = self.text.chrome.cell_height as i32 / 2;
         let current = self.current();
         match &mut self.drag {
             Some(Drag::Boundary(boundary)) => {
@@ -96,6 +98,13 @@ impl State {
             Some(Drag::Pane { cell, .. }) => {
                 *cell = Some((column, row));
                 self.request_redraw();
+                return;
+            }
+            Some(Drag::Sidebar { from, moved, .. }) => {
+                *moved |= (x - from.0).abs() >= threshold || (y - from.1).abs() >= threshold;
+                if *moved {
+                    self.request_redraw();
+                }
                 return;
             }
             None => {}
@@ -222,6 +231,14 @@ impl State {
         if button == BTN_LEFT && pressed {
             let (x, y) = self.pointer_px();
             if let Some(hit) = self.frame(self.current()).hit(x, y) {
+                // a card or header acts on release, unless it was
+                // dragged, which moves it instead
+                if self.sidebar_open && matches!(hit, Hit::Show(_) | Hit::Group(_)) {
+                    let from = (x, y);
+                    let moved = false;
+                    self.drag = Some(Drag::Sidebar { hit, from, moved });
+                    return;
+                }
                 self.frame_hit(hit);
                 return;
             }
@@ -623,9 +640,11 @@ impl State {
             Some(Hit::Show(id) | Hit::Clear(id)) => Some(Place::Workspace {
                 id,
                 clearable: frame.clearable(id),
+                group: (self.workspace_index(id)).and_then(|index| self.workspaces[index].group),
             }),
+            Some(Hit::Group(id)) => Some(Place::Group(id)),
             Some(Hit::Tab(index)) => Some(Place::Tab(index)),
-            Some(Hit::New) => Some(Place::Sidebar),
+            Some(Hit::New) => self.sidebar_open.then_some(Place::Sidebar),
             Some(_) => None,
             None => {
                 let (column, row) = self.pointer_cell();
@@ -637,7 +656,7 @@ impl State {
                 if row < area.row {
                     None
                 } else if column < area.column {
-                    Some(Place::Sidebar)
+                    self.sidebar_open.then_some(Place::Sidebar)
                 } else if let Some(id) = bar.or_else(|| self.layout().chrome_at(column, row)) {
                     self.pane_place(id)
                 } else {
@@ -679,8 +698,13 @@ impl State {
     }
 
     fn drop(&mut self, drag: Drag) {
-        let Drag::Pane { id, cell, .. } = drag else {
-            return;
+        let (id, cell) = match drag {
+            Drag::Pane { id, cell, .. } => (id, cell),
+            Drag::Sidebar {
+                hit, moved: false, ..
+            } => return self.frame_hit(hit),
+            Drag::Sidebar { hit, .. } => return self.drop_in_sidebar(hit),
+            Drag::Boundary(_) => return,
         };
         let drop = cell.and_then(|(column, row)| self.layout().drop_at(id, column, row));
         if let Some(drop) = drop {
@@ -689,6 +713,23 @@ impl State {
         } else {
             self.request_redraw();
         }
+    }
+
+    /// Move the card or header `hit` to where it was dragged in the open
+    /// sidebar, or leave it where it was when it was dropped elsewhere.
+    fn drop_in_sidebar(&mut self, hit: Hit) {
+        let (column, _) = self.pointer_cell();
+        let (_, y) = self.pointer_px();
+        if column < self.pane_area().column {
+            let frame = self.frame(self.current());
+            match hit {
+                Hit::Show(id) => self.move_to_group(id, frame.section_at(y)),
+                Hit::Group(id) => self.move_group(id, frame.group_slot(y)),
+                _ => {}
+            }
+        }
+        self.frame_hover = None;
+        self.request_redraw();
     }
 
     fn pane_origin(&self, id: usize) -> Point<i32, Physical> {
@@ -719,6 +760,18 @@ impl State {
 
 pub(super) enum Drag {
     Boundary(Boundary),
+
+    /// A press on a card or a group's header in the open sidebar.
+    Sidebar {
+        hit: Hit,
+
+        /// Where the press was, in pixels.
+        from: (i32, i32),
+
+        /// Whether the pointer has gone far enough from `from` to make the
+        /// press a drag rather than a click.
+        moved: bool,
+    },
     Pane {
         id: usize,
         grab: Point<i32, Physical>,

@@ -8,6 +8,7 @@ use crate::server::chrome::palette;
 use crate::server::chrome::palette::Rgba;
 use crate::server::chrome::text::{fit, tail};
 use crate::server::panes::CellRect;
+use crate::server::workspace::Group;
 use decade_channel::{AgentState, Context, Tokens};
 
 /// The rows above the panes that the top bar takes.
@@ -70,6 +71,13 @@ const TILE_RADIUS: i32 = 6;
 const STATE_DOT: i32 = 8;
 const STATE_DOT_RING: i32 = 2;
 const POPOVER_GAP: i32 = 6;
+
+/// The space a group's header adds above itself, past a card's gap.
+const GROUP_GAP: i32 = 6;
+
+/// The width of the ring round the part of the sidebar a dragged card or
+/// header drops into.
+const DROP_RING: i32 = 2;
 
 /// How far the popover's top sits above its tile's.
 const POPOVER_RISE: i32 = 5;
@@ -157,6 +165,9 @@ pub struct Entry {
     /// How far the pulse of the workspace's point is toward its peak, when
     /// the workspace is not the one shown.
     pub pulse: Option<f32>,
+
+    /// The id of the group the workspace is in.
+    pub group: Option<u32>,
 }
 
 impl Entry {
@@ -192,6 +203,9 @@ impl Entry {
 pub enum Hit {
     Show(u32),
     Clear(u32),
+
+    /// Fold or unfold the group with this id.
+    Group(u32),
     New,
     Palette,
     Sidebar,
@@ -223,6 +237,16 @@ impl Pill {
     }
 }
 
+/// A card or a group's header in the open sidebar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Row {
+    /// The card of the entry at this index.
+    Card(usize),
+
+    /// The header of the group at this index.
+    Header(usize),
+}
+
 /// A workspace's card shown beside the closed sidebar, in pixels.
 struct Popover {
     entry: usize,
@@ -235,8 +259,11 @@ pub struct Frame {
     pub rows: u32,
     pub open: bool,
 
-    /// The workspaces, most urgent agent state first, otherwise in the picker's order.
+    /// The workspaces, the ungrouped ones first and then each group's in
+    /// the order of `groups`, and within each the most urgent agent state
+    /// first, otherwise in the picker's order.
     pub entries: Vec<Entry>,
+    pub groups: Vec<Group>,
     pub tabs: Vec<Tab>,
     pub active_tab: usize,
 
@@ -253,6 +280,10 @@ pub struct Frame {
     /// How far the cards that breathe are toward their state's tint, from
     /// 0 to 1.
     pub breath: f32,
+
+    /// The card or header being dragged, as `Frame::hit` gave it, and the
+    /// pointer in pixels.
+    pub drag: Option<(Hit, (i32, i32))>,
 }
 
 /// The mark for an agent state and its colour.
@@ -496,7 +527,7 @@ impl Frame {
     pub fn new(
         (columns, rows): (u32, u32),
         open: bool,
-        mut entries: Vec<Entry>,
+        (mut entries, groups): (Vec<Entry>, Vec<Group>),
         (tabs, active_tab): (Vec<Tab>, usize),
         title: String,
         zoom: bool,
@@ -507,12 +538,20 @@ impl Frame {
                 Reverse((agent.dim.is_none(), agent.live_state(), Reverse(agent.age)))
             });
         }
-        entries.sort_by_key(|entry| Reverse(entry.state()));
+        let section = |group: Option<u32>| {
+            let index = group.and_then(|id| groups.iter().position(|group| group.id == id));
+            index.map_or(0, |index| index + 1)
+        };
+        for entry in &mut entries {
+            entry.group = entry.group.filter(|_| section(entry.group) > 0);
+        }
+        entries.sort_by_key(|entry| (section(entry.group), Reverse(entry.state())));
         Frame {
             columns,
             rows,
             open,
             entries,
+            groups,
             tabs,
             active_tab,
             title,
@@ -520,14 +559,18 @@ impl Frame {
             cell,
             hover: None,
             breath: 0.0,
+            drag: None,
         }
     }
 
-    /// The workspace that most needs the person, other than the current one.
+    /// The workspace that most needs the person, other than the current one,
+    /// in whichever group it is.
     pub fn next_needing(&self) -> Option<u32> {
-        self.entries
-            .iter()
-            .find(|entry| !entry.current && entry.state() >= Some(AgentState::Done))
+        // min_by_key keeps the first of equals, so a tie goes to the
+        // workspace listed first
+        (self.entries.iter())
+            .filter(|entry| !entry.current && entry.state() >= Some(AgentState::Done))
+            .min_by_key(|entry| Reverse(entry.state()))
             .map(|entry| entry.id)
     }
 
@@ -643,6 +686,21 @@ impl Frame {
         tiles
     }
 
+    /// The height in pixels of each rule the closed sidebar draws between
+    /// one group's tiles and the next.
+    fn rules(&self) -> Vec<i32> {
+        let tiles = self.tiles();
+        let half_gap = self.scaled(TILE_GAP) / 2;
+        (tiles.windows(2))
+            .filter_map(|pair| match pair {
+                [(Some(a), _), (Some(b), top)] => {
+                    (self.entries[*a].group != self.entries[*b].group).then_some(top - half_gap)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The left edge of every tile, centred in the closed sidebar.
     fn tile_left(&self) -> i32 {
         let rail = CLOSED_WIDTH.min(self.columns) as i32 * self.cell.0;
@@ -712,25 +770,143 @@ impl Frame {
         (x, top + self.scaled(CARD_PADDING), size)
     }
 
-    /// The open sidebar's cards that fit, each with its workspace and its
+    /// The open sidebar's cards and group headers that fit, each with its
     /// top and height in pixels, and the top of the `+ new workspace` row
-    /// when it fits.
-    fn cards(&self) -> (Vec<(usize, i32, i32)>, Option<i32>) {
+    /// when it fits. A folded group shows its header and no cards.
+    fn sidebar_rows(&self) -> (Vec<(Row, i32, i32)>, Option<i32>) {
         let (gap, padding) = (self.scaled(CARD_GAP), self.scaled(CARD_PADDING));
         let row = self.cell.1;
         let bottom = self.rows as i32 * row;
         let mut top = (TOP + 3) as i32 * row;
-        let mut cards = Vec::new();
-        for (i, entry) in self.entries.iter().enumerate() {
-            let card = 2 * padding + entry.card_lines() * row;
-            if top + card > bottom {
-                return (cards, None);
+        let mut rows = Vec::new();
+        let groups = (self.groups.iter().enumerate()).map(Some);
+        for section in [None].into_iter().chain(groups) {
+            if let Some((index, group)) = section {
+                let header = 2 * padding + row;
+                top += self.scaled(GROUP_GAP);
+                if top + header > bottom {
+                    return (rows, None);
+                }
+                rows.push((Row::Header(index), top, header));
+                top += header + gap;
+                if group.folded {
+                    continue;
+                }
             }
-            cards.push((i, top, card));
-            top += card + gap;
+            let id = section.map(|(_, group)| group.id);
+            for (i, entry) in self.entries.iter().enumerate() {
+                if entry.group != id {
+                    continue;
+                }
+                let card = 2 * padding + entry.card_lines() * row;
+                if top + card > bottom {
+                    return (rows, None);
+                }
+                rows.push((Row::Card(i), top, card));
+                top += card + gap;
+            }
         }
         let new = top + gap;
-        (cards, (new + row <= bottom).then_some(new))
+        (rows, (new + row <= bottom).then_some(new))
+    }
+
+    /// The open sidebar's cards that fit, each with its workspace and its
+    /// top and height in pixels, and the top of the `+ new workspace` row
+    /// when it fits.
+    fn cards(&self) -> (Vec<(usize, i32, i32)>, Option<i32>) {
+        let (rows, new) = self.sidebar_rows();
+        let cards = (rows.into_iter())
+            .filter_map(|(row, top, height)| match row {
+                Row::Card(i) => Some((i, top, height)),
+                Row::Header(_) => None,
+            })
+            .collect();
+        (cards, new)
+    }
+
+    /// The parts of the open sidebar that a dragged card or header drops
+    /// into, top to bottom, each with its group and its top and bottom in
+    /// pixels: the ungrouped workspaces, then each group from its header.
+    fn sections(&self) -> Vec<(Option<u32>, i32, i32)> {
+        let (rows, _) = self.sidebar_rows();
+        let half_gap = self.scaled(CARD_GAP) / 2;
+        let row = self.cell.1;
+        let mut sections = vec![(None, (TOP + 1) as i32 * row - half_gap, 0)];
+        for &(kind, top, height) in &rows {
+            if let Row::Header(index) = kind {
+                let start = top - self.scaled(GROUP_GAP) / 2 - half_gap;
+                sections.push((Some(self.groups[index].id), start, 0));
+            }
+            if let Some(last) = sections.last_mut() {
+                last.2 = top + height + half_gap;
+            }
+        }
+        for i in 1..sections.len() {
+            let start = sections[i].1;
+            let before = &mut sections[i - 1];
+            before.2 = before.2.max(before.1 + row).min(start);
+        }
+        if let Some(last) = sections.last_mut() {
+            last.2 = last.2.max(last.1 + row);
+        }
+        sections
+    }
+
+    /// The group whose part of the open sidebar holds pixel row `y`, or
+    /// `None` for the ungrouped workspaces.
+    pub fn section_at(&self, y: i32) -> Option<u32> {
+        (self.sections().into_iter())
+            .rev()
+            .find(|&(_, top, _)| y >= top)
+            .and_then(|(group, _, _)| group)
+    }
+
+    /// The index among the groups that a header dropped at pixel row `y`
+    /// moves its group to.
+    pub fn group_slot(&self, y: i32) -> usize {
+        let group = self.section_at(y);
+        (self.groups.iter())
+            .position(|known| Some(known.id) == group)
+            .unwrap_or(0)
+    }
+
+    /// Where the header of group `id` starts its name, in pixels, and the
+    /// cells the name may take.
+    pub fn group_name_at(&self, id: u32) -> Option<((i32, i32), i32)> {
+        let (rows, _) = self.sidebar_rows();
+        let &(_, top, _) = rows.iter().find(|&&(row, _, _)| match row {
+            Row::Header(index) => self.groups[index].id == id,
+            Row::Card(_) => false,
+        })?;
+        let (left, width) = self.card_span();
+        let x = self.header_name_left(left);
+        let room = (left + width - x) / self.cell.0 - 1;
+        Some(((x, top + self.scaled(CARD_PADDING)), room))
+    }
+
+    /// Where a new group's name is typed: where the name of a header
+    /// after the open sidebar's last card or header would start, in pixels,
+    /// and the cells the name may take.
+    pub fn new_group_at(&self) -> ((i32, i32), i32) {
+        let (rows, _) = self.sidebar_rows();
+        let row = self.cell.1;
+        let padding = self.scaled(CARD_PADDING);
+        let below = rows
+            .last()
+            .map_or((TOP + 3) as i32 * row, |&(_, top, height)| {
+                top + height + self.scaled(CARD_GAP + GROUP_GAP) + padding
+            });
+        let bottom = self.rows as i32 * row - row - padding;
+        let y = below.min(bottom);
+        let (left, width) = self.card_span();
+        let x = self.header_name_left(left);
+        ((x, y), (left + width - x) / self.cell.0 - 1)
+    }
+
+    /// The left edge of a group's name on its header, whose card span
+    /// starts at `left`.
+    fn header_name_left(&self, left: i32) -> i32 {
+        left + 3 * self.cell.0
     }
 
     /// Where the pill of tab `index` starts its label, in pixels, and the
@@ -797,11 +973,14 @@ impl Frame {
                 (self.tiles().into_iter()).find(|&(_, top)| (top..top + size).contains(&y))?;
             return Some(i.map_or(Hit::New, |i| Hit::Show(self.entries[i].id)));
         }
-        let (cards, new) = self.cards();
-        if let Some(&(i, top, _)) = cards
+        let (rows, new) = self.sidebar_rows();
+        let row = rows
             .iter()
-            .find(|&&(_, top, height)| (top..top + height).contains(&y))
-        {
+            .find(|&&(_, top, height)| (top..top + height).contains(&y));
+        if let Some(&(Row::Header(index), _, _)) = row {
+            return Some(Hit::Group(self.groups[index].id));
+        }
+        if let Some(&(Row::Card(i), top, _)) = row {
             let entry = &self.entries[i];
             let (left, top, size) = self.disc(top);
             let on_disc = (left..left + size).contains(&x) && (top..top + size).contains(&y);
@@ -932,6 +1111,10 @@ impl Frame {
             for (i, top) in self.tiles() {
                 self.draw_tile(scene, i.map(|i| &self.entries[i]), top);
             }
+            let (left, size) = (self.tile_left(), self.scaled(TILE));
+            for y in self.rules() {
+                scene.rect(left, y, size, scene.line_width(), palette::BORDER);
+            }
             return;
         }
         let count = self.entries.len().to_string();
@@ -942,13 +1125,135 @@ impl Frame {
             &count,
             DIM,
         );
-        let (cards, new) = self.cards();
-        for (i, top, height) in cards {
-            self.draw_card(scene, &self.entries[i], top, height);
+        if let Some((hit, (_, y))) = self.drag {
+            self.draw_drop(scene, hit, y);
+        }
+        let (rows, new) = self.sidebar_rows();
+        for (row, top, height) in rows {
+            match row {
+                Row::Card(i) => self.draw_card(scene, &self.entries[i], top, height),
+                Row::Header(index) => self.draw_header(scene, index, top, height),
+            }
         }
         if let Some(new) = new {
             scene.text_px(self.cell.0, new, "+ new workspace", Face::Chrome, DIM);
         }
+    }
+
+    /// The ring round the part of the open sidebar that the card or header
+    /// `hit`, dragged to pixel row `y`, drops into.
+    fn draw_drop(&self, scene: &mut Scene, hit: Hit, y: i32) {
+        let target = self.section_at(y);
+        let from = match hit {
+            Hit::Show(id) => (self.entries.iter())
+                .find(|entry| entry.id == id)
+                .map(|entry| entry.group),
+            Hit::Group(id) => Some(Some(id)),
+            _ => None,
+        };
+        let Some(from) = from else {
+            return;
+        };
+        if from == target {
+            return;
+        }
+        let sections = self.sections();
+        let Some(&(_, top, bottom)) = sections.iter().find(|&&(group, _, _)| group == target)
+        else {
+            return;
+        };
+        let (left, width) = self.card_span();
+        let inset = self.scaled(CARD_INSET) / 2;
+        let ring = self.scaled(DROP_RING).max(1);
+        let size = (width + 2 * inset, bottom - top);
+        let radius = self.scaled(CARD_RADIUS);
+        scene.rounded(
+            left - inset,
+            top,
+            size,
+            radius,
+            palette::ACCENT,
+            palette::ACCENT,
+        );
+        let inner = (size.0 - 2 * ring, size.1 - 2 * ring);
+        let (x, y) = (left - inset + ring, top + ring);
+        scene.rounded(x, y, inner, radius, SIDEBAR, SIDEBAR);
+    }
+
+    /// What a folded group's header shows at its right: a count per state
+    /// of the agents its workspaces' cards show, "! 1  ✓ 2", or else how
+    /// many workspaces it holds.
+    fn header_counts(&self, index: usize) -> Vec<Span> {
+        let id = self.groups[index].id;
+        let members = || (self.entries.iter()).filter(|entry| entry.group == Some(id));
+        let mut spans = Vec::new();
+        if self.groups[index].folded {
+            for state in [AgentState::Attention, AgentState::Done, AgentState::Working] {
+                let count = members()
+                    .filter(|entry| entry.state() == Some(state))
+                    .count();
+                if count == 0 {
+                    continue;
+                }
+                if !spans.is_empty() {
+                    spans.push(("  ".to_string(), DIM));
+                }
+                let (glyph, color) = mark(Some(state));
+                spans.push((format!("{glyph} {count}"), color));
+            }
+        }
+        if spans.is_empty() {
+            spans.push((members().count().to_string(), DIM));
+        }
+        spans
+    }
+
+    /// The background of a group's header: lighter under the pointer, and
+    /// breathing like a card when the group is folded and a workspace in
+    /// it is done or needs attention.
+    fn header_background(&self, index: usize) -> Rgba {
+        let group = &self.groups[index];
+        if self.hover == Some(Hit::Group(group.id)) {
+            return palette::LIGHTER_BACKGROUND;
+        }
+        let urgent = (self.entries.iter())
+            .filter(|entry| entry.group == Some(group.id) && entry.clearable())
+            .filter_map(Entry::state)
+            .max();
+        match urgent.filter(|_| group.folded) {
+            Some(state) => palette::mix(SIDEBAR, breath_tint(state, false), self.breath),
+            None => SIDEBAR,
+        }
+    }
+
+    /// A group's header in the open sidebar: a fold mark, its name, and
+    /// what `header_counts` gives at its right.
+    fn draw_header(&self, scene: &mut Scene, index: usize, top: i32, height: i32) {
+        let group = &self.groups[index];
+        let (cell_width, _) = self.cell;
+        let (left, width) = self.card_span();
+        let background = self.header_background(index);
+        if background != SIDEBAR {
+            let radius = self.scaled(CARD_RADIUS);
+            scene.rounded(left, top, (width, height), radius, background, background);
+        }
+        let y = top + self.scaled(CARD_PADDING);
+        let fold = if group.folded { '▸' } else { '▾' };
+        scene.text_px(left + cell_width, y, &fold.to_string(), Face::Chrome, DIM);
+
+        let spans = self.header_counts(index);
+        let counts: usize = spans.iter().map(|(text, _)| text.chars().count()).sum();
+        let right = left + width - cell_width;
+        let mut x = right - counts as i32 * cell_width;
+        for (text, color) in spans {
+            scene.text_px(x, y, &text, Face::Chrome, color);
+            x += text.chars().count() as i32 * cell_width;
+        }
+        let name_left = self.header_name_left(left);
+        let room = ((right - name_left) / cell_width).max(0) as usize;
+        let name = fit(&group.name, room.saturating_sub(counts + 1));
+        let color = palette::FADED_FOREGROUND;
+        scene.text_px(name_left, y, &name, Face::ChromeBold, color);
     }
 
     /// A workspace's card in the open sidebar.
@@ -1113,6 +1418,9 @@ impl Frame {
     /// What the frame draws over the panes: the popover beside the closed
     /// sidebar for the tile under the pointer.
     pub fn draw_above(&self, scene: &mut Scene) {
+        if let Some((hit, at)) = self.drag {
+            self.draw_ghost(scene, hit, at);
+        }
         let Some(Popover {
             entry,
             at: (left, top),
@@ -1171,6 +1479,34 @@ impl Frame {
         }
         scene.text_px(x, line(next), "click to show", Face::Chrome, DIM);
     }
+
+    /// The name of the card or header `hit` in a pill beside the pointer at
+    /// `at`, while it is dragged.
+    fn draw_ghost(&self, scene: &mut Scene, hit: Hit, at: (i32, i32)) {
+        let name = match hit {
+            Hit::Show(id) => (self.entries.iter())
+                .find(|entry| entry.id == id)
+                .map(|entry| entry.name.as_str()),
+            Hit::Group(id) => (self.groups.iter())
+                .find(|group| group.id == id)
+                .map(|group| group.name.as_str()),
+            _ => None,
+        };
+        let Some(name) = name else {
+            return;
+        };
+        let (cell_width, cell_height) = self.cell;
+        let name = fit(name, POPOVER_WIDTH as usize);
+        let padding = self.scaled(CARD_PADDING);
+        let size = (
+            (name.chars().count() as i32 + 2) * cell_width,
+            cell_height + 2 * padding,
+        );
+        let (x, y) = (at.0 + cell_width, at.1 - size.1 / 2);
+        let radius = self.scaled(CARD_RADIUS);
+        scene.rounded(x, y, size, radius, BAR, palette::ACCENT);
+        scene.text_px(x + cell_width, y + padding, &name, Face::ChromeBold, TEXT);
+    }
 }
 
 #[cfg(test)]
@@ -1204,6 +1540,7 @@ mod tests {
                 .collect(),
             current: id == 0,
             pulse: None,
+            group: None,
         }
     }
 
@@ -1220,7 +1557,7 @@ mod tests {
         }
     }
 
-    fn frame(open: bool) -> Frame {
+    fn entries() -> Vec<Entry> {
         let mut entries = vec![
             entry(0, "jack", None),
             entry(1, "nail", Some(AgentState::Working)),
@@ -1229,10 +1566,18 @@ mod tests {
             entry(4, "sufr", Some(AgentState::Done)),
         ];
         entries[2].agents[0].message = Some("which branch?".to_string());
+        entries
+    }
+
+    fn frame(open: bool) -> Frame {
+        frame_of(open, entries(), Vec::new())
+    }
+
+    fn frame_of(open: bool, entries: Vec<Entry>, groups: Vec<Group>) -> Frame {
         Frame::new(
             (120, 40),
             open,
-            entries,
+            (entries, groups),
             (
                 vec![tab("coax", Some(AgentState::Working)), tab("cargo", None)],
                 1,
@@ -1824,7 +2169,7 @@ mod tests {
         let frame = Frame::new(
             (120, 40),
             true,
-            vec![entry(0, "jack", None), gone, busy],
+            (vec![entry(0, "jack", None), gone, busy], Vec::new()),
             (vec![], 0),
             String::new(),
             false,
@@ -1895,5 +2240,176 @@ mod tests {
         let mut hovered = frame(false);
         hovered.hover = Some(Hit::Show(2));
         assert_eq!(hovered.hit(x, y), Some(Hit::Show(2)));
+    }
+
+    fn group(id: u32, name: &str, folded: bool) -> Group {
+        Group {
+            id,
+            name: name.to_string(),
+            folded,
+        }
+    }
+
+    /// The frame with nail and sail in the group work, sufr in the group
+    /// home, folded when `folded`, and jack and foam ungrouped.
+    fn grouped(open: bool, folded: bool) -> Frame {
+        let mut entries = entries();
+        for (i, group) in [(1, 5), (3, 5), (4, 6)] {
+            entries[i].group = Some(group);
+        }
+        let groups = vec![group(5, "work", false), group(6, "home", folded)];
+        frame_of(open, entries, groups)
+    }
+
+    fn names(frame: &Frame) -> Vec<&str> {
+        frame.entries.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    #[test]
+    fn ungrouped_workspaces_come_first_and_each_group_follows_ordered_by_urgency() {
+        let frame = grouped(true, false);
+        assert_eq!(names(&frame), ["foam", "jack", "sail", "nail", "sufr"]);
+    }
+
+    #[test]
+    fn a_workspace_in_a_group_that_is_gone_counts_as_ungrouped() {
+        let mut entries = entries();
+        entries[3].group = Some(99);
+        let frame = frame_of(true, entries, vec![group(5, "work", false)]);
+        assert_eq!(names(&frame), ["foam", "sail", "sufr", "nail", "jack"]);
+        assert!(frame.entries.iter().all(|entry| entry.group.is_none()));
+    }
+
+    #[test]
+    fn each_group_has_a_header_above_its_cards_and_a_click_on_it_hits_the_group() {
+        // a header is one row with a card's padding, 6 px more below
+        // the card before it than a card's gap
+        let frame = grouped(true, false);
+        let (rows, new) = frame.sidebar_rows();
+        assert_eq!(
+            rows,
+            [
+                (Row::Card(0), 90, 80),
+                (Row::Card(1), 176, 62),
+                (Row::Header(0), 250, 26),
+                (Row::Card(2), 282, 62),
+                (Row::Card(3), 350, 62),
+                (Row::Header(1), 424, 26),
+                (Row::Card(4), 456, 62),
+            ]
+        );
+        assert_eq!(new, Some(530));
+        assert_eq!(frame.hit(100, 250), Some(Hit::Group(5)));
+        assert_eq!(frame.hit(100, 275), Some(Hit::Group(5)));
+        assert_eq!(frame.hit(100, 282), Some(Hit::Show(3)));
+        assert_eq!(frame.hit(100, 430), Some(Hit::Group(6)));
+    }
+
+    #[test]
+    fn a_folded_group_shows_its_header_and_none_of_its_cards() {
+        let frame = grouped(true, true);
+        let (rows, new) = frame.sidebar_rows();
+        assert_eq!(rows.last(), Some(&(Row::Header(1), 424, 26)));
+        assert_eq!(new, Some(424 + 26 + 6 + 6));
+        assert_eq!(frame.hit(100, 490), None);
+        assert_eq!(frame.workspace_name_at(4), None);
+    }
+
+    #[test]
+    fn a_drop_lands_in_the_group_whose_header_is_above_it_or_ungrouped_above_every_header() {
+        let frame = grouped(true, false);
+        assert_eq!(frame.section_at(100), None);
+        assert_eq!(frame.section_at(243), None);
+        assert_eq!(frame.section_at(244), Some(5));
+        assert_eq!(frame.section_at(417), Some(5));
+        assert_eq!(frame.section_at(418), Some(6));
+        assert_eq!(frame.section_at(700), Some(6));
+        assert_eq!(frame.group_slot(100), 0);
+        assert_eq!(frame.group_slot(300), 0);
+        assert_eq!(frame.group_slot(500), 1);
+    }
+
+    #[test]
+    fn the_next_workspace_needing_the_person_is_the_most_urgent_in_any_group() {
+        let mut entries = vec![
+            entry(0, "jack", None),
+            entry(1, "sail", Some(AgentState::Done)),
+            entry(2, "foam", Some(AgentState::Attention)),
+        ];
+        entries[2].group = Some(6);
+        let frame = frame_of(true, entries, vec![group(6, "home", true)]);
+        assert_eq!(names(&frame), ["sail", "jack", "foam"]);
+        assert_eq!(frame.next_needing(), Some(2));
+    }
+
+    #[test]
+    fn the_state_pills_count_workspaces_in_every_group() {
+        let frame = grouped(true, true);
+        let texts: Vec<_> = frame.state_pills().into_iter().map(|p| p.text).collect();
+        assert_eq!(texts, [" ● 1 working ", " ✓ 2 done ", " ! 1 needs you "]);
+    }
+
+    #[test]
+    fn the_closed_sidebar_draws_a_rule_between_one_groups_tiles_and_the_next() {
+        let frame = grouped(false, true);
+        assert_eq!(frame.tiles().len(), 6);
+        assert_eq!(frame.rules(), [119 - 4, 193 - 4]);
+        assert!(self::frame(false).rules().is_empty());
+    }
+
+    #[test]
+    fn a_folded_header_counts_its_workspaces_per_state_and_an_open_one_counts_them_all() {
+        let mut frame = grouped(true, false);
+        assert_eq!(text(&frame.header_counts(0)), "2");
+        frame.groups[0].folded = true;
+        assert_eq!(text(&frame.header_counts(0)), "✓ 1  ● 1");
+        frame.entries[3].agents.clear();
+        frame.entries[2].agents[0].state = Some(AgentState::Attention);
+        assert_eq!(text(&frame.header_counts(0)), "! 1");
+    }
+
+    #[test]
+    fn a_folded_header_breathes_while_a_workspace_in_it_is_done_and_an_open_one_does_not() {
+        let mut frame = grouped(true, true);
+        frame.breath = 1.0;
+        assert_eq!(
+            bytes(frame.header_background(1)),
+            bytes(palette::DARK_GREEN)
+        );
+        assert_eq!(frame.header_background(0), SIDEBAR);
+        frame.breath = 0.0;
+        assert_eq!(frame.header_background(1), SIDEBAR);
+        frame.breath = 1.0;
+        frame.groups[1].folded = false;
+        assert_eq!(frame.header_background(1), SIDEBAR);
+    }
+
+    #[test]
+    fn a_name_field_opens_on_a_groups_header_and_a_new_group_at_the_bottom() {
+        let frame = grouped(true, false);
+        let ((x, y), room) = frame.group_name_at(6).unwrap();
+        assert_eq!(frame.hit(x, y), Some(Hit::Group(6)));
+        assert!(room > 10);
+        // where the name of a header after sufr's card would start
+        let ((_, y), _) = frame.new_group_at();
+        assert_eq!(y, 456 + 62 + 6 + 6 + 4);
+    }
+
+    #[test]
+    fn a_dragged_card_rings_the_group_it_would_drop_into_but_not_its_own() {
+        let ring = |y: i32| {
+            let mut frame = grouped(true, false);
+            frame.drag = Some((Hit::Show(0), (100, y)));
+            let mut scene = Scene::new(&crate::server::chrome::text::Font::load(14.0));
+            frame.draw(&mut scene);
+            scene.shapes.iter().find_map(|shape| match shape {
+                Shape::Rounded { at, size, fill, .. } if bytes(*fill) == bytes(palette::ACCENT) => {
+                    Some((at.y, at.y + size.h))
+                }
+                _ => None,
+            })
+        };
+        assert_eq!(ring(300), Some((244, 350 + 62 + 3)));
+        assert_eq!(ring(100), None);
     }
 }
