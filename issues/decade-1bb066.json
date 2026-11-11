@@ -3,20 +3,20 @@
   "title": "A program in a pane cannot tell agents which verbs it accepts",
   "body": "`scratch.send` takes `verb` and `payload`, and decade sends `{\"to\": \"<scratch pane>\", \"<verb>\": payload}` to the program in the scratch pane (`docs/protocol.md`, \"Agents: MCP\"). A program declares the kinds it shows in its hello (`Hello` in `decade-channel`), and `panes` lists them. No program declares the verbs it accepts beyond those kinds. An agent that opens a program in the scratch pane has no way to learn what to send it, other than reading the program's source.\n\n## Proposal\n\nA program lists the verbs it accepts in its hello, each with a line of description, and `panes` returns them beside `shows`. The `scratch.send` description tells the agent to look there.\n\n## Cost\n\n`Hello` and `Pane` gain a field. `decade-channel` moves its minor version, and `decade` moves its minor for the protocol change.\n\n## Open\n\n- Whether a verb also declares the shape of its payload, as a JSON schema, or only names it.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/7403d304",
-  "lease_expires": "2026-11-11T00:48:40.586002037Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T20:40:27.535201783Z",
-  "updated_at": "2026-11-11T00:33:40.586002037Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T01:00:17.587933377Z",
+  "closed_at": "2026-11-11T01:00:17.587933377Z",
+  "close_reason": "Landed in da4f5cd: accepts entries take a bare name or a name with a description, and panes returns them.",
+  "resolution": "done",
   "notes": [
     {
       "id": "bbc302f0",
@@ -32,6 +32,9 @@
       "commit": "e37ba45",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "da4f5cd",
+      "branch": "dev"
+    }
   }
 }
