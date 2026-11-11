@@ -3,26 +3,29 @@
   "title": "A workspace card gains and loses rows as its agent's state changes",
   "body": "A workspace card's height follows its agent's state. `card_lines` in `src/server/chrome/frame.rs` gives three rows, plus one while the agent has a message (its question or current activity), plus one once it has reported usage. A card therefore grows and shrinks as its agent starts and stops work, and every card below it moves. The hover popover does the same through `popover_lines`, one row more for each agent with a message.\n\n## Proposal\n\nEvery card takes five rows whatever its state, with the message and usage rows left blank when empty, and the usage row always on the fifth row. Each agent in the popover takes two rows, its state and its message, whether or not it has a message.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/7403d304",
-  "lease_expires": "2026-11-11T01:23:55.508442492Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T01:08:55.497344629Z",
-  "updated_at": "2026-11-11T01:08:55.508442492Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-11T01:12:26.640749924Z",
+  "closed_at": "2026-11-11T01:12:26.640749924Z",
+  "close_reason": "Landed in 9abf930: every card is CARD_LINES (five) tall, and each popover agent takes two lines.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "da4f5cd",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "9abf930",
+      "branch": "dev"
+    }
   }
 }
