@@ -1,0 +1,28 @@
+{
+  "id": "decade-164700",
+  "title": "An agent can report its sub-agents to decade",
+  "body": "An agent reports to decade with `agent` messages on the socket (`AgentUpdate` in `decade-channel/src/lib.rs`, the `Agents` section of `docs/protocol.md`). The report carries one state for the whole agent (attention, done, working or idle), an activity line, a question, the model, context, tokens and cost. Nothing in it describes sub-agents or background tasks the agent has started. When the agent's turn ends while sub-agents still run, the agent reports `done`, and the workspace card turns green while work is still going on.\n\nThe fix for the wrong state belongs in coax first: it should keep reporting `working` while background work runs. This issue is the protocol side, so decade can show that work.\n\n## Proposal\n\n- `AgentUpdate` gains `subagents`: the list of sub-agents and background tasks the agent is running, each with a name, a one-line activity and a state (working, done or failed). An agent sends the whole list each time it changes. An empty list or an absent field means none.\n- The workspace card's state line shows the count, such as `coax working · 2 sub-agents`, and the hover popover lists each sub-agent with its activity.\n- A workspace whose agent reports `done` while a sub-agent still works sorts and colours as `working`.\n- The `agents` MCP reply includes each agent's sub-agents.\n\n## Cost\n\n`AgentUpdate` is public in `decade-channel`, so the field moves its minor version. The protocol change moves `decade`'s minor. coax needs to send the list.\n\n## Open\n\n- Whether a finished or failed sub-agent stays in the list until the agent's next turn, or leaves as soon as it ends.\n- Whether nested sub-agents are reported, or only the agent's direct ones.\n- Whether a failed sub-agent should raise the workspace to `attention`.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T03:02:40.527249803Z",
+  "updated_at": "2026-11-11T03:02:40.527249803Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "ad0a585",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
