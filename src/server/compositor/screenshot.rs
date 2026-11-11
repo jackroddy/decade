@@ -228,12 +228,14 @@ impl State {
         let overlay = self.overlay.take();
         let drag = self.drag.take();
         let bar = std::mem::replace(&mut self.bar, false);
+        let flash = self.workspaces[workspace].flash.take();
         let hovers = (
             self.frame_hover.take(),
             self.hover.take(),
             self.tab_hover.take(),
         );
         let rendered = self.render_offscreen(workspace);
+        self.workspaces[workspace].flash = flash;
         self.overlay = overlay;
         self.drag = drag;
         self.bar = bar;

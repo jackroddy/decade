@@ -78,6 +78,19 @@ const POINT_FOR: Duration = Duration::from_secs(30);
 /// How long a pane's screenshot tag flashes after a capture.
 const FLASH_FOR: Duration = Duration::from_millis(700);
 
+/// How opaque the white layer over a captured pane starts.
+const SHUTTER_ALPHA: f32 = 0.3;
+
+/// How long the white layer over a captured pane takes to fade out.
+const SHUTTER_FOR: Duration = Duration::from_millis(300);
+
+/// The opacity of the white layer over a captured pane `elapsed` after
+/// the capture, easing out from `SHUTTER_ALPHA` to 0.
+pub fn shutter(elapsed: Duration) -> f32 {
+    let left = (1.0 - elapsed.as_secs_f32() / SHUTTER_FOR.as_secs_f32()).max(0.0);
+    SHUTTER_ALPHA * left * left
+}
+
 /// How far a point's pulse is toward its peak `elapsed` after it began,
 /// from 0 to 1.
 pub fn pulse(elapsed: Duration) -> f32 {
@@ -460,6 +473,14 @@ impl Workspace {
         (left > 0.0).then_some((pane.as_str(), left))
     }
 
+    /// The pane under the white layer of a capture at `now`, and the
+    /// layer's opacity.
+    pub fn shutter_at(&self, now: Instant) -> Option<(&str, f32)> {
+        let (pane, since) = self.flash.as_ref()?;
+        let alpha = shutter(now.saturating_duration_since(*since));
+        (alpha > 0.0).then_some((pane.as_str(), alpha))
+    }
+
     /// End the flash if it has faded by `now`, and return whether one is
     /// left.
     pub fn keep_flash(&mut self, now: Instant) -> bool {
@@ -522,6 +543,28 @@ mod tests {
             PathBuf::from("/home/jack"),
             crate::server::panes::tests::AREA,
         )
+    }
+
+    #[test]
+    fn the_white_layer_of_a_capture_starts_at_its_alpha_and_eases_out_to_nothing() {
+        assert_eq!(shutter(Duration::ZERO), SHUTTER_ALPHA);
+        let halfway = shutter(SHUTTER_FOR / 2);
+        assert!((halfway - SHUTTER_ALPHA / 4.0).abs() < 1e-6);
+        assert_eq!(shutter(SHUTTER_FOR), 0.0);
+        assert_eq!(shutter(SHUTTER_FOR * 2), 0.0);
+    }
+
+    #[test]
+    fn a_flash_keeps_the_timer_running_until_it_has_faded() {
+        let mut shown = at_home();
+        let now = Instant::now();
+        assert!(!shown.keep_flash(now));
+        shown.flash = Some(("terminal".to_string(), now));
+        assert!(shown.keep_flash(now + SHUTTER_FOR));
+        assert!(shown.shutter_at(now + SHUTTER_FOR).is_none());
+        assert!(shown.keep_flash(now + FLASH_FOR / 2));
+        assert!(!shown.keep_flash(now + FLASH_FOR));
+        assert!(shown.flash.is_none());
     }
 
     fn fresh_dir(name: &str) -> PathBuf {

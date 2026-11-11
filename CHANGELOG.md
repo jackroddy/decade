@@ -281,7 +281,10 @@ command line and what the tool writes.
   within 30 seconds, fails the call with the reason. A pane with
   the mode on carries a camera tag at the left end of its outline's top
   edge. The tag flashes at each capture. When a pane is too narrow for
-  every tag, the camera tag is the last to go.
+  every tag, the camera tag is the last to go. On each capture decade
+  also lays a white layer over the pane's client area. The layer starts
+  at 30% opacity and fades out over 300 ms. decade takes the PNG before
+  it draws the layer, so the PNG never shows it.
 - A program's hello may give each verb in `accepts` a description of one
   sentence, as an object with `name` and `description` in place of the
   bare name. `panes`, on the socket and over MCP, lists each pane's

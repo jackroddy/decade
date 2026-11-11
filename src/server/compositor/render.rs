@@ -73,6 +73,9 @@ impl State {
         let now = Instant::now();
         let point = (workspaces[workspace].point.as_ref()).map(|point| (point, point.pulse(now)));
         let flash = workspaces[workspace].flash_at(now);
+        let shutter = (workspaces[workspace].shutter_at(now))
+            .and_then(|(name, alpha)| Some((layout.pane(layout.by_name(name)?)?, alpha)))
+            .map(|(pane, alpha)| (text.chrome.px_rect(pane.client_rect()), alpha));
         let (overlay, drag) = if workspace == current {
             (overlay.as_ref(), drag.as_ref())
         } else {
@@ -191,6 +194,18 @@ impl State {
             layout.draw_drop(&mut above, *id, *cell);
         }
         paint.scene(&mut elements, &above, Point::default(), None);
+
+        if let Some((rect, alpha)) = shutter {
+            let mut layer = Scene::new(&paint.text.chrome);
+            layer.rect(
+                rect.loc.x,
+                rect.loc.y,
+                rect.size.w,
+                rect.size.h,
+                [1.0, 1.0, 1.0, alpha],
+            );
+            paint.scene(&mut elements, &layer, Point::default(), None);
+        }
 
         if let Some(frame) = frame {
             paint_clients(&mut paint, &mut elements, layout, chrome);
