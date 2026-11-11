@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use decade_channel::{
-    AgentUpdate, Clear, Error, Hello, Highlight, Pane, Reply, Show, Shows, VERSION, Welcome,
+    AgentUpdate, Clear, Error, Hello, Highlight, Pane, Reply, Show, Shows, VERSION, Verb, Welcome,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -17,7 +17,7 @@ const RESERVED: [&str; 7] = [
 
 pub struct Client {
     pub name: String,
-    pub accepts: Vec<String>,
+    pub accepts: Vec<Verb>,
     pub pane: Option<String>,
     pub shows: Vec<Shows>,
 
@@ -221,6 +221,7 @@ impl Router {
                     name: name.to_string(),
                     client: occupant.map(|c| c.name.clone()),
                     shows: occupant.map(|c| c.shows.clone()).unwrap_or_default(),
+                    accepts: occupant.map(|c| c.accepts.clone()).unwrap_or_default(),
                     scratch: scratch == Some(*name),
                     you: you == Some(*name),
                 }
@@ -370,7 +371,7 @@ fn accepts(client: &Client, verb: &str) -> bool {
         // only the kind verbs, which never reach this check
         return client.shows.is_empty();
     }
-    client.accepts.iter().any(|accepted| accepted == verb)
+    client.accepts.iter().any(|accepted| accepted.name == verb)
 }
 
 /// The kind a `show`, `highlight` or `clear` names, and whether the verb
@@ -497,6 +498,25 @@ mod tests {
     }
 
     #[test]
+    fn a_verb_listed_with_a_description_is_accepted_like_a_bare_name() {
+        let mut r = Router::default();
+        r.handle(
+            1,
+            r#"{"hello": {"name": "code-pane", "accepts": [{"name": "reload", "description": "Read the file again."}], "pane": "code"}}"#,
+            &names(),
+            None,
+        );
+        r.handle(2, r#"{"hello": {"name": "coax"}}"#, &names(), None);
+        let out = lines(r.handle(2, r#"{"to": "code", "reload": {}}"#, &names(), None));
+        assert_eq!(out, vec![(1, json!({"reload": {}, "from": "coax"}))]);
+        let out = lines(r.handle(2, r#"{"to": "code", "draw": {}}"#, &names(), None));
+        assert_eq!(
+            out[0].1["error"]["reason"],
+            "pane code does not accept draw"
+        );
+    }
+
+    #[test]
     fn a_verb_the_occupant_does_not_accept_is_refused() {
         let mut r = Router::default();
         r.handle(
@@ -533,17 +553,19 @@ mod tests {
         let mut r = Router::default();
         r.handle(
             1,
-            r#"{"hello": {"name": "coax", "pane": "chat"}}"#,
+            r#"{"hello": {"name": "coax", "pane": "chat", "accepts": ["ping", {"name": "ask", "description": "Put a question to the agent."}]}}"#,
             &names(),
             None,
         );
         let out = lines(r.handle(1, r#"{"panes": {}}"#, &names(), Some("code")));
+        let accepts =
+            json!(["ping", {"name": "ask", "description": "Put a question to the agent."}]);
         assert_eq!(
             out[0].1,
             json!({"panes": [
-                {"name": "chat", "client": "coax", "shows": [], "scratch": false, "you": true},
-                {"name": "terminal", "client": null, "shows": [], "scratch": false, "you": false},
-                {"name": "code", "client": null, "shows": [], "scratch": true, "you": false}
+                {"name": "chat", "client": "coax", "shows": [], "accepts": accepts, "scratch": false, "you": true},
+                {"name": "terminal", "client": null, "shows": [], "accepts": [], "scratch": false, "you": false},
+                {"name": "code", "client": null, "shows": [], "accepts": [], "scratch": true, "you": false}
             ]})
         );
     }
@@ -956,7 +978,7 @@ mod tests {
         let out = lines(r.handle(1, r#"{"panes": {}}"#, &names(), None));
         assert_eq!(
             out[0].1["panes"][2],
-            json!({"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}], "scratch": false, "you": true})
+            json!({"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}], "accepts": ["reload"], "scratch": false, "you": true})
         );
         assert_eq!(out[0].1["panes"][0]["shows"], json!([]));
     }

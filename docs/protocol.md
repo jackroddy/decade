@@ -31,7 +31,15 @@ The first line a client sends:
 ```
 
 `name` is how other clients and error messages refer to it. `accepts`
-lists the verbs it handles. `pane` claims the pane of that name, normally
+lists the verbs it handles. Each verb is a bare name, or an object with
+its `name` and a `description` of one sentence saying what it does:
+
+```json
+{"hello": {"name": "decade-notes", "pane": "scratch", "accepts": ["clear", {"name": "append", "description": "Add the payload's text at the end of the notes."}]}}
+```
+
+decade accepts a verb either way. The description is for agents, which
+read it in `panes`. `pane` claims the pane of that name, normally
 the value of `DECADE_PANE`, and is optional: a client with no pane can
 still send. `shows` lists the kinds of thing the client can show, and is
 optional. Each kind has a name and says whether the client can highlight
@@ -127,14 +135,15 @@ A message without `to` is for decade, and carries exactly one of its verbs.
 {"panes": {}}
 ```
 
-`panes` is answered with every pane in the workspace, its occupant and
-the kinds the occupant shows. `client` is null when no client in the
+`panes` is answered with every pane in the workspace, its occupant, the
+kinds the occupant shows and the verbs its hello listed in `accepts`, in
+the form the hello gave them. `client` is null when no client in the
 pane has said hello, though a terminal or another window may be there.
 `scratch` is true for the workspace's scratch pane, and `you` is true for
 the pane of the client that asked:
 
 ```json
-{"panes": [{"name": "chat", "client": "coax", "shows": [], "scratch": false, "you": true}, {"name": "terminal", "client": null, "shows": [], "scratch": true, "you": false}, {"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}], "scratch": false, "you": false}]}
+{"panes": [{"name": "chat", "client": "coax", "shows": [], "accepts": [], "scratch": false, "you": true}, {"name": "terminal", "client": null, "shows": [], "accepts": [], "scratch": true, "you": false}, {"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}], "accepts": [{"name": "reload", "description": "Read the file from disk again."}], "scratch": false, "you": false}]}
 ```
 
 ## Agents
@@ -305,7 +314,8 @@ still waits, decade answers the first with what it knows so far.
 `scratch.send` takes `verb` and
 `payload`. decade sends `{"to": "<scratch pane>", "<verb>": payload}` from
 `agent`, and the program in the scratch pane receives it like any other
-message.
+message. The tool's description names `panes` as where the agent finds the
+verbs the program takes, under `accepts`.
 
 ## Version
 

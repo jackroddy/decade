@@ -28,3 +28,8 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
   fields that are set and writes null for a field being cleared.
   `Channel::ended` ends the agent's session. `Context` and `Tokens` are
   the update's context use and token counts.
+- `Verb` is a verb a program accepts, with an optional sentence saying
+  what it does. `Hello::accepts` holds `Verb`s, and `Channel::connect` and
+  `Channel::from_env` take them. A verb without a description is written
+  as a bare name, as before. A `&str` converts into one. `Pane` has an
+  `accepts` field with the verbs its occupant listed in hello.

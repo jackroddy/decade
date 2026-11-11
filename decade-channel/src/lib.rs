@@ -59,6 +59,10 @@ pub struct Pane {
     #[serde(default)]
     pub shows: Vec<Shows>,
 
+    /// The verbs the client in the pane accepts, as its hello listed them.
+    #[serde(default)]
+    pub accepts: Vec<Verb>,
+
     /// Whether the pane is the workspace's scratch pane.
     #[serde(default)]
     pub scratch: bool,
@@ -72,7 +76,7 @@ pub struct Pane {
 pub struct Hello {
     pub name: String,
     #[serde(default)]
-    pub accepts: Vec<String>,
+    pub accepts: Vec<Verb>,
     #[serde(default)]
     pub pane: Option<String>,
     #[serde(default)]
@@ -170,6 +174,69 @@ where
     D: serde::Deserializer<'de>,
 {
     Option::<T>::deserialize(deserializer).map(Some)
+}
+
+/// A verb a program accepts, with a sentence saying what it does. In
+/// hello a verb without a description is a bare name, as before verbs
+/// had descriptions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "VerbForm", into = "VerbForm")]
+pub struct Verb {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+impl Verb {
+    pub fn new(name: &str, description: &str) -> Verb {
+        Verb {
+            name: name.to_string(),
+            description: Some(description.to_string()),
+        }
+    }
+}
+
+impl From<&str> for Verb {
+    fn from(name: &str) -> Verb {
+        Verb {
+            name: name.to_string(),
+            description: None,
+        }
+    }
+}
+
+/// A verb as JSON: a bare name, or an object with its description.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum VerbForm {
+    Name(String),
+    Described { name: String, description: String },
+}
+
+impl From<VerbForm> for Verb {
+    fn from(form: VerbForm) -> Verb {
+        match form {
+            VerbForm::Name(name) => Verb {
+                name,
+                description: None,
+            },
+            VerbForm::Described { name, description } => Verb {
+                name,
+                description: Some(description),
+            },
+        }
+    }
+}
+
+impl From<Verb> for VerbForm {
+    fn from(verb: Verb) -> VerbForm {
+        match verb.description {
+            Some(description) => VerbForm::Described {
+                name: verb.name,
+                description,
+            },
+            None => VerbForm::Name(verb.name),
+        }
+    }
 }
 
 /// A kind of thing a program can show, such as `file` or `url`.
@@ -293,7 +360,7 @@ pub struct Channel {
 impl Channel {
     pub fn from_env(
         name: &str,
-        accepts: &[&str],
+        accepts: &[Verb],
         shows: &[Shows],
         agent: Option<&Agent>,
     ) -> Option<io::Result<(Channel, Receiver<Message>)>> {
@@ -312,7 +379,7 @@ impl Channel {
     pub fn connect(
         path: &Path,
         name: &str,
-        accepts: &[&str],
+        accepts: &[Verb],
         shows: &[Shows],
         pane: Option<&str>,
         agent: Option<&Agent>,
@@ -324,7 +391,7 @@ impl Channel {
         let mut channel = Channel { writer: stream };
         channel.write(&Request::Hello(Hello {
             name: name.to_string(),
-            accepts: accepts.iter().map(|a| a.to_string()).collect(),
+            accepts: accepts.to_vec(),
             pane: pane.map(str::to_string),
             shows: shows.to_vec(),
             agent: agent.cloned(),
@@ -479,6 +546,22 @@ mod tests {
     }
 
     #[test]
+    fn a_verb_reads_as_a_bare_name_or_with_a_description_and_writes_back_the_same() {
+        let verbs: Vec<Verb> = serde_json::from_value(json!([
+            "reload",
+            {"name": "open", "description": "Open a file."}
+        ]))
+        .unwrap();
+        assert_eq!(verbs, ["reload".into(), Verb::new("open", "Open a file.")]);
+        assert_eq!(
+            serde_json::to_value(&verbs).unwrap(),
+            json!(["reload", {"name": "open", "description": "Open a file."}])
+        );
+        let pane: Pane = serde_json::from_value(json!({"name": "code", "client": null})).unwrap();
+        assert!(pane.accepts.is_empty());
+    }
+
+    #[test]
     fn errors_and_pane_lists_parse_and_junk_is_refused() {
         let message =
             parse(r#"{"error":{"reason":"say hello first","message":{"to":"x"}}}"#).unwrap();
@@ -499,6 +582,7 @@ mod tests {
                     name: "chat".into(),
                     client: Some("coax".into()),
                     shows: Vec::new(),
+                    accepts: Vec::new(),
                     scratch: false,
                     you: false
                 },
@@ -509,6 +593,7 @@ mod tests {
                         kind: "file".into(),
                         highlight: true
                     }],
+                    accepts: Vec::new(),
                     scratch: true,
                     you: true
                 }
@@ -547,7 +632,7 @@ mod tests {
         let (mut channel, rx) = Channel::connect(
             &path,
             "decade-code",
-            &["reload"],
+            &["reload".into(), Verb::new("open", "Open a file.")],
             &[Shows {
                 kind: "file".into(),
                 highlight: true,
@@ -579,7 +664,10 @@ mod tests {
         let hello: Value = serde_json::from_str(&hello).unwrap();
         assert_eq!(hello["hello"]["name"], "decade-code");
         assert_eq!(hello["hello"]["pane"], "code");
-        assert_eq!(hello["hello"]["accepts"], json!(["reload"]));
+        assert_eq!(
+            hello["hello"]["accepts"],
+            json!(["reload", {"name": "open", "description": "Open a file."}])
+        );
         assert_eq!(
             hello["hello"]["shows"],
             json!([{"kind": "file", "highlight": true}])

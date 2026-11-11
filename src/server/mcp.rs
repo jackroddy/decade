@@ -162,7 +162,7 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "panes",
-            "List the panes in this workspace, the program occupying each and the kinds it shows. client is the name a program gave when it connected to decade. It is null when no program in the pane has connected, though a terminal or another window may still be there. Only programs written for decade show kinds, so a terminal's shows is empty",
+            "List the panes in this workspace, the program occupying each, the kinds it shows and the verbs it accepts. client is the name a program gave when it connected to decade. It is null when no program in the pane has connected, though a terminal or another window may still be there. Only programs written for decade show kinds, so a terminal's shows is empty",
             schema(json!({"type": "object", "properties": {}})),
         ),
         Tool::new(
@@ -209,7 +209,7 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "scratch.send",
-            "Send a message to the program in the scratch pane",
+            "Send a message to the program in the scratch pane. panes lists the verbs that program accepts under accepts, each a name or a name with a description of what it does",
             schema(json!({
                 "type": "object",
                 "properties": {

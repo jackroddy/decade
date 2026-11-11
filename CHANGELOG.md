@@ -279,6 +279,12 @@ command line and what the tool writes.
   the mode on carries a camera tag at the left end of its outline's top
   edge. The tag flashes at each capture. When a pane is too narrow for
   every tag, the camera tag is the last to go.
+- A program's hello may give each verb in `accepts` a description of one
+  sentence, as an object with `name` and `description` in place of the
+  bare name. `panes`, on the socket and over MCP, lists each pane's
+  `accepts` beside `shows`. The description of the MCP tool `scratch.send`
+  names `panes` as where the agent finds the verbs the program in the
+  scratch pane takes.
 
 ### Changed
 
