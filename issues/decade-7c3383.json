@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T02:31:23.779949092Z",
-  "updated_at": "2026-11-11T02:40:41.996738878Z",
+  "updated_at": "2026-11-11T05:13:56.579105227Z",
   "closed_at": "2026-11-11T02:40:41.996738878Z",
   "close_reason": "Landed in ad0a585: a white layer over the captured pane's client area, 30% fading out over 300 ms. Not yet seen on screen.",
   "resolution": "done",
-  "notes": [],
+  "notes": [
+    {
+      "id": "def1976c",
+      "at": "2026-11-11T05:13:56.579104477Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "Jack saw it on a server built from ad0a585 and said it looks good.",
+      "commit": "2d00018",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "b77a951",
