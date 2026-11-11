@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T22:30:49.622266013Z",
-  "updated_at": "2026-11-08T22:30:49.622266013Z",
+  "updated_at": "2026-11-11T01:00:17.599761668Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "98e2c217",
+      "at": "2026-11-11T01:00:17.599761088Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "The screenshot mode from d73fd69 lives in the kit's pane code in src/server/panes.rs: Pane::screenshots, the left outline tag and its flash, and a Ctrl bar button. The kit is meant to hold nothing decade-specific, so the split needs a way for the application to add its own per-pane modes, tags and bar buttons. The scratch pane tag and button are in the same position.",
+      "commit": "da4f5cd",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "6bcc95b",
