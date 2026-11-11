@@ -932,7 +932,8 @@ impl State {
         let Some((name, (at, room))) = place else {
             return;
         };
-        let field = NameField::open(named, shown.active_tab, name, at, room, cell);
+        let window = (self.size.w, self.size.h);
+        let field = NameField::open(named, shown.active_tab, name, at, room, cell, window);
         self.close_overlay();
         self.overlay = Some(Overlay::Rename(field));
         self.request_redraw();

@@ -39,6 +39,7 @@ pub struct Size {
     rule_above: i32,
     rule_below: i32,
     hint_above: i32,
+    error_above: i32,
 }
 
 /// The palette, the settings panel and the screenshot dialog.
@@ -63,6 +64,7 @@ pub const LARGE: Size = Size {
     rule_above: 6,
     rule_below: 8,
     hint_above: 10,
+    error_above: 13,
 };
 
 /// The context menu, the name field and the sidebar popover.
@@ -87,6 +89,7 @@ pub const SMALL: Size = Size {
     rule_above: 0,
     rule_below: 0,
     hint_above: 5,
+    error_above: 5,
 };
 
 impl Size {
@@ -138,6 +141,7 @@ pub struct Layout {
     field: Option<i32>,
     field_rule: Option<i32>,
     list: Option<(i32, usize)>,
+    error: Option<i32>,
     hint_rule: Option<i32>,
     hint: Option<i32>,
 }
@@ -154,6 +158,7 @@ impl Layout {
             field: None,
             field_rule: None,
             list: None,
+            error: None,
             hint_rule: None,
             hint: None,
         }
@@ -192,6 +197,16 @@ impl Layout {
     pub fn list(mut self, rows: usize) -> Layout {
         self.list = Some((self.height, rows));
         self.height += rows as i32 * self.px(self.size.row);
+        self
+    }
+
+    /// Add a row for an error when `shown` is true.
+    pub fn error(mut self, shown: bool) -> Layout {
+        if shown {
+            self.height += self.px(self.size.error_above);
+            self.error = Some(self.height);
+            self.height += self.px(self.size.row);
+        }
         self
     }
 
@@ -244,6 +259,13 @@ impl Layout {
         (left..left + self.width).contains(&x) && (top..top + self.height).contains(&y)
     }
 
+    /// Where the field's text starts, from the box's top left.
+    pub fn field_text(&self) -> (i32, i32) {
+        let top = self.field.unwrap_or(0);
+        let x = self.size.text_left(self.cell.1) + 2 * self.cell.0;
+        (x, top + (self.px(self.size.row) - self.cell.1) / 2)
+    }
+
     /// The x where the parts' text starts.
     pub fn text_left(&self) -> i32 {
         self.at.0 + self.size.text_left(self.cell.1)
@@ -282,14 +304,14 @@ impl Layout {
     /// Draw the text field holding `text`, or `placeholder` when it is
     /// empty, with the text on a selection fill when `marked` is true.
     pub fn draw_field(&self, scene: &mut Scene, text: &str, placeholder: &str, marked: bool) {
-        let Some(top) = self.field else {
+        if self.field.is_none() {
             return;
-        };
+        }
         let (cell_width, cell_height) = self.cell;
         let face = self.size.face;
+        let (text_x, y) = self.field_text();
+        let (text_x, y) = (self.at.0 + text_x, self.at.1 + y);
         let x = self.text_left();
-        let y = self.at.1 + top + (self.px(self.size.row) - cell_height) / 2;
-        let text_x = x + 2 * cell_width;
         let shown = if text.is_empty() { placeholder } else { text };
         let width = shown.chars().count() as i32 * cell_width;
         scene.text_px(x, y, "›", face, palette::ACCENT);
@@ -315,6 +337,23 @@ impl Layout {
             line,
             palette::SELECTION,
         );
+    }
+
+    /// Draw `error` in a red row.
+    pub fn draw_error(&self, scene: &mut Scene, error: &str) {
+        let Some(top) = self.error else {
+            return;
+        };
+        let padding = self.size.padding(self.cell.1);
+        let row = self.px(self.size.row);
+        let size = (self.width - 2 * padding, row);
+        let radius = self.px(self.size.row_radius);
+        let fill = palette::DARK_RED;
+        let y = self.at.1 + top;
+        scene.rounded(self.at.0 + padding, y, size, radius, fill, fill);
+        let text_y = y + (row - self.cell.1) / 2;
+        let face = self.size.face;
+        scene.text_px(self.text_left(), text_y, error, face, palette::LIGHT_RED);
     }
 
     pub fn draw_hint(&self, scene: &mut Scene, hint: &[(&str, &str)]) {

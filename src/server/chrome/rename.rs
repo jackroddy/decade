@@ -1,10 +1,11 @@
-use crate::server::chrome::draw::{Face, Scene, scaled};
-use crate::server::chrome::frame::{CARD_RADIUS, POPOVER_PADDING};
+use crate::server::chrome::draw::Scene;
 use crate::server::chrome::menu::{Action, MenuKey, Outcome};
-use crate::server::chrome::palette;
+use crate::server::chrome::overlay::{Layout, SMALL, hint_width};
 
 /// The fewest cells of text the field shows.
 const MIN_ROOM: i32 = 12;
+
+const HINT: [(&str, &str); 2] = [("enter", "save"), ("esc", "cancel")];
 
 /// Something the person can rename.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -24,8 +25,20 @@ pub enum Named {
     NewGroup,
 }
 
-/// The text field a name turns into while the person renames it, drawn
-/// where the name is drawn.
+impl Named {
+    fn title(self) -> &'static str {
+        match self {
+            Named::Workspace(_) => "Rename workspace",
+            Named::Tab(_) => "Rename tab",
+            Named::Pane(_) => "Rename pane",
+            Named::Group(_) => "Rename group",
+            Named::NewGroup => "New group",
+        }
+    }
+}
+
+/// The box a name turns into while the person renames it, with its text
+/// field where the name is drawn.
 pub struct NameField {
     pub named: Named,
 
@@ -48,6 +61,9 @@ pub struct NameField {
 
     /// The chrome font's cell.
     cell: (i32, i32),
+
+    /// The window's size in pixels.
+    window: (i32, i32),
 }
 
 impl NameField {
@@ -58,6 +74,7 @@ impl NameField {
         at: (i32, i32),
         room: i32,
         cell: (i32, i32),
+        window: (i32, i32),
     ) -> NameField {
         NameField {
             named,
@@ -68,6 +85,7 @@ impl NameField {
             at,
             room: room.max(MIN_ROOM),
             cell,
+            window,
         }
     }
 
@@ -94,58 +112,43 @@ impl NameField {
         Outcome::Open
     }
 
-    /// The field's box: its top left and size, in window pixels.
-    fn bounds(&self) -> ((i32, i32), (i32, i32)) {
-        let (cell_width, cell_height) = self.cell;
-        let padding = scaled(POPOVER_PADDING, cell_height);
-        let cells = self.room.max(self.text.chars().count() as i32 + 1);
-        let at = (self.at.0 - cell_width / 2, self.at.1 - padding);
-        let size = (cells * cell_width + cell_width, cell_height + 2 * padding);
-        (at, size)
+    /// The box, placed so the field's text starts where the name does
+    /// when the window has room.
+    fn layout(&self) -> Layout {
+        let cell_width = self.cell.0;
+        let error = self
+            .error
+            .as_deref()
+            .map_or(0, |error| error.chars().count());
+        let columns = (self.room + 2)
+            .max(self.text.chars().count() as i32 + 3)
+            .max(self.named.title().chars().count() as i32)
+            .max(error as i32)
+            .max(hint_width(&SMALL, &HINT, self.cell) / cell_width + 1);
+        let layout = (Layout::new(&SMALL, self.cell, SMALL.width(self.cell, columns)))
+            .header(false)
+            .field()
+            .error(self.error.is_some())
+            .hint()
+            .end();
+        let (x, y) = layout.field_text();
+        layout.inside((self.at.0 - x, self.at.1 - y), self.window)
     }
 
     pub fn contains(&self, x: i32, y: i32) -> bool {
-        let ((left, top), (width, height)) = self.bounds();
-        (left..left + width).contains(&x) && (top..top + height).contains(&y)
+        self.layout().contains(x, y)
     }
 
-    /// Draw the field in window pixels, with the chrome font.
+    /// Draw the box in window pixels, with the chrome font.
     pub fn draw(&self, scene: &mut Scene) {
-        let (cell_width, cell_height) = self.cell;
-        let ((left, top), size) = self.bounds();
-        let radius = scaled(CARD_RADIUS, cell_height);
-        let fill = palette::LIGHTER_BACKGROUND;
-        scene.rounded(left, top, size, radius, fill, palette::ACCENT);
-        let (x, y) = self.at;
-        let width = self.text.chars().count() as i32 * cell_width;
-        if self.fresh && width > 0 {
-            scene.rect(x, y, width, cell_height, palette::SELECTION);
-        } else {
-            scene.rect(
-                x + width,
-                y,
-                scene.line_width() * 2,
-                cell_height,
-                palette::FOREGROUND,
-            );
-        }
-        scene.text_px(x, y, &self.text, Face::ChromeBold, palette::FOREGROUND);
+        let layout = self.layout();
+        layout.draw_box(scene);
+        layout.draw_header(scene, self.named.title(), None);
+        layout.draw_field(scene, &self.text, "name", self.fresh);
         if let Some(error) = &self.error {
-            let padding = scaled(POPOVER_PADDING, cell_height);
-            let below = top + size.1 + padding;
-            let width = (error.chars().count() as i32 + 1) * cell_width;
-            let size = (width, cell_height + 2 * padding);
-            let fill = palette::DARK_RED;
-            scene.rounded(left, below, size, radius, fill, palette::RED);
-            let text_x = left + cell_width / 2;
-            scene.text_px(
-                text_x,
-                below + padding,
-                error,
-                Face::Chrome,
-                palette::LIGHT_RED,
-            );
+            layout.draw_error(scene, error);
         }
+        layout.draw_hint(scene, &HINT);
     }
 }
 
@@ -153,8 +156,19 @@ impl NameField {
 mod tests {
     use super::*;
 
+    const CELL: (i32, i32) = (8, 18);
+    const WINDOW: (i32, i32) = (800, 600);
+
     fn field() -> NameField {
-        NameField::open(Named::Pane(3), 0, "terminal".into(), (100, 50), 20, (8, 18))
+        NameField::open(
+            Named::Pane(3),
+            0,
+            "terminal".into(),
+            (100, 50),
+            20,
+            CELL,
+            WINDOW,
+        )
     }
 
     #[test]
@@ -185,14 +199,34 @@ mod tests {
     }
 
     #[test]
-    fn the_field_sits_round_the_name_and_grows_with_the_text() {
+    fn the_fields_text_starts_where_the_name_did_and_the_box_grows_with_the_text() {
         let mut field = field();
+        let layout = field.layout();
+        let (x, y) = layout.field_text();
+        assert_eq!((layout.at.0 + x, layout.at.1 + y), (100, 50));
         assert!(field.contains(100, 50));
-        assert!(field.contains(100 + 20 * 8, 50));
-        assert!(!field.contains(100 + 22 * 8, 50));
+        assert!(layout.width < SMALL.width(CELL, 33));
         for _ in 0..30 {
             field.key(MenuKey::Char('a'));
         }
-        assert!(field.contains(100 + 30 * 8, 50));
+
+        // the "› " before the text and the caret after it
+        assert_eq!(field.layout().width, SMALL.width(CELL, 30 + 3));
+    }
+
+    #[test]
+    fn an_error_adds_a_row_under_the_field_and_the_box_stays_in_the_window() {
+        let mut field = field();
+        let height = field.layout().height;
+        field.error = Some("terminal is taken".into());
+        assert_eq!(field.layout().height, height + 5 + 22);
+        let corner = NameField::open(Named::Tab(0), 0, "a".into(), (10, 5), 4, CELL, WINDOW);
+        assert_eq!(corner.layout().at, (0, 0));
+    }
+
+    #[test]
+    fn the_title_names_what_is_renamed() {
+        assert_eq!(Named::Pane(3).title(), "Rename pane");
+        assert_eq!(Named::NewGroup.title(), "New group");
     }
 }
