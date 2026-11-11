@@ -1,0 +1,28 @@
+{
+  "id": "decade-d61e36",
+  "title": "A workspace card gains and loses rows as its agent's state changes",
+  "body": "A workspace card's height follows its agent's state. `card_lines` in `src/server/chrome/frame.rs` gives three rows, plus one while the agent has a message (its question or current activity), plus one once it has reported usage. A card therefore grows and shrinks as its agent starts and stops work, and every card below it moves. The hover popover does the same through `popover_lines`, one row more for each agent with a message.\n\n## Proposal\n\nEvery card takes five rows whatever its state, with the message and usage rows left blank when empty, and the usage row always on the fifth row. Each agent in the popover takes two rows, its state and its message, whether or not it has a message.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T01:08:55.497344629Z",
+  "updated_at": "2026-11-11T01:08:55.497344629Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "da4f5cd",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
