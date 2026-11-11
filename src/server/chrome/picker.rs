@@ -2,7 +2,8 @@ use smithay::utils::{Physical, Point, Rectangle, Size};
 
 use crate::server::chrome::draw::{Face, Scene};
 use crate::server::chrome::frame::mark;
-use crate::server::chrome::menu::{Action, MenuKey, Outcome, draw_hint, hint_width, scaled};
+use crate::server::chrome::menu::{Action, MenuKey, Outcome};
+use crate::server::chrome::overlay::{LARGE, draw_hint, hint_width};
 use crate::server::chrome::palette::{self, ACCENT};
 use crate::server::chrome::text::Text;
 use crate::server::chrome::text::fit;
@@ -15,7 +16,8 @@ const MIN_BUTTON: i32 = 24;
 
 const CLOSE_ICON: char = '\u{f0156}';
 
-// the sizes below are in pixels at the palette's mockup cell, for `scaled`
+// the sizes below are in pixels at the large size's mockup cell, for
+// `LARGE.px`
 const FRAME_RADIUS: i32 = 10;
 
 /// The gap between a cell's thumbnail and the inside of its frame.
@@ -213,7 +215,7 @@ impl Picker {
         let line = over.line_width();
         let label_width = |text: &str| text.chars().count() as i32 * menu_width;
         let drop_target = self.dragging.and_then(|_| grid.cell_at(pointer));
-        let radius = scaled(FRAME_RADIUS, menu_height);
+        let radius = LARGE.px(FRAME_RADIUS, menu_height);
         for (i, cell) in grid.cells.iter().enumerate() {
             let workspace = workspaces.get(i);
             let confirming = workspace.is_some_and(|w| self.confirming == Some(w.id));
@@ -228,7 +230,7 @@ impl Picker {
             } else {
                 (palette::MUTED, line)
             };
-            let gap = scaled(FRAME_GAP, menu_height) + stroke;
+            let gap = LARGE.px(FRAME_GAP, menu_height) + stroke;
             let (x, y) = (cell.loc.x - gap, cell.loc.y - gap);
             let (w, h) = (cell.size.w + gap * 2, cell.size.h + gap * 2);
             let inside = palette::DARK_BACKGROUND;
@@ -289,8 +291,8 @@ impl Picker {
         let size = grid.size;
         let cell = (menu_width, menu_height);
         let hint_y = size.h - (grid.label + menu_height) / 2;
-        let hint_x = (size.w - hint_width(self.hint(), cell)) / 2;
-        draw_hint(&mut over, (hint_x, hint_y), self.hint(), cell);
+        let hint_x = (size.w - hint_width(&LARGE, self.hint(), cell)) / 2;
+        draw_hint(&mut over, &LARGE, (hint_x, hint_y), self.hint(), cell);
         (over, under)
     }
 }

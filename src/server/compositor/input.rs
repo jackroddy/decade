@@ -116,6 +116,15 @@ impl State {
             }
             return;
         }
+        let (point, cell, window) = (self.pointer_px(), self.menu_cell(), self.window());
+        let moved = match &mut self.overlay {
+            Some(Overlay::Menu(menu)) => menu.hover(point, cell, window),
+            Some(Overlay::Panel(panel)) => panel.hover(point, cell, window),
+            _ => false,
+        };
+        if moved {
+            self.request_redraw();
+        }
         if matches!(self.overlay, Some(Overlay::Context(_))) {
             let (x, y) = self.pointer_px();
             if let Some(Overlay::Context(menu)) = &mut self.overlay
@@ -247,6 +256,18 @@ impl State {
                 self.act(outcome);
             }
             return;
+        }
+        if button == BTN_LEFT && pressed {
+            let (point, cell, window) = (self.pointer_px(), self.menu_cell(), self.window());
+            let clicked = match &mut self.overlay {
+                Some(Overlay::Menu(menu)) => menu.click(point, cell, window),
+                Some(Overlay::Panel(panel)) => panel.click(point, &self.settings, cell, window),
+                _ => None,
+            };
+            if let Some(outcome) = clicked {
+                self.act(outcome);
+                return;
+            }
         }
         if let Some(Overlay::Context(menu)) = &self.overlay {
             if pressed {
@@ -810,6 +831,16 @@ impl State {
             return Point::default();
         };
         self.text.chrome.px_rect(pane.rect).loc
+    }
+
+    /// The palette font's cell.
+    pub(super) fn menu_cell(&self) -> (i32, i32) {
+        let font = &self.text.menu;
+        (font.cell_width as i32, font.cell_height as i32)
+    }
+
+    pub(super) fn window(&self) -> (i32, i32) {
+        (self.size.w, self.size.h)
     }
 
     fn pointer_px(&self) -> (i32, i32) {

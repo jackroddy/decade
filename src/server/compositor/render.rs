@@ -9,7 +9,7 @@ use smithay::backend::renderer::element::utils::{CropRenderElement, RescaleRende
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::utils::draw_render_elements;
 use smithay::backend::renderer::{Bind, Color32F, Frame, Renderer};
-use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
+use smithay::utils::{Physical, Point, Rectangle, Transform};
 
 use crate::server::agents;
 use crate::server::chrome::draw::{Element, Paint, Scene, Shrink};
@@ -123,15 +123,12 @@ impl State {
             paint.scene(&mut elements, &scene, Point::default(), None);
         }
 
-        let overlay_origin = |box_size: Size<i32, Physical>| -> Point<i32, Physical> {
-            let top = (size.h / 7).min((size.h - box_size.h).max(0));
-            ((size.w - box_size.w) / 2, top).into()
-        };
+        let window = (size.w, size.h);
         match overlay {
             Some(Overlay::Menu(menu)) => {
                 let mut scene = Scene::new(&paint.text.menu);
-                let box_size = menu.draw(&mut scene);
-                paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
+                menu.draw(&mut scene, window);
+                paint.scene(&mut elements, &scene, Point::default(), None);
             }
             Some(Overlay::Context(menu)) => {
                 let mut scene = Scene::new(&paint.text.chrome);
@@ -145,8 +142,8 @@ impl State {
             }
             Some(Overlay::Panel(panel)) => {
                 let mut scene = Scene::new(&paint.text.menu);
-                let box_size = panel.draw(&mut scene, settings);
-                paint.scene(&mut elements, &scene, overlay_origin(box_size), None);
+                panel.draw(&mut scene, settings, window);
+                paint.scene(&mut elements, &scene, Point::default(), None);
             }
             Some(Overlay::Picker { picker, .. }) => {
                 if let Some(grid) = &picker_grid {

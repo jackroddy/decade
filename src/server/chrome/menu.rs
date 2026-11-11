@@ -1,16 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use smithay::utils::{Physical, Size};
-
 use crate::server::apps::App;
 use crate::server::chrome::context_menu::Command;
-use crate::server::chrome::draw::{Face, Scene};
-use crate::server::chrome::palette::{self, Rgba};
+use crate::server::chrome::draw::Scene;
+use crate::server::chrome::overlay::{self, Cursor, LARGE, LARGE_COLUMNS, Layout, Step};
+use crate::server::chrome::palette;
 use crate::server::chrome::settings::Settings;
 use crate::server::chrome::text::{fit, tail};
 
-/// The width in cells of the palette, the New workspace browser and the settings panel.
-const WIDTH: i32 = 40;
 const APP_ICON: char = '\u{f08c6}';
 const FOLDER_ICON: char = '\u{f024b}';
 const OPEN_ICON: char = '\u{f0770}';
@@ -18,46 +15,7 @@ const CLOSE_ICON: char = '\u{f0156}';
 const MAX_ROWS: usize = 10;
 
 /// The cells a row's label may take, after its icon and before its chevron.
-const LABEL_ROOM: usize = WIDTH as usize - 5;
-const BOX: Rgba = palette::LIGHTER_BACKGROUND;
-const BORDER: Rgba = palette::BORDER;
-const TEXT: Rgba = palette::FOREGROUND;
-const DIM: Rgba = palette::LIGHT_FOREGROUND;
-const RULE: Rgba = palette::SELECTION;
-
-/// The palette font's cell height, in pixels, that sizes given to
-/// `scaled` are given at.
-const MOCKUP_CELL: i32 = 25;
-
-// the sizes below are in pixels at `MOCKUP_CELL`, for `scaled`
-const ROW: i32 = 40;
-const PADDING: i32 = 16;
-const BOTTOM_PADDING: i32 = 14;
-const RADIUS: i32 = 12;
-const SHADOW_OFFSET: i32 = 6;
-const RULE_ABOVE: i32 = 6;
-const RULE_BELOW: i32 = 8;
-const HINT_ABOVE: i32 = 4;
-const ROW_RADIUS: i32 = 8;
-
-/// How far a row's fill reaches past the box's padding.
-const ROW_BLEED: i32 = 8;
-
-/// How far a row's text sits inside its fill.
-const ROW_INSET: i32 = 10;
-const KEY_RADIUS: i32 = 4;
-const KEY_PADDING: i32 = 6;
-
-/// How far a key cap reaches above and below its text.
-const KEY_RISE: i32 = 2;
-
-/// The cells between one key's action and the next key's cap.
-const HINT_GAP: i32 = 2;
-
-/// `px`, a length given at `MOCKUP_CELL`, scaled to `cell_height`.
-pub fn scaled(px: i32, cell_height: i32) -> i32 {
-    (px * cell_height + MOCKUP_CELL / 2) / MOCKUP_CELL
-}
+const LABEL_ROOM: usize = LARGE_COLUMNS as usize - 5;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuKey {
@@ -133,7 +91,7 @@ pub struct Menu {
     root: Vec<Row>,
     path: Vec<usize>,
     query: String,
-    selected: usize,
+    cursor: Cursor,
     home: PathBuf,
 
     /// The rows listed for the query while a `Directory` row is open.
@@ -192,7 +150,7 @@ impl Menu {
             root: rows,
             path: Vec::new(),
             query: String::new(),
-            selected: 0,
+            cursor: Cursor::default(),
             home,
             found: Vec::new(),
         }
@@ -239,38 +197,48 @@ impl Menu {
     }
 
     fn query_changed(&mut self) {
-        self.selected = 0;
+        self.cursor = Cursor::default();
         if self.browsing() {
             self.found = browse(&self.query, &self.home);
         }
     }
 
+    /// The matching rows as the list takes them.
+    fn list_rows(&self) -> Vec<overlay::Row<'_>> {
+        (self.matching().into_iter())
+            .map(|(_, row)| overlay::Row {
+                destructive: row.destructive(),
+                ..overlay::Row::new(&row.label)
+            })
+            .collect()
+    }
+
     pub fn key(&mut self, key: MenuKey) -> Outcome {
-        match key {
-            MenuKey::Up => self.selected = self.selected.saturating_sub(1),
-            MenuKey::Down => {
-                let last = self.matching().len().saturating_sub(1);
-                self.selected = (self.selected + 1).min(last);
-            }
-            MenuKey::Char(ch) => {
+        let mut cursor = self.cursor;
+        let step = cursor.key(key, &self.list_rows());
+        self.cursor = cursor;
+        match step {
+            Step::Stay | Step::Pass(MenuKey::Left | MenuKey::Right) => {}
+            Step::Run(_) => return self.enter(),
+            Step::Close => return self.up(),
+            Step::Pass(MenuKey::Char(ch)) => {
                 self.query.push(ch);
                 self.query_changed();
             }
-            MenuKey::Backspace if self.query.is_empty() => return self.up(),
-            MenuKey::Backspace => {
+            Step::Pass(MenuKey::Backspace) if self.query.is_empty() => return self.up(),
+            Step::Pass(MenuKey::Backspace) => {
                 self.query.pop();
                 self.query_changed();
             }
-            MenuKey::Escape => return self.up(),
-            MenuKey::Left | MenuKey::Right => {}
-            MenuKey::Tab => self.complete(),
-            MenuKey::Enter => return self.enter(),
+            Step::Pass(MenuKey::Tab) => self.complete(),
+            Step::Pass(_) => {}
         }
+        self.cursor.scroll(MAX_ROWS);
         Outcome::Open
     }
 
     fn enter(&mut self) -> Outcome {
-        let Some(&(index, row)) = self.matching().get(self.selected) else {
+        let Some(&(index, row)) = self.matching().get(self.cursor.selected) else {
             return Outcome::Open;
         };
         match &row.target {
@@ -304,7 +272,7 @@ impl Menu {
     }
 
     fn complete(&mut self) {
-        if let Some((_, row)) = self.matching().get(self.selected)
+        if let Some((_, row)) = self.matching().get(self.cursor.selected)
             && let Target::Complete(query) = &row.target
         {
             self.query = query.clone();
@@ -318,7 +286,7 @@ impl Menu {
         }
         self.query.clear();
         self.found.clear();
-        self.selected = 0;
+        self.cursor = Cursor::default();
         Outcome::Open
     }
 
@@ -334,229 +302,96 @@ impl Menu {
         }
     }
 
-    pub fn draw(&self, scene: &mut Scene) -> Size<i32, Physical> {
-        let title: Vec<&str> = std::iter::once("decade")
-            .chain(self.trail().map(|row| row.label.as_str()))
-            .collect();
+    /// The palette's box in `window`, for the menu font's `cell`: centred
+    /// across it, a seventh of the way down.
+    fn layout(&self, cell: (i32, i32), (width, height): (i32, i32)) -> Layout {
+        let shown = self.matching().len().clamp(1, MAX_ROWS);
+        let box_width = LARGE.width(cell, LARGE_COLUMNS).min(width);
+        let layout = (Layout::new(&LARGE, cell, box_width))
+            .field()
+            .list(shown)
+            .hint()
+            .end();
+        let top = (height / 7).min((height - layout.height).max(0));
+        layout.at(((width - box_width).max(0) / 2, top))
+    }
+
+    /// Select the row under pixel `x`, `y`, and return whether the
+    /// selection moved.
+    pub fn hover(&mut self, (x, y): (i32, i32), cell: (i32, i32), window: (i32, i32)) -> bool {
+        let Some(list) = self.layout(cell, window).list_area() else {
+            return false;
+        };
+        let mut cursor = self.cursor;
+        let moved = cursor.hover(&list, &self.list_rows(), x, y);
+        self.cursor = cursor;
+        moved
+    }
+
+    /// What a left click at pixel `x`, `y` does, or `None` outside the box.
+    pub fn click(
+        &mut self,
+        (x, y): (i32, i32),
+        cell: (i32, i32),
+        window: (i32, i32),
+    ) -> Option<Outcome> {
+        let layout = self.layout(cell, window);
+        if !layout.contains(x, y) {
+            return None;
+        }
+        let list = layout.list_area()?;
+        let mut cursor = self.cursor;
+        let clicked = cursor.click(&list, &self.list_rows(), x, y);
+        self.cursor = cursor;
+        Some(match clicked {
+            Some(_) => self.enter(),
+            None => Outcome::Open,
+        })
+    }
+
+    /// Draw the palette in `window`, in the scene's pixels.
+    pub fn draw(&self, scene: &mut Scene, window: (i32, i32)) {
+        let layout = self.layout(scene.cell(), window);
+        layout.draw_box(scene);
+        let trail: Vec<&str> = self.trail().map(|row| row.label.as_str()).collect();
+        let placeholder = if trail.is_empty() {
+            "type to search".to_string()
+        } else {
+            format!("{} › type to search", trail.join(" › "))
+        };
+        let placeholder = fit(&placeholder, LARGE_COLUMNS as usize - 3);
+        let query = tail(&self.query, LARGE_COLUMNS as usize - 3);
+        layout.draw_field(scene, &query, &placeholder, false);
+        layout.draw_hint(scene, self.hint());
+        let Some(list) = layout.list_area() else {
+            return;
+        };
         let matching = self.matching();
-        let shown = matching.len().clamp(1, MAX_ROWS);
-        let (rows, size) = draw_box(scene, &title, Some(&self.query), shown, self.hint());
         if matching.is_empty() {
             let empty = if self.browsing() {
                 "no folders"
             } else {
                 "no matches"
             };
-            scene.text_px(rows.left, rows.text_y(0), empty, Face::Menu, DIM);
+            let (x, y) = (list.left(), list.text_y(0));
+            scene.text_px(x, y, empty, LARGE.face, palette::MUTED);
         }
         let (cell_width, _) = scene.cell();
-        let skip = self.selected.saturating_sub(MAX_ROWS - 1);
-        for (i, (_, row)) in matching.iter().enumerate().skip(skip).take(MAX_ROWS) {
-            let slot = i - skip;
-            let style = rows.select(scene, slot, i == self.selected, row.destructive());
-            let y = rows.text_y(slot);
-            if row.icon != ' ' {
-                scene.text_px(rows.left, y, &row.icon.to_string(), Face::Menu, style.icon);
-            }
+        let top = self.cursor.top;
+        let shown = matching.iter().enumerate().skip(top).take(MAX_ROWS);
+        for (i, (_, row)) in shown {
             let label = fit(&row.label, LABEL_ROOM);
-            scene.text_px(
-                rows.left + cell_width * 3,
-                y,
-                &label,
-                style.face,
-                style.text,
-            );
+            let item = overlay::Row {
+                icon: (row.icon != ' ').then_some(row.icon),
+                destructive: row.destructive(),
+                ..overlay::Row::new(&label)
+            };
+            let style = list.draw_row(scene, i - top, &item, i == self.cursor.selected);
             if matches!(row.target, Target::Submenu(_) | Target::Directory) {
-                scene.text_px(rows.right - cell_width, y, "›", Face::Menu, style.icon);
+                let x = list.right() - cell_width;
+                scene.text_px(x, list.text_y(i - top), "›", LARGE.face, style.icon);
             }
         }
-        size
-    }
-}
-
-/// The fill, colours and face of a list row.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct RowStyle {
-    pub fill: Option<Rgba>,
-    pub text: Rgba,
-    pub icon: Rgba,
-    pub face: Face,
-}
-
-impl RowStyle {
-    fn new(selected: bool, destructive: bool) -> RowStyle {
-        match (selected, destructive) {
-            (false, _) => RowStyle {
-                fill: None,
-                text: TEXT,
-                icon: DIM,
-                face: Face::Menu,
-            },
-            (true, false) => RowStyle {
-                fill: Some(palette::SELECTION),
-                text: TEXT,
-                icon: TEXT,
-                face: Face::MenuBold,
-            },
-            (true, true) => RowStyle {
-                fill: Some(palette::DARK_RED),
-                text: palette::LIGHT_RED,
-                icon: palette::LIGHT_RED,
-                face: Face::MenuBold,
-            },
-        }
-    }
-}
-
-/// The list rows of a box drawn by `draw_box`.
-pub struct Rows {
-    /// The x where row text starts.
-    pub left: i32,
-
-    /// The x where row text must end.
-    pub right: i32,
-    pub height: i32,
-    top: i32,
-    text: i32,
-    fill_x: i32,
-    fill_width: i32,
-    radius: i32,
-}
-
-impl Rows {
-    pub fn text_y(&self, slot: usize) -> i32 {
-        self.top + slot as i32 * self.height + self.text
-    }
-
-    /// The y that centres something `height` tall in row `slot`.
-    pub fn centred(&self, slot: usize, height: i32) -> i32 {
-        self.top + slot as i32 * self.height + (self.height - height) / 2
-    }
-
-    /// Draw the fill behind row `slot` when it is selected, and return how
-    /// to draw the row.
-    pub fn select(
-        &self,
-        scene: &mut Scene,
-        slot: usize,
-        selected: bool,
-        destructive: bool,
-    ) -> RowStyle {
-        let style = RowStyle::new(selected, destructive);
-        if let Some(fill) = style.fill {
-            let top = self.top + slot as i32 * self.height;
-            let size = (self.fill_width, self.height);
-            scene.rounded(self.fill_x, top, size, self.radius, fill, fill);
-        }
-        style
-    }
-}
-
-/// Draw the box of the palette or the settings panel: the `title`
-/// breadcrumb, a prompt holding `query` when there is one, room for `rows`
-/// rows under the rule and `hint` last.
-pub fn draw_box(
-    scene: &mut Scene,
-    title: &[&str],
-    query: Option<&str>,
-    rows: usize,
-    hint: &[(&str, &str)],
-) -> (Rows, Size<i32, Physical>) {
-    let (cell_width, cell_height) = scene.cell();
-    let px = |px: i32| scaled(px, cell_height);
-    let pad = px(PADDING);
-    let row_height = px(ROW);
-    let text = (row_height - cell_height) / 2;
-    let width = WIDTH * cell_width + pad * 2;
-    let header = 1 + query.is_some() as i32;
-    let line = scene.line_width();
-    let rule = pad + row_height * header + px(RULE_ABOVE);
-    let fill_x = pad - px(ROW_BLEED);
-    let list = Rows {
-        left: fill_x + px(ROW_INSET),
-        right: width - fill_x - px(ROW_INSET),
-        height: row_height,
-        top: rule + line + px(RULE_BELOW),
-        text,
-        fill_x,
-        fill_width: width - fill_x * 2,
-        radius: px(ROW_RADIUS),
-    };
-    let hint_top = list.top + row_height * rows as i32 + px(HINT_ABOVE);
-    let height = hint_top + row_height + px(BOTTOM_PADDING);
-    let (radius, offset) = (px(RADIUS), px(SHADOW_OFFSET));
-    let shadow = palette::SHADOW;
-    scene.rounded(offset, offset, (width, height), radius, shadow, shadow);
-    scene.rounded(0, 0, (width, height), radius, BOX, BORDER);
-
-    let mut x = pad;
-    for (i, part) in title.iter().enumerate() {
-        if i > 0 {
-            scene.text_px(x, pad + text, " › ", Face::Menu, palette::MUTED);
-            x += 3 * cell_width;
-        }
-        scene.text_px(x, pad + text, part, Face::MenuBold, TEXT);
-        x += part.chars().count() as i32 * cell_width;
-    }
-    if let Some(query) = query {
-        let y = pad + row_height + text;
-        let query = tail(query, WIDTH as usize - 3);
-        let caret = pad + (2 + query.chars().count() as i32) * cell_width;
-        scene.text_px(pad, y, "›", Face::Menu, palette::ACCENT);
-        scene.text_px(pad + 2 * cell_width, y, &query, Face::Menu, TEXT);
-        scene.text_px(caret, y, "▏", Face::Menu, palette::ACCENT);
-    }
-    scene.rect(pad, rule, width - pad * 2, line, RULE);
-    draw_hint(
-        scene,
-        (pad, hint_top + text),
-        hint,
-        (cell_width, cell_height),
-    );
-    (list, (width, height).into())
-}
-
-/// Where each key cap of `hint` starts and where the action after it
-/// starts, from the line's left edge, and the line's width.
-fn hint_layout(
-    hint: &[(&str, &str)],
-    (cell_width, cell_height): (i32, i32),
-) -> (Vec<(i32, i32)>, i32) {
-    let padding = scaled(KEY_PADDING, cell_height);
-    let mut x = 0;
-    let mut spots = Vec::new();
-    for (i, (key, action)) in hint.iter().enumerate() {
-        if i > 0 {
-            x += HINT_GAP * cell_width;
-        }
-        let cap = x;
-        let action_x = cap + key.chars().count() as i32 * cell_width + padding * 2 + cell_width;
-        spots.push((cap, action_x));
-        x = action_x + action.chars().count() as i32 * cell_width;
-    }
-    (spots, x)
-}
-
-/// The width of `hint` drawn by `draw_hint` with the palette font's cell.
-pub fn hint_width(hint: &[(&str, &str)], cell: (i32, i32)) -> i32 {
-    hint_layout(hint, cell).1
-}
-
-/// Draw `hint` with its text's top left at `(x, y)`, each key's name in a
-/// key cap followed by what it does. `cell` is the palette font's cell.
-pub fn draw_hint(scene: &mut Scene, (x, y): (i32, i32), hint: &[(&str, &str)], cell: (i32, i32)) {
-    let (cell_width, cell_height) = cell;
-    let padding = scaled(KEY_PADDING, cell_height);
-    let rise = scaled(KEY_RISE, cell_height);
-    let radius = scaled(KEY_RADIUS, cell_height);
-    let (spots, _) = hint_layout(hint, cell);
-    for ((key, action), (cap, action_x)) in hint.iter().zip(spots) {
-        let width = key.chars().count() as i32 * cell_width + padding * 2;
-        let size = (width, cell_height + rise * 2);
-        let fill = palette::SELECTION;
-        scene.rounded(x + cap, y - rise, size, radius, fill, fill);
-        scene.text_px(x + cap + padding, y, key, Face::Menu, TEXT);
-        scene.text_px(x + action_x, y, action, Face::Menu, DIM);
     }
 }
 
@@ -632,11 +467,11 @@ mod tests {
     fn the_selection_stays_inside_the_list() {
         let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade", 0);
         menu.key(MenuKey::Up);
-        assert_eq!(menu.selected, 0);
+        assert_eq!(menu.cursor.selected, 0);
         for _ in 0..5 {
             menu.key(MenuKey::Down);
         }
-        assert_eq!(menu.selected, 4);
+        assert_eq!(menu.cursor.selected, 4);
     }
 
     #[test]
@@ -700,31 +535,17 @@ mod tests {
     }
 
     #[test]
-    fn a_selected_destructive_row_is_red_and_any_other_selected_row_is_not() {
-        let red = RowStyle::new(true, true);
-        assert_eq!(red.fill, Some(palette::DARK_RED));
-        assert_eq!(
-            (red.text, red.icon),
-            (palette::LIGHT_RED, palette::LIGHT_RED)
-        );
-        let selected = RowStyle::new(true, false);
-        assert_eq!(selected.fill, Some(palette::SELECTION));
-        assert_eq!(selected.face, Face::MenuBold);
-        assert_eq!(RowStyle::new(false, true), RowStyle::new(false, false));
-        assert_eq!(RowStyle::new(false, true).fill, None);
-    }
-
-    #[test]
-    fn a_hint_puts_each_action_a_cell_after_its_key_cap_and_the_pairs_two_cells_apart() {
-        let hint = [("enter", "open"), ("esc", "back")];
-        let (spots, width) = hint_layout(&hint, (10, MOCKUP_CELL));
-        let padding = KEY_PADDING;
-        let first_action = 50 + padding * 2 + 10;
-        let second_cap = first_action + 40 + 20;
-        let second_action = second_cap + 30 + padding * 2 + 10;
-        assert_eq!(spots, [(0, first_action), (second_cap, second_action)]);
-        assert_eq!(width, second_action + 40);
-        assert_eq!(hint_width(&hint, (10, MOCKUP_CELL)), width);
+    fn hovering_a_row_selects_it_and_a_click_runs_it_like_enter() {
+        let (cell, window) = ((10, 25), (1200, 800));
+        let mut menu = Menu::new(Vec::new(), PathBuf::from("/"), 0, "decade", 0);
+        let list = menu.layout(cell, window).list_area().unwrap();
+        let settings = (list.left(), list.text_y(4));
+        assert!(menu.hover(settings, cell, window));
+        assert_eq!(menu.cursor.selected, 4);
+        let launch = (list.left(), list.text_y(0));
+        assert_eq!(menu.click(launch, cell, window), Some(Outcome::Open));
+        assert_eq!(menu.path, [0]);
+        assert_eq!(menu.click((0, 0), cell, window), None);
     }
 
     #[test]
