@@ -1,0 +1,28 @@
+{
+  "id": "decade-1b21c0",
+  "title": "An open popup is not placed again when its pane resizes",
+  "body": "decade places an xdg popup when it opens and on `reposition_request` (`place_popup` in `src/server/compositor.rs`, from 803bdf7), keeping it inside the parent pane's client area. When the pane resizes while the popup is open, decade does not place it again, so a menu can hang past the pane's new edge or over a neighbour until it closes.\n\nJack chose to leave this until it causes trouble.\n\n## Proposal\n\nWhen a pane's client area changes, decade places each open popup of its toplevel again and sends a configure.",
+  "type": "bug",
+  "status": "open",
+  "priority": 4,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-11T01:06:39.320011362Z",
+  "updated_at": "2026-11-11T01:06:39.320011362Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "da4f5cd",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
