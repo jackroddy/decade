@@ -7,6 +7,8 @@ mod gpu;
 #[cfg(target_os = "linux")]
 mod lines;
 #[cfg(target_os = "linux")]
+mod png;
+#[cfg(target_os = "linux")]
 mod script;
 #[cfg(target_os = "linux")]
 mod server;

@@ -29,8 +29,14 @@ pub struct Request {
     pub reply: Reply,
 }
 
-/// Where the tool result's text goes, or the reason the call failed.
-pub type Reply = oneshot::Sender<Result<String, String>>;
+/// Where the tool result goes, or the reason the call failed.
+pub type Reply = oneshot::Sender<Result<Answer, String>>;
+
+/// What a tool call that succeeded answers with.
+pub enum Answer {
+    Text(String),
+    Png(Vec<u8>),
+}
 
 pub enum Call {
     /// A `show`, `highlight` or `clear` of `kind`, for pane `pane` or
@@ -56,6 +62,11 @@ pub enum Call {
     Panes,
     Agents,
     ScratchOpen(Launch),
+
+    /// Capture the client area of pane `pane` as a PNG.
+    Screenshot {
+        pane: String,
+    },
 }
 
 /// Start the MCP server on a thread and return its URL.
@@ -186,6 +197,17 @@ fn tools() -> Vec<Tool> {
             })),
         ),
         Tool::new(
+            "screenshot",
+            "Capture what a pane in the shown tab draws, without its bar or outline, as a PNG at the screen's pixels. Unless the user has turned on accept screenshots for the pane, decade asks the user first and waits up to 30 seconds. A refusal or no answer fails the call with the reason",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": {"type": "string", "description": "a pane name, as panes lists it"}
+                },
+                "required": ["pane"]
+            })),
+        ),
+        Tool::new(
             "scratch.send",
             "Send a message to the program in the scratch pane",
             schema(json!({
@@ -227,6 +249,12 @@ struct ToKind<T> {
     payload: T,
 }
 
+/// The arguments of `screenshot`.
+#[derive(Deserialize)]
+struct Screenshot {
+    pane: String,
+}
+
 /// The arguments of `scratch.send`.
 #[derive(Deserialize)]
 struct ScratchSend {
@@ -255,6 +283,10 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
             Ok(Call::Point { pane, note })
         }
         "scratch.open" => parse(name, arguments).map(Call::ScratchOpen),
+        "screenshot" => {
+            let Screenshot { pane } = parse(name, arguments)?;
+            Ok(Call::Screenshot { pane })
+        }
         "scratch.send" => {
             let ScratchSend { verb, payload } = parse(name, arguments)?;
             Ok(Call::ScratchSend {
@@ -299,7 +331,8 @@ impl ServerHandler for Decade {
                  show things. scratch.open starts a program in it, \
                  replacing the program there, and scratch.send sends that program a message. \
                  Both fail when the workspace has no scratch pane. point draws the user's eye \
-                 to a pane without taking keyboard focus. agents lists the agents in the \
+                 to a pane without taking keyboard focus. screenshot returns an image of what \
+                 a pane draws, once the user allows it. agents lists the agents in the \
                  workspace with what each last reported.",
             )
     }
@@ -338,11 +371,33 @@ impl ServerHandler for Decade {
             .await
             .map_err(|_| ErrorData::internal_error("decade did not answer", None))?;
         let result = match answer {
-            Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
+            Ok(Answer::Text(text)) => CallToolResult::success(vec![ContentBlock::text(text)]),
+            Ok(Answer::Png(png)) => {
+                CallToolResult::success(vec![ContentBlock::image(base64(&png), "image/png")])
+            }
             Err(reason) => CallToolResult::error(vec![ContentBlock::text(reason)]),
         };
         Ok(result.into())
     }
+}
+
+/// `bytes` in the standard base64 alphabet with padding, as MCP carries
+/// image data.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| chunk.get(i).copied().unwrap_or(0) as u32);
+        let triple = (a << 16) | (b << 8) | c;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                text.push(ALPHABET[(triple >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                text.push('=');
+            }
+        }
+    }
+    text
 }
 
 #[cfg(test)]
@@ -353,6 +408,16 @@ mod tests {
     use smithay::reexports::calloop::EventLoop;
     use smithay::reexports::calloop::channel::{self, Event};
     use std::time::Duration;
+
+    #[test]
+    fn base64_pads_a_last_group_of_one_or_two_bytes() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(&[0xff, 0xfe]), "//4=");
+    }
 
     #[test]
     fn the_workspace_and_pane_are_read_from_the_query_of_the_address() {
@@ -387,12 +452,14 @@ mod tests {
                     } => {
                         let call = json!({"kind": kind, "pane": pane, verb: payload});
                         seen.push((request.workspace, call));
-                        Ok("sent".to_string())
+                        Ok(Answer::Text("sent".to_string()))
                     }
                     Call::Panes => {
-                        Ok(r#"{"panes":[{"name":"code","client":"decade-code"}]}"#.to_string())
+                        let panes = r#"{"panes":[{"name":"code","client":"decade-code"}]}"#;
+                        Ok(Answer::Text(panes.to_string()))
                     }
                     Call::Point { pane, .. } => Err(format!("no pane named {pane}")),
+                    Call::Screenshot { pane } => Ok(Answer::Png(pane.into_bytes())),
                     _ => Err("unexpected call".to_string()),
                 };
                 let _ = request.reply.send(reply);
@@ -430,6 +497,13 @@ mod tests {
                     )
                     .await
                     .unwrap();
+                let screenshot = client
+                    .call_tool(
+                        CallToolRequestParams::new("screenshot")
+                            .with_arguments(schema(json!({"pane": "fo"}))),
+                    )
+                    .await
+                    .unwrap();
                 client.cancel().await.unwrap();
                 let unaddressed =
                     ().serve(StreamableHttpClientTransport::from_uri(unaddressed))
@@ -439,7 +513,7 @@ mod tests {
                     .call_tool(CallToolRequestParams::new("panes"))
                     .await;
                 unaddressed.cancel().await.unwrap();
-                (names, show, panes, point, refused)
+                (names, show, panes, point, screenshot, refused)
             })
         });
 
@@ -449,7 +523,7 @@ mod tests {
                 .dispatch(Some(Duration::from_millis(50)), &mut seen)
                 .unwrap();
         }
-        let (names, show, panes, point, refused) = client.join().unwrap();
+        let (names, show, panes, point, screenshot, refused) = client.join().unwrap();
 
         assert_eq!(
             names,
@@ -461,6 +535,7 @@ mod tests {
                 "agents",
                 "point",
                 "scratch.open",
+                "screenshot",
                 "scratch.send"
             ]
         );
@@ -484,6 +559,11 @@ mod tests {
                 .unwrap()
                 .text
                 .contains("decade-code")
+        );
+        let image = screenshot.content[0].as_image().unwrap();
+        assert_eq!(
+            (image.data.as_str(), image.mime_type.as_str()),
+            ("Zm8=", "image/png")
         );
         assert_eq!(point.is_error, Some(true));
         assert!(

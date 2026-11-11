@@ -43,6 +43,8 @@ const UNZOOM_ICON: char = '\u{f0294}';
 const CLOSE_ICON: char = '\u{f0156}';
 const SCRATCH_ICON: char = '\u{f0093}';
 const UNSCRATCHED_ICON: char = '\u{f0096}';
+const SCREENSHOTS_ICON: char = '\u{f0100}';
+const NO_SCREENSHOTS_ICON: char = '\u{f05df}';
 
 // the sizes below are in pixels at 18 px rows, for `Scene::scaled`
 const PILL_RADIUS: i32 = 4;
@@ -230,6 +232,9 @@ pub struct Pane {
 
     /// The name of the live agent in the pane, which labels its first tab.
     pub agent: Option<String>,
+
+    /// Whether an agent may take a screenshot of the pane without asking.
+    pub screenshots: bool,
 }
 
 impl Pane {
@@ -367,6 +372,7 @@ impl Pane {
             cwd: None,
             pid: None,
             agent: None,
+            screenshots: false,
         }
     }
 }
@@ -404,6 +410,7 @@ pub enum Node {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BarButton {
+    Screenshots,
     Scratch,
     Pin,
     Zoom,
@@ -451,6 +458,10 @@ pub struct Chrome<'a> {
 
     /// The workspace's point and how far its pulse is toward its peak.
     pub point: Option<(&'a Point, f32)>,
+
+    /// The pane whose screenshot was just taken, and how bright its
+    /// screenshot tag still flashes, from 0 to 1.
+    pub flash: Option<(&'a str, f32)>,
 }
 
 pub struct Layout {
@@ -806,7 +817,10 @@ impl Layout {
             };
             let scratched = chrome.scratch == Some(pane.name.as_str());
             let point = chrome.point.filter(|(point, _)| point.pane == pane.name);
-            self.draw_outline(scene, pane, outline, scratched, point);
+            let flash = (chrome.flash)
+                .filter(|&(name, _)| name == pane.name)
+                .map_or(0.0, |(_, flash)| flash);
+            self.draw_outline(scene, pane, outline, (scratched, flash), point);
             draw_waiting(scene, pane, pane.rect.inner(), scratched);
             let hover = (chrome.tab_hover)
                 .filter(|&(id, _)| id == pane.id)
@@ -821,15 +835,16 @@ impl Layout {
         }
     }
 
-    /// The pane's outline, with a tag on its top edge when it is pinned,
-    /// zoomed or the scratch pane, pulsing with its note when an agent
-    /// points at it.
+    /// The pane's outline, with a tag on the right of its top edge when it
+    /// is pinned, zoomed or the scratch pane, and one on the left that
+    /// brightens by `flash` when it accepts screenshots, pulsing with its
+    /// note when an agent points at it.
     fn draw_outline(
         &self,
         scene: &mut Scene,
         pane: &Pane,
         color: Rgba,
-        scratched: bool,
+        (scratched, flash): (bool, f32),
         point: Option<(&Point, f32)>,
     ) {
         let (cell_width, cell_height) = scene.cell();
@@ -863,6 +878,22 @@ impl Layout {
         let text_y = line_y + line / 2 - cell_height / 2;
         let (padding, radius) = (scene.scaled(TAG_PADDING), scene.scaled(PILL_RADIUS));
         let height = cell_height - 2 * scene.scaled(TAG_INSET);
+        let pill_y = line_y + line / 2 - height / 2;
+
+        // the screenshot tag takes its room first, so the
+        // tags on the right are dropped before it is
+        let mut limit = x + left + cell_width;
+        let screenshot_tag = x + left + cell_width * 2;
+        let screenshot_end = screenshot_tag + cell_width;
+        let screenshot_fits = screenshot_end + padding < x + width - right - cell_width * 2;
+        if pane.screenshots && screenshot_fits {
+            let size = (cell_width + padding * 2, height);
+            let fill = palette::mix(color, palette::FOREGROUND, flash);
+            scene.rounded(screenshot_tag - padding, pill_y, size, radius, fill, fill);
+            let icon = SCREENSHOTS_ICON.to_string();
+            scene.text_px(screenshot_tag, text_y, &icon, Face::Icon, TAG_TEXT);
+            limit = screenshot_end + padding + scene.scaled(TAG_GAP);
+        }
         let mut end = x + width - right - cell_width * 2;
         let pinned = pane.pinned;
         let zoomed = self.zoom == Some(pane.id);
@@ -876,11 +907,10 @@ impl Layout {
         .filter_map(|(tag, shown)| shown.then_some(tag))
         {
             let start = end - text.chars().count() as i32 * cell_width;
-            if start - cell_width < x + left + cell_width {
+            if start - cell_width < limit {
                 break;
             }
             let size = (end - start + padding * 2, height);
-            let pill_y = line_y + line / 2 - height / 2;
             scene.rounded(start - padding, pill_y, size, radius, color, color);
             scene.text_px(start, text_y, &text, face, TAG_TEXT);
             end = start - padding * 2 - scene.scaled(TAG_GAP);
@@ -888,14 +918,13 @@ impl Layout {
         let Some(note) = point.and_then(|(point, _)| point.note.as_deref()) else {
             return;
         };
-        let room = (end - x - left - cell_width * 2) / cell_width;
+        let room = (end - limit - cell_width) / cell_width;
         if room < 2 {
             return;
         }
         let note = fit(note, room as usize);
         let start = end - note.chars().count() as i32 * cell_width;
         let size = (end - start + padding * 2, height);
-        let pill_y = line_y + line / 2 - height / 2;
         scene.rounded(start - padding, pill_y, size, radius, POINTED, POINTED);
         scene.text_px(start, text_y, &note, Face::Chrome, TAG_TEXT);
     }
@@ -962,6 +991,9 @@ impl Layout {
                 BarButton::Pin if focused => (if pinned { PIN_ICON } else { UNPINNED_ICON }, fg),
                 BarButton::Pin if pinned => (PIN_ICON, FOREGROUND),
                 BarButton::Pin => (UNPINNED_ICON, UNPINNED),
+                BarButton::Screenshots if pane.screenshots => (SCREENSHOTS_ICON, FOREGROUND),
+                BarButton::Screenshots if focused => (NO_SCREENSHOTS_ICON, fg),
+                BarButton::Screenshots => (NO_SCREENSHOTS_ICON, UNPINNED),
                 BarButton::Zoom if zoomed => (UNZOOM_ICON, fg),
                 BarButton::Zoom => (ZOOM_ICON, fg),
                 BarButton::Close => (CLOSE_ICON, fg),
@@ -1179,12 +1211,14 @@ fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool
     scene.text(centered(&text), middle, &text, DIM);
 }
 
-fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 4] {
+fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 5] {
     let close = (start + width).saturating_sub(BUTTON_WIDTH);
     let zoom = close.saturating_sub(BUTTON_WIDTH);
     let pin = zoom.saturating_sub(BUTTON_WIDTH);
     let scratch = pin.saturating_sub(BUTTON_WIDTH);
+    let screenshots = scratch.saturating_sub(BUTTON_WIDTH);
     [
+        (BarButton::Screenshots, screenshots),
         (BarButton::Scratch, scratch),
         (BarButton::Pin, pin),
         (BarButton::Zoom, zoom),
@@ -1713,10 +1747,14 @@ pub(super) mod tests {
         assert_eq!(layout.bar_hit(48, 1), Some((0, BarButton::Close)));
         assert_eq!(layout.bar_hit(42, 1), Some((0, BarButton::Zoom)));
         let inner = layout.pane(0).unwrap().rect.inner();
-        let (_, scratch) = bar_buttons(inner.column, inner.columns)[0];
+        let (_, scratch) = bar_buttons(inner.column, inner.columns)[1];
         assert_eq!(scratch, 33);
         assert_eq!(layout.bar_hit(scratch, 1), Some((0, BarButton::Scratch)));
-        assert_eq!(layout.bar_hit(scratch - 1, 1), Some((0, BarButton::Name)));
+        assert_eq!(
+            layout.bar_hit(scratch - 1, 1),
+            Some((0, BarButton::Screenshots))
+        );
+        assert_eq!(layout.bar_hit(scratch - 5, 1), Some((0, BarButton::Name)));
         assert_eq!(layout.bar_hit(2, 1), Some((0, BarButton::Name)));
         assert_eq!(layout.bar_hit(2, 5), None);
     }
@@ -2093,7 +2131,7 @@ pub(super) mod tests {
         layout.draw_bars(&mut scene, chrome);
         let (cell_width, cell_height) = scene.cell();
         let inner = layout.panes[0].rect.inner();
-        let close = bar_buttons(inner.column, inner.columns)[3].1;
+        let close = bar_buttons(inner.column, inner.columns)[4].1;
         let [(x, y, width, height, fill)] = rounded(&scene)[..] else {
             panic!("one hover square");
         };
@@ -2141,5 +2179,52 @@ pub(super) mod tests {
         assert_eq!(client_area(rect, 3), two);
         let short = CellRect { rows: 3, ..rect };
         assert_eq!(client_area(short, 2), CellRect::EMPTY);
+    }
+
+    #[test]
+    fn a_pane_accepting_screenshots_has_a_tag_at_the_left_of_its_top_line_that_flashes() {
+        let mut layout = Layout::new(AREA, "terminal".to_string());
+        layout.panes[0].screenshots = true;
+        let font = crate::server::chrome::text::Font::load(14.0);
+        let tags = |flash: Option<(&str, f32)>| {
+            let mut scene = Scene::new(&font);
+            layout.draw(
+                &mut scene,
+                Chrome {
+                    flash,
+                    ..Chrome::default()
+                },
+            );
+            rounded(&scene)
+        };
+        let [(x, _, _, _, fill)] = tags(None)[..] else {
+            panic!("one tag");
+        };
+        let (cell_width, _) = Scene::new(&font).cell();
+        assert!(x < 4 * cell_width);
+        assert_eq!(fill, FOCUS);
+        let [(_, _, _, _, flashed)] = tags(Some(("terminal", 1.0)))[..] else {
+            panic!("one tag");
+        };
+        assert_eq!(flashed, FOREGROUND);
+        assert_eq!(tags(Some(("other", 1.0)))[0].4, FOCUS);
+    }
+
+    #[test]
+    fn on_a_narrow_pane_the_tags_on_the_right_are_dropped_before_the_screenshot_tag() {
+        let narrow = CellRect {
+            columns: 12,
+            ..AREA
+        };
+        let mut layout = Layout::new(narrow, "terminal".to_string());
+        layout.panes[0].screenshots = true;
+        layout.pin(0, "decade.terminal".to_string());
+        layout.toggle_zoom(0);
+        let font = crate::server::chrome::text::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, Chrome::default());
+        let texts = texts(&scene);
+        assert!(texts.contains(&SCREENSHOTS_ICON.to_string()));
+        assert!(!texts.contains(&"zoom".to_string()));
     }
 }

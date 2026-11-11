@@ -30,6 +30,10 @@ pub struct Workspace {
 
     /// The id of the sidebar group the workspace is in.
     pub group: Option<u32>,
+
+    /// The pane whose screenshot was taken last, and when, while its
+    /// screenshot tag flashes.
+    pub flash: Option<(String, Instant)>,
 }
 
 /// A named set of workspaces, which only the sidebar shows.
@@ -70,6 +74,9 @@ const PULSE_PERIOD: Duration = Duration::from_secs(1);
 
 /// How long a point lasts unless something ends it sooner.
 const POINT_FOR: Duration = Duration::from_secs(30);
+
+/// How long a pane's screenshot tag flashes after a capture.
+const FLASH_FOR: Duration = Duration::from_millis(700);
 
 /// How far a point's pulse is toward its peak `elapsed` after it began,
 /// from 0 to 1.
@@ -197,6 +204,7 @@ impl Workspace {
             branch_read: None,
             point: None,
             group: None,
+            flash: None,
         }
     }
 
@@ -441,6 +449,24 @@ impl Workspace {
             self.point = None;
         }
         self.point.is_some()
+    }
+
+    /// The pane whose screenshot tag flashes at `now`, and how bright it
+    /// is, fading from 1 to 0 over `FLASH_FOR`.
+    pub fn flash_at(&self, now: Instant) -> Option<(&str, f32)> {
+        let (pane, since) = self.flash.as_ref()?;
+        let elapsed = now.saturating_duration_since(*since);
+        let left = 1.0 - elapsed.as_secs_f32() / FLASH_FOR.as_secs_f32();
+        (left > 0.0).then_some((pane.as_str(), left))
+    }
+
+    /// End the flash if it has faded by `now`, and return whether one is
+    /// left.
+    pub fn keep_flash(&mut self, now: Instant) -> bool {
+        if self.flash_at(now).is_none() {
+            self.flash = None;
+        }
+        self.flash.is_some()
     }
 
     /// Whether the pane stays when it has no client: it is pinned or it is

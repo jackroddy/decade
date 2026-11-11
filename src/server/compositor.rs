@@ -3,6 +3,7 @@ mod groups;
 mod input;
 mod pool;
 mod render;
+mod screenshot;
 mod selection;
 mod viewers;
 
@@ -152,6 +153,10 @@ pub struct State {
     /// The sidebar's groups, in the order it lists them.
     groups: Vec<Group>,
     next_group: u32,
+
+    /// The screenshots waiting on the person's answer.
+    asking: Vec<screenshot::Asking>,
+    next_asking: u64,
     unplaced: Vec<ToplevelSurface>,
     popups: PopupManager,
 
@@ -260,6 +265,8 @@ pub fn run() {
         workspaces: Vec::new(),
         groups: Vec::new(),
         next_group: 0,
+        asking: Vec::new(),
+        next_asking: 0,
         unplaced: Vec::new(),
         popups: PopupManager::default(),
         popup_grab: None,
@@ -880,6 +887,7 @@ impl State {
             Command::Pin(id) => self.toggle_pin(id),
             Command::Zoom(id) => self.toggle_zoom(id),
             Command::Scratch(id) => self.toggle_scratch(id),
+            Command::Screenshots(id) => self.toggle_screenshots(id),
             Command::Clear(id) => {
                 if let Some(index) = self.workspace_index(id) {
                     self.clear_agents(index);
@@ -1228,6 +1236,7 @@ impl State {
             let mut pulsing = state.breathing();
             for shown in &mut state.workspaces {
                 pulsing |= shown.keep_point(now);
+                pulsing |= shown.keep_flash(now);
             }
             state.request_redraw();
             if pulsing {

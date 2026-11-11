@@ -21,6 +21,7 @@ pub enum Place {
         pinned: bool,
         zoomed: bool,
         scratch: bool,
+        screenshots: bool,
     },
 
     /// A workspace's card or tile in the sidebar, with the id of its group.
@@ -46,6 +47,9 @@ pub enum Command {
     Pin(usize),
     Zoom(usize),
     Scratch(usize),
+
+    /// Turn the pane's accept screenshots mode on or off.
+    Screenshots(usize),
 
     /// Return the workspace's agents that are done or need attention to idle.
     Clear(u32),
@@ -84,6 +88,7 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry> {
             pinned,
             zoomed,
             scratch,
+            screenshots,
         } => vec![
             entry(if pinned { "Unpin" } else { "Pin" }, Command::Pin(id)),
             entry(if zoomed { "Unzoom" } else { "Zoom" }, Command::Zoom(id)),
@@ -94,6 +99,14 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry> {
                     "Mark as scratch"
                 },
                 Command::Scratch(id),
+            ),
+            entry(
+                if screenshots {
+                    "Stop accepting screenshots"
+                } else {
+                    "Accept screenshots"
+                },
+                Command::Screenshots(id),
             ),
             entry("Rename", Command::Rename(Named::Pane(id))),
         ],
@@ -315,19 +328,30 @@ mod tests {
             pinned: false,
             zoomed: false,
             scratch: false,
+            screenshots: false,
         };
         ContextMenu::open(entries(place, &[]), (100, 100), WINDOW, CELL).unwrap()
     }
 
     #[test]
-    fn a_pane_offers_pin_zoom_scratch_and_rename_labelled_for_what_a_click_does() {
+    fn a_pane_offers_pin_zoom_scratch_screenshots_and_rename_labelled_for_what_a_click_does() {
         let plain = Place::Pane {
             id: 4,
             pinned: false,
             zoomed: false,
             scratch: false,
+            screenshots: false,
         };
-        assert_eq!(labels(plain), ["Pin", "Zoom", "Mark as scratch", "Rename"]);
+        assert_eq!(
+            labels(plain),
+            [
+                "Pin",
+                "Zoom",
+                "Mark as scratch",
+                "Accept screenshots",
+                "Rename"
+            ]
+        );
         let commands: Vec<Command> = entries(plain, &[]).iter().map(|e| e.command).collect();
         assert_eq!(
             commands,
@@ -335,6 +359,7 @@ mod tests {
                 Command::Pin(4),
                 Command::Zoom(4),
                 Command::Scratch(4),
+                Command::Screenshots(4),
                 Command::Rename(Named::Pane(4))
             ]
         );
@@ -343,10 +368,17 @@ mod tests {
             pinned: true,
             zoomed: true,
             scratch: true,
+            screenshots: true,
         };
         assert_eq!(
             labels(set),
-            ["Unpin", "Unzoom", "Unmark as scratch", "Rename"]
+            [
+                "Unpin",
+                "Unzoom",
+                "Unmark as scratch",
+                "Stop accepting screenshots",
+                "Rename"
+            ]
         );
     }
 
@@ -434,9 +466,9 @@ mod tests {
         let menu = pane_menu();
         assert_eq!(menu.at, (100, 100));
 
-        // "Mark as scratch" is 15 cells, with a cell each side, and
+        // "Accept screenshots" is 18 cells, with a cell each side, and
         // each row is 18 px with 3 above and below
-        let size = (2 * 6 + 17 * 8, 2 * 6 + 4 * 24);
+        let size = (2 * 6 + 20 * 8, 2 * 6 + 5 * 24);
         assert_eq!(menu.size, size);
 
         let corner = ContextMenu::open(menu.entries.clone(), (795, 590), WINDOW, CELL).unwrap();
@@ -451,16 +483,17 @@ mod tests {
         assert_eq!(menu.selected, 0);
         assert_eq!(menu.key(MenuKey::Up), Outcome::Open);
         assert_eq!(menu.selected, 0);
-        for _ in 0..4 {
+        for _ in 0..5 {
             menu.key(MenuKey::Down);
         }
-        assert_eq!(menu.selected, 3);
+        assert_eq!(menu.selected, 4);
         assert_eq!(
             menu.key(MenuKey::Enter),
             Outcome::Run(Action::Command(Command::Rename(Named::Pane(4))))
         );
-        menu.key(MenuKey::Up);
-        menu.key(MenuKey::Up);
+        for _ in 0..3 {
+            menu.key(MenuKey::Up);
+        }
         assert_eq!(
             menu.key(MenuKey::Enter),
             Outcome::Run(Action::Command(Command::Zoom(4)))

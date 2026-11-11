@@ -1,7 +1,6 @@
 use std::os::unix::io::OwnedFd;
 use std::time::{Duration, Instant};
 
-use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, render_elements_from_surface_tree,
@@ -29,11 +28,14 @@ const SCRIM: Rgba = [0.0, 0.0, 0.0, 0.35];
 impl State {
     /// Draw the workspace into `target`, and return the fence to wait on and
     /// whether the frame is part of an animation that wants the next one.
-    pub(super) fn render(
+    pub(super) fn render<T>(
         &mut self,
-        target: &mut Dmabuf,
+        target: &mut T,
         workspace: usize,
-    ) -> Result<(Option<OwnedFd>, bool), String> {
+    ) -> Result<(Option<OwnedFd>, bool), String>
+    where
+        GlesRenderer: Bind<T>,
+    {
         let current = self.current();
         let picking = matches!(self.overlay, Some(Overlay::Picker { .. }));
         let picker_grid = (workspace == current && picking).then(|| self.picker_grid());
@@ -48,6 +50,7 @@ impl State {
             self.workspaces[workspace].name_agents();
         }
         let frame = picker_grid.is_none().then(|| self.frame(workspace));
+        let prompts = self.prompts(workspace);
         let State {
             gpu,
             size,
@@ -69,6 +72,7 @@ impl State {
         let scratch = workspaces[workspace].scratch_pane();
         let now = Instant::now();
         let point = (workspaces[workspace].point.as_ref()).map(|point| (point, point.pulse(now)));
+        let flash = workspaces[workspace].flash_at(now);
         let (overlay, drag) = if workspace == current {
             (overlay.as_ref(), drag.as_ref())
         } else {
@@ -85,11 +89,13 @@ impl State {
                 hover: *hover,
                 tab_hover: *tab_hover,
                 point,
+                flash,
             }
         } else {
             Chrome {
                 scratch,
                 point,
+                flash,
                 ..Chrome::default()
             }
         };
@@ -168,6 +174,9 @@ impl State {
 
         let mut above = Scene::new(&paint.text.chrome);
         layout.draw_bars(&mut above, chrome);
+        for (_, prompt) in &prompts {
+            prompt.draw(&mut above);
+        }
         if let Some(frame) = &frame {
             frame.draw_above(&mut above);
         }

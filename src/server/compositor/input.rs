@@ -13,6 +13,7 @@ use smithay::utils::{Logical, Physical, Point, SERIAL_COUNTER};
 use crate::server::chrome::context_menu::Place;
 use crate::server::chrome::frame::Hit;
 use crate::server::chrome::menu::{MenuKey, Outcome};
+use crate::server::chrome::prompt::{self, Answer};
 use crate::server::chrome::rename::Named;
 use crate::server::panes;
 use crate::server::panes::{BarButton, Boundary, Direction, Drop};
@@ -213,6 +214,15 @@ impl State {
             }
             self.close_overlay();
         }
+        if button == BTN_LEFT
+            && pressed
+            && let Some((id, answer)) = self.prompt_hit(self.pointer_px())
+        {
+            if let Some(answer) = answer {
+                self.answer_prompt(id, answer);
+            }
+            return;
+        }
         if pressed && !self.press_reaches_popup(button) {
             self.dismiss_popups();
         }
@@ -308,6 +318,7 @@ impl State {
             KeyState::Released
         };
         let palette = self.overlay.is_some();
+        let prompt = self.prompt_for_keys();
         let restartable = self
             .layout()
             .pane(self.layout().focused)
@@ -330,6 +341,18 @@ impl State {
                     ));
                 }
                 let plain = !modifiers.logo && !modifiers.ctrl && !modifiers.alt;
+                if let Some(id) = prompt.filter(|_| pressed && plain) {
+                    let answer = match sym {
+                        keysyms::KEY_Escape => Some(Answer::Deny),
+                        _ => handle
+                            .modified_sym()
+                            .key_char()
+                            .and_then(prompt::answer_for),
+                    };
+                    if let Some(answer) = answer {
+                        return FilterResult::Intercept(Some(Key::Answer(id, answer)));
+                    }
+                }
                 if restartable && pressed && plain && sym == keysyms::KEY_Return {
                     return FilterResult::Intercept(Some(Key::Restart));
                 }
@@ -493,6 +516,7 @@ impl State {
                 let focused = self.layout().focused;
                 self.restart_pane(self.current(), focused);
             }
+            Key::Answer(id, answer) => self.answer_prompt(id, answer),
             Key::Menu(key) => {
                 let (ids, grid) = (self.workspace_ids(), self.picker_grid());
                 let outcome = match &mut self.overlay {
@@ -529,6 +553,10 @@ impl State {
             }
             Some((id, BarButton::Scratch)) => {
                 self.toggle_scratch(id);
+                return true;
+            }
+            Some((id, BarButton::Screenshots)) => {
+                self.toggle_screenshots(id);
                 return true;
             }
             Some(_) => {}
@@ -679,6 +707,7 @@ impl State {
             pinned: pane.pinned,
             zoomed: layout.zoom == Some(id),
             scratch: shown.scratch_pane() == Some(pane.name.as_str()),
+            screenshots: pane.screenshots,
         })
     }
 
@@ -802,6 +831,10 @@ enum Key {
     NextNeeding,
     Clipboard(Chord),
     Menu(MenuKey),
+
+    /// An answer to the screenshot prompt over the focused pane, with the
+    /// screenshot's id.
+    Answer(u64, Answer),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -834,7 +867,8 @@ fn repeats(key: Key) -> bool {
         | Key::Restart
         | Key::Sidebar
         | Key::NextNeeding
-        | Key::Clipboard(_) => false,
+        | Key::Clipboard(_)
+        | Key::Answer(..) => false,
     }
 }
 

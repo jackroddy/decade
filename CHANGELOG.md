@@ -235,7 +235,7 @@ command line and what the tool writes.
   A click on an entry runs it. A click outside closes the menu and goes no
   further. A right click inside a program's window still goes to that
   program. A right click on empty space in the open sidebar offers New
-  group.
+  group. A pane's menu also offers Accept screenshots.
 - The person can rename a workspace, a tab or a pane. Rename in the right
   click menu opens the name as a text field where it is drawn, and so does a
   double click on the name. The field sits on the workspace's card or in its
@@ -266,6 +266,19 @@ command line and what the tool writes.
   tiles and the next. Super+A and the state counts on the top bar cover
   every group. A click on a card in the open sidebar now acts on release,
   so that a press can start a drag.
+- The MCP tool `screenshot` takes `pane` and answers with a PNG of the
+  pane's client area, at the screen's pixels and without its bar or
+  outline. decade refuses a pane in a tab that is not shown. Each pane has
+  an accept screenshots mode, which starts off and is never saved. The
+  person turns it on and off with a button on the Ctrl bar or from the
+  pane's right click menu. With the mode off, decade draws a prompt over
+  the pane that names the agent, and points at the pane. The prompt offers
+  allow once, allow and turn the mode on, and deny, answered with a click
+  or with y, a or n while the pane has focus. Escape denies. A deny, or no
+  answer within 30 seconds, fails the call with the reason. A pane with
+  the mode on carries a camera tag at the left end of its outline's top
+  edge. The tag flashes at each capture. When a pane is too narrow for
+  every tag, the camera tag is the last to go.
 
 ### Changed
 

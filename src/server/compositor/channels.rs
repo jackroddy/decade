@@ -97,11 +97,15 @@ impl State {
             let _ = request.reply.send(Err(closed));
             return;
         };
+        let caller = request.pane.as_deref();
         match request.call {
             mcp::Call::ScratchOpen(launch) => self.scratch_open(workspace, launch, request.reply),
+            mcp::Call::Screenshot { pane } => {
+                self.screenshot(workspace, &pane, caller, request.reply)
+            }
             call => {
-                let answer = self.mcp_call(workspace, call, request.pane.as_deref());
-                let _ = request.reply.send(answer);
+                let answer = self.mcp_call(workspace, call, caller);
+                let _ = request.reply.send(answer.map(mcp::Answer::Text));
             }
         }
     }
@@ -143,7 +147,9 @@ impl State {
                 let panes = Reply::Panes(shown.pane_list(caller));
                 return Ok(serde_json::to_string(&panes).unwrap());
             }
-            mcp::Call::ScratchOpen(_) => unreachable!("mcp_request answers scratch.open"),
+            mcp::Call::ScratchOpen(_) | mcp::Call::Screenshot { .. } => {
+                unreachable!("mcp_request answers scratch.open and screenshot")
+            }
         };
         let sent = format!("sent {verb} to pane {to}");
         let (client, line) = shown.agent_send(&to, verb, payload)?;
@@ -311,7 +317,7 @@ impl State {
             self.loop_handle.remove(timer);
         }
         let answer = answer.unwrap_or_else(|| Ok(waiting.report(&scratch.pane)));
-        let _ = waiting.reply.send(answer);
+        let _ = waiting.reply.send(answer.map(mcp::Answer::Text));
     }
 
     /// The workspace whose `scratch.open` waits on the program `pid`.

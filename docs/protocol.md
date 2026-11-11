@@ -220,9 +220,9 @@ A program decade starts in a pane gets an address ending in
 `?workspace=<id>&pane=<name>` instead. In the `panes` reply to a call on
 that address, `you` marks that pane.
 Its tools are `panes`, `agents`, `point`, `show`, `highlight`, `clear`,
-`scratch.open` and `scratch.send`. decade delivers a pane verb from a tool
+`screenshot`, `scratch.open` and `scratch.send`. decade delivers a pane verb from a tool
 call with `"from": "agent"`. decade answers `panes` with the pane list, in the shape
-of the socket's `panes` reply, `agents` with the agent list below, and
+of the socket's `panes` reply, `agents` with the agent list below, `screenshot` with an image, and
 every other call with a line saying what it did. When decade cannot act on a call, the result is a tool error whose
 text is the reason the socket would give in `error`. decade refuses a call
 to an address without `?workspace=` as invalid parameters. coax passes
@@ -254,6 +254,26 @@ that tab's pill on the top bar. When the workspace is not shown, decade
 pulses its card or tile in the sidebar. The point ends when the person
 focuses the pane, when the pane goes, after 30 seconds, or when the agent
 points again. A workspace has one point at a time.
+
+`screenshot` takes `pane`. decade renders the workspace and answers with an
+image result holding a PNG of the pane's client area. The PNG holds
+neither the pane's bar and outline nor decade's menus and Ctrl bar. Its
+pixels are the screen's. decade refuses the call when no pane has that name and when
+the pane is in a tab that is not shown. The workspace itself need not be
+shown.
+
+Each pane has an accept screenshots mode, which the person turns on and
+off from the pane's Ctrl bar or its right click menu. The mode starts off.
+decade never saves it. A restored workspace has it off on every pane. With
+the mode on, decade captures the pane at once. With it off, decade draws a
+prompt over the pane that names the agent. decade also points at the pane,
+as `point` does. The prompt offers allow once, allow and turn the mode on,
+and deny. The person answers with a click, or with y, a or n while the
+pane has focus. Escape denies. A deny, or no answer within 30
+seconds, ends the call with a tool error that gives the reason. decade
+refuses a second `screenshot` of a pane whose prompt is still up. While
+the mode is on, the pane carries a camera tag at the left end of its
+outline's top edge. The tag flashes at each capture.
 
 The person may mark one pane in a workspace as its scratch pane, from the
 Ctrl bar. Two tools reach it. `scratch.open` takes `program`, optional
