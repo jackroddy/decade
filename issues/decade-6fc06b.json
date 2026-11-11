@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-10T22:46:02.12106332Z",
-  "updated_at": "2026-11-11T00:32:19.829760996Z",
+  "updated_at": "2026-11-11T05:13:56.567352566Z",
   "closed_at": "2026-11-11T00:32:19.829760996Z",
   "close_reason": "Landed in 803bdf7, with the two gaps Jack approved closed in da44cda. Re-placing a popup on pane resize is left until it causes trouble. Jack has not yet tried it on a restarted server.",
   "resolution": "done",
@@ -40,6 +40,14 @@
       "author": "Jack Roddy/7403d304",
       "text": "Jack approved closing two of the gaps: a click on decade's own chrome dismisses an open popup and then acts, and a decade keybind such as Super+h dismisses it and then acts. Re-placing a popup when its pane resizes waits until it causes trouble.",
       "commit": "a402a32",
+      "branch": "dev"
+    },
+    {
+      "id": "3f3e3e5d",
+      "at": "2026-11-11T05:13:56.567351936Z",
+      "author": "Jack Roddy/7403d304",
+      "text": "Jack tried it on a server built from 9abf930: a right-click menu in ghostty opens, works and closes, and decade's chrome and keybinds dismiss it.",
+      "commit": "2d00018",
       "branch": "dev"
     }
   ],
