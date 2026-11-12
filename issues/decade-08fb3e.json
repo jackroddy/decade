@@ -16,9 +16,9 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-12T19:49:25.555001823Z",
-  "updated_at": "2026-11-12T19:53:31.226704772Z",
+  "updated_at": "2026-11-12T19:53:37.603322058Z",
   "closed_at": "2026-11-12T19:53:31.226704772Z",
-  "close_reason": "Landed in eb95714 on dev. decade/ and decade-channel/ are members of a virtual workspace, and CLAUDE.md takes the release and labelling rules from sail's two-crate setup.",
+  "close_reason": "Landed in eb95714 on dev. decade/ and decade-channel/ are members of a virtual workspace. CLAUDE.md labels foam issues by crate and names release tags <crate>-v<version>.",
   "resolution": "done",
   "notes": [],
   "stamps": {
