@@ -1,0 +1,30 @@
+{
+  "id": "decade-05c2a3",
+  "title": "decade drops the side mouse buttons unless config.toml turns them on",
+  "body": "ghostty never clears a side mouse button after one press and release. Jack checked this on 2026-11-12 in a ghostty run directly under Hyprland, so decade is not the cause. The terminal reports the press, SGR `<129;…M`, and never the release. From then on it reports every motion as a drag with button 9 held, SGR code 161. crossterm drops those reports, so coax in that pane gets no motion and draws no hover. A second click of the thumb button clears it.\n\ndecade sends every button to clients through `State::forward_button` in `decade/src/server/compositor/input.rs`.\n\n## Proposal\n\n- A `side_buttons` key in `config.toml`, on `Settings`, false by default. The settings panel gets no row for it.\n- While it is false, `forward_button` drops `BTN_SIDE`, `BTN_EXTRA`, `BTN_FORWARD` and `BTN_BACK`, codes `0x113` to `0x116`.\n\n## Rejected\n\n- Dropping them only for ghostty windows, found by app id. That costs a lookup on every button event for one program's bug, and Jack uses the side buttons nowhere in decade.\n- Reporting it to ghostty. Jack decided against it.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [
+    "decade"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-12T20:58:54.586923311Z",
+  "updated_at": "2026-11-12T20:58:54.586923311Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "aac6899",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
