@@ -1,0 +1,28 @@
+{
+  "id": "decade-08fb3e",
+  "title": "decade becomes a workspace member beside decade-channel",
+  "body": "The root `Cargo.toml` is both the workspace and the `decade` package. `src/` sits at the root, and `decade-channel/` is the only workspace member.\n\n## Proposal\n\nThe root `Cargo.toml` becomes a virtual manifest that lists `decade` and `decade-channel` as members. `[workspace.package]` holds edition, rust-version, license, authors and repository, and each crate inherits them. `decade/` holds the package's `Cargo.toml`, `src/`, `CHANGELOG.md`, `README.md` and license files. The root keeps a short workspace README, `docs/`, `scripts/`, `Cargo.lock` and `target/`.\n\nRelease tags become `<crate>-v<version>` for both crates. The tag `v0.1.0` stays as it is.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-12T19:49:25.555001823Z",
+  "updated_at": "2026-11-12T19:49:25.555001823Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "2d00018",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
