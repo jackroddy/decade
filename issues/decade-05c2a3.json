@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-12T21:13:54.597636698Z",
   "defer_until": null,
   "created_at": "2026-11-12T20:58:54.586923311Z",
-  "updated_at": "2026-11-12T20:58:54.597636698Z",
+  "updated_at": "2026-11-12T20:59:23.417776315Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "95f0c940",
+      "at": "2026-11-12T20:59:23.417775765Z",
+      "author": "Jack Roddy/bea5563a",
+      "text": "Built in the working tree on `dev`, not committed. The new pure function `reaches_clients` in `input.rs` decides which buttons pass, and a unit test covers it. `BTN_SIDE` and `BTN_BACK` are new constants in `wire.rs`. An entry sits under `### Added` in `decade/CHANGELOG.md`. The settings version stays at 1, because `Settings` reads with `serde(default)` and an older decade ignores the unknown key.",
+      "commit": "aac6899",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "aac6899",
