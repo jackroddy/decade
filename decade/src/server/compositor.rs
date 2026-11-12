@@ -171,6 +171,9 @@ pub struct State {
     save_path: Option<PathBuf>,
     save_due: Option<RegistrationToken>,
     pointer: Point<f64, Logical>,
+
+    /// The buttons sent to clients as pressed and not yet released.
+    forwarded: Vec<u32>,
     drag: Option<Drag>,
 
     /// Whether the Ctrl bar is shown on the workspace on screen.
@@ -275,6 +278,7 @@ pub fn run() {
         save_path: save::path(),
         save_due: None,
         pointer: (0.0, 0.0).into(),
+        forwarded: Vec::new(),
         drag: None,
         bar: false,
         hover: None,

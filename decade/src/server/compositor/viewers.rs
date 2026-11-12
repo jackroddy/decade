@@ -331,7 +331,20 @@ impl State {
                 }
                 self.pointer_button(button, pressed, time);
             }
-            ViewerMessage::PointerLeft => self.pointer_left(),
+            ViewerMessage::PointerLeft => {
+                // the viewer's window lost the pointer, so a button
+                // held now is released in another window, and its
+                // release never comes here
+                let buttons = self
+                    .viewers
+                    .get_mut(&id)
+                    .map(|viewer| std::mem::take(&mut viewer.buttons))
+                    .unwrap_or_default();
+                for button in buttons {
+                    self.pointer_button(button, false, now);
+                }
+                self.pointer_left();
+            }
             ViewerMessage::Scroll(scroll) => self.pointer_scroll(scroll),
             ViewerMessage::Offer {
                 selection,
@@ -525,7 +538,7 @@ pub(super) struct Viewer {
 }
 
 /// Record a key or button as held or let go.
-fn hold(held: &mut Vec<u32>, code: u32, pressed: bool) {
+pub(super) fn hold(held: &mut Vec<u32>, code: u32, pressed: bool) {
     held.retain(|&other| other != code);
     if pressed {
         held.push(code);

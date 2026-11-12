@@ -10,6 +10,13 @@ command line and what the tool writes.
 
 ## [Unreleased]
 
+### Changed
+
+- A pane gets the release of a mouse button pressed in it when the pointer
+  leaves the decade window with the button down. It also gets the release
+  while the picker or a context menu is open. Before, the pane kept the
+  button held and took every later motion as a drag.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added

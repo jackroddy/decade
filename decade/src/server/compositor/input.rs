@@ -19,6 +19,7 @@ use crate::server::panes;
 use crate::server::panes::{BarButton, Boundary, Direction, Drop};
 use crate::wire::{self, BTN_LEFT, BTN_RIGHT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
 
+use super::viewers::hold;
 use super::{Overlay, State, popups_over};
 
 const KEY_C: u32 = 46;
@@ -243,6 +244,19 @@ impl State {
             }
             return;
         }
+        if !pressed
+            && self.forwarded.contains(&button)
+            && matches!(
+                self.overlay,
+                Some(Overlay::Picker { .. } | Overlay::Context(_))
+            )
+        {
+            // the press reached a client before the overlay
+            // opened, and the client holds the button until it
+            // gets this release
+            self.forward_button(button, pressed, time);
+            return;
+        }
         if matches!(self.overlay, Some(Overlay::Picker { .. })) {
             if button == BTN_LEFT {
                 let point = self.pointer.to_physical(self.scale).to_i32_round();
@@ -335,6 +349,7 @@ impl State {
     }
 
     fn forward_button(&mut self, button: u32, pressed: bool, time: u32) {
+        hold(&mut self.forwarded, button, pressed);
         let pointer = self.seat.get_pointer().unwrap();
         let state = if pressed {
             ButtonState::Pressed
