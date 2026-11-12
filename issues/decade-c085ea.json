@@ -15,7 +15,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-12T20:30:34.918999845Z",
-  "updated_at": "2026-11-12T20:38:21.759480025Z",
+  "updated_at": "2026-11-12T20:41:06.383039241Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -33,6 +33,14 @@
       "at": "2026-11-12T20:38:21.748820179Z",
       "author": "Jack Roddy/bea5563a",
       "text": "Committed as aac6899 on `dev`, with a `### Changed` entry in `decade/CHANGELOG.md`. The server was restarted on that release build. The issue stays open until Jack confirms the thumb-button case by hand.",
+      "commit": "aac6899",
+      "branch": "dev"
+    },
+    {
+      "id": "5754bd5b",
+      "at": "2026-11-12T20:41:06.383038421Z",
+      "author": "Jack Roddy/bea5563a",
+      "text": "Jack reports the bug still happens on the server restarted with aac6899 at 13:38 on 2026-11-12. The two lost-release paths that aac6899 closes are not the cause, or not the only one. No mouse remapper runs, and Hyprland binds no mouse buttons. Not yet known: what starts it, and whether a ghostty outside decade does the same.",
       "commit": "aac6899",
       "branch": "dev"
     }
