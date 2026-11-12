@@ -1,8 +1,8 @@
-# decade
-
-> **<u>d</u>ynamic <u>e</u>xtensible <u>c</u>ollaborative <u>a</u>gent <u>d</u>evelopment <u>e</u>nvironment**
+# decade workspace
 
 ## about
+
+This is a cargo workspace for decade & decade-channel.
 
 ## license
 

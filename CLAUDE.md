@@ -1,10 +1,14 @@
 # decade
 
-A cargo workspace. The root package is `decade`, a Wayland compositor nested
-in a window whose panes are other programs; `decade-channel` is the client
-side of its socket as a library, for programs that run in those panes and
-speak the protocol in `docs/protocol.md`. The pane programs themselves live in
-the decade-apps repository.
+A cargo workspace of two crates, each in a directory of its own name.
+`decade` is a Wayland compositor nested in a window whose panes are other
+programs; `decade-channel` is the client side of its socket as a library, for
+programs that run in those panes and speak the protocol in
+`docs/protocol.md`. `docs/` and `scripts/` sit at the workspace root. The pane
+programs themselves live in the decade-apps repository.
+
+Every foam issue carries the label of the crate it changes, `decade` or
+`decade-channel`. A milestone that spans both carries both.
 
 Design rationale that the code does not state lives in foam's memories, and
 pending work lives in foam's issues. `foam prime` prints both at session start.
@@ -13,8 +17,8 @@ plans and decisions go to foam, never to this file.
 
 ## conventions
 
-**Formatting.** Stock rustfmt, with no configuration. There is no
-`rustfmt.toml`. Do not add one: the code is written against rustfmt's defaults.
+**Formatting.** Stock rustfmt, with no configuration. This workspace has
+no `rustfmt.toml`. Do not add one: the code is written against rustfmt's defaults.
 
 **Comments.** Follow the `rust-comments` skill, and load it before writing or
 editing a comment rather than reconstructing the rules from memory. The default
@@ -26,26 +30,33 @@ running. Test names are full sentences describing the property, not
 `test_foo`.
 
 **Branches.** Work is committed on `dev`, in batches. A milestone or issue that
-changes the command line or an on-disk format, and will not be finished before
-the next release, goes on a branch named for it. That branch merges into `dev`
-once the work is whole, and takes merges from `dev` when the two drift apart.
-Nothing else branches off `dev` unless Jack asks. `main` takes a merge from
-`dev` only at a release.
+changes the command line, the socket protocol, `decade-channel`'s public API
+or an on-disk format, and will not be finished before the next release, goes
+on a branch named for it. That branch merges into `dev` once the work is
+whole, and takes merges from `dev` when the two drift apart. Nothing else
+branches off `dev` unless Jack asks. `main` takes a merge from `dev` only when
+a crate is being released. Unreleased code of the other crate may come along.
+It reaches users only when its own crate is released.
 
 **Releases.** Jack says when a release is, never Claude. Until he does, the
-version in `Cargo.toml` stays where it is and changelog entries accumulate
-under `## [Unreleased]` with `### Added` / `### Changed` / `### Removed`
-headings and no date. The version heading, the date, the `Cargo.toml` bump and
-the compare link at the foot of the changelog are all part of the release
-commit. Release tags are annotated and named `v<version>` for `decade` and
-`decade-channel-v<version>` for the library. Publish from `main` after `dev`
-merges in, with a clean tree.
+versions in `Cargo.toml` stay where they are. Each crate's changelog
+accumulates entries under `## [Unreleased]` with `### Added` / `### Changed` /
+`### Removed` headings and no date. The version heading, the date, the
+`Cargo.toml` bumps and the compare link at the foot of the changelog are all
+part of the release commit. Release tags are annotated and named
+`<crate>-v<version>`. `decade`'s first release is tagged `v0.1.0`, from before
+that rule. Publish `decade-channel` before a `decade` that needs its new
+version. Publish from `main` after `dev` merges in, with a clean tree.
 
-**Versions.** Each crate is versioned by what changed in it. For `decade` that
+**Versions.** Each crate is versioned by what changed in it. The two are
+never aligned for tidiness. For `decade` that
 is the command line, the socket protocol and what the tool writes; for
 `decade-channel` its public API. Under cargo's rule that 0.x's minor is the
 breaking axis, a change that breaks one of those moves that crate's minor.
-Anything else moves the patch. A protocol change moves both.
+Anything else moves the patch. A protocol change moves both. Once
+`decade-channel` is on crates.io, `cargo semver-checks -p decade-channel`
+compares it with its last published version before each release and reports
+whether the bump is a patch or a minor.
 
 **One server.** One decade server runs per user, and it holds every
 workspace. There are no named sessions and no multi-user modes.

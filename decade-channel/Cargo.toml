@@ -3,11 +3,11 @@ name = "decade-channel"
 version = "0.1.0"
 description = "client side of the decade socket, for decade-aware programs"
 readme = "README.md"
-edition = "2024"
+edition.workspace = true
 rust-version = "1.87"
-license = "MIT OR Apache-2.0"
-authors = ["Jack Roddy <jack.w.roddy@gmail.com>"]
-repository = "https://github.com/jackroddy/decade"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 keywords = ["decade", "socket", "pane"]
 categories = ["command-line-interface"]
 
