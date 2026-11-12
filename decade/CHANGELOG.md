@@ -10,6 +10,8 @@ command line and what the tool writes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-12
+
 ### Added
 
 - A server holds workspaces. Each has a name, a working directory and its
@@ -370,4 +372,6 @@ The name on crates.io, and a window.
 - A wgpu window that lays out three placeholder panes and a status line on a
   grid of 9 by 18 pixel cells. The panes draw nothing yet.
 
+[Unreleased]: https://github.com/jackroddy/decade/compare/decade-v0.2.0...HEAD
+[0.2.0]: https://github.com/jackroddy/decade/compare/v0.1.0...decade-v0.2.0
 [0.1.0]: https://github.com/jackroddy/decade/releases/tag/v0.1.0

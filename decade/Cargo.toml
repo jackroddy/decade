@@ -1,6 +1,6 @@
 [package]
 name = "decade"
-version = "0.1.0"
+version = "0.2.0"
 description = "dynamic extensible collaborative agent development environment"
 readme = "README.md"
 rust-version = "1.88"
