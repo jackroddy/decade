@@ -9,6 +9,8 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-12
+
 ### Added
 
 - `Channel::connect` and `Channel::from_env` open the decade socket, send
@@ -33,3 +35,6 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
   `Channel::from_env` take them. A verb without a description is written
   as a bare name, as before. A `&str` converts into one. `Pane` has an
   `accepts` field with the verbs its occupant listed in hello.
+
+[Unreleased]: https://github.com/jackroddy/decade/compare/decade-channel-v0.1.0...HEAD
+[0.1.0]: https://github.com/jackroddy/decade/releases/tag/decade-channel-v0.1.0
