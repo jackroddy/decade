@@ -1,6 +1,6 @@
 {
   "id": "decade-e56ae9",
-  "title": "An agent can ask whether the scratch pane's program is still running, and how it exited",
+  "title": "An agent can ask about the scratch pane's program after scratch.open answers",
   "body": "With `terminal: false`, `scratch.open` answers when one of three things happens. The program's window lands in the scratch pane, the program exits, or the wait passes (5 s, or the `wait` argument). decade holds the exit status and the last 20 lines of stderr in `Waiting` (`decade/src/server/scratch.rs`) only until it answers that call. After that, no tool tells an agent anything about the program. `panes` gives the same entry for the scratch pane with acre-gui running and with the pane empty: `client: null` and no kinds.\n\nAn agent that relaunches a GUI program after a rebuild therefore learns of a crash in the first few seconds and misses a later one. A panic on the first redraw after the wait goes unreported, and so does one when the person opens a file. A fresh session found the gap while running check 7 on acre's issue acre-8ed0f4.\n\ndecade-992365 answered \"no tool for asking later\". That answer came bundled with the startup report, and Jack had not weighed it on its own. He has reversed it.\n\n## Proposal\n\nAn agent can ask about the program `scratch.open` last started, at any time after the call. decade answers whether it is still running. If it has exited, decade gives the exit status and the last 20 lines of its stderr.\n\n## Open\n\n- Whether this is a new tool or a field on the scratch pane's entry in `panes`.\n- What decade reports for a program started with `terminal: true`.\n- Whether decade also tells the agent when the program exits, without being asked.",
   "type": "feature",
   "status": "open",
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T00:33:26.972619564Z",
-  "updated_at": "2026-11-13T00:33:26.972619564Z",
+  "updated_at": "2026-11-13T00:33:31.758808262Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
