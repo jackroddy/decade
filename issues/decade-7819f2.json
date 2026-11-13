@@ -1,0 +1,28 @@
+{
+  "id": "decade-7819f2",
+  "title": "An agent session is not told which decade workspace it runs in",
+  "body": "decade starts an agent's process with `DECADE_WORKSPACE`, `DECADE_PANE` and `DECADE_MCP` in its environment (`decade/src/server/children.rs`). Only `DECADE_WORKSPACE` carries the workspace's name. The instructions the MCP server sends (`with_instructions` in `decade/src/server/mcp.rs`) speak of \"the workspace this agent was started in\" without naming it, and `git log -S` shows they never have. No session-start hook mentions decade. An agent learns from the instructions that it runs in decade, and learns which workspace only if it reads its environment.\n\nCheck 2 on acre's issue acre-8ed0f4 reads: \"Something at session start tells the agent it runs in decade and names the workspace.\" A fresh Claude Code session under coax, in the workspace `acre`, failed it.\n\n## Open\n\n- Whether the server instructions name the workspace, or coax adds the name to the session's context at start. The MCP address carries `workspace=<n>`, so the server could probably name it per connection.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T00:22:15.062338431Z",
+  "updated_at": "2026-11-13T00:22:15.062338431Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b9f97c7",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
