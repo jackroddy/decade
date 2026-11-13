@@ -17,7 +17,9 @@ use crate::server::chrome::prompt::{self, Answer};
 use crate::server::chrome::rename::Named;
 use crate::server::panes;
 use crate::server::panes::{BarButton, Boundary, Direction, Drop};
-use crate::wire::{self, BTN_LEFT, BTN_RIGHT, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT};
+use crate::wire::{
+    self, BTN_BACK, BTN_LEFT, BTN_RIGHT, BTN_SIDE, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
+};
 
 use super::viewers::hold;
 use super::{Overlay, State, popups_over};
@@ -349,6 +351,9 @@ impl State {
     }
 
     fn forward_button(&mut self, button: u32, pressed: bool, time: u32) {
+        if !reaches_clients(button, self.settings.side_buttons) {
+            return;
+        }
         hold(&mut self.forwarded, button, pressed);
         let pointer = self.seat.get_pointer().unwrap();
         let state = if pressed {
@@ -1040,6 +1045,12 @@ fn dialog_press(button: u32, armed: bool, hit: Option<Answer>) -> Option<Answer>
     hit.filter(|_| armed && button == BTN_LEFT)
 }
 
+fn reaches_clients(button: u32, side_buttons: bool) -> bool {
+    // ghostty never clears a side button after its release,
+    // and then reports every motion as a drag
+    side_buttons || !(BTN_SIDE..=BTN_BACK).contains(&button)
+}
+
 /// The key an overlay takes, or `None` for one it swallows.
 fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Option<Key> {
     if !pressed {
@@ -1074,6 +1085,17 @@ mod tests {
         match dialog_key(pressed, armed, &mods, Keysym::from(sym)) {
             FilterResult::Intercept(key) => key,
             FilterResult::Forward => panic!("the key went on to the client"),
+        }
+    }
+
+    #[test]
+    fn side_buttons_reach_clients_only_when_the_setting_lets_them() {
+        for button in [BTN_LEFT, BTN_RIGHT, 0x112, 0x117] {
+            assert!(reaches_clients(button, false));
+        }
+        for button in BTN_SIDE..=BTN_BACK {
+            assert!(!reaches_clients(button, false));
+            assert!(reaches_clients(button, true));
         }
     }
 

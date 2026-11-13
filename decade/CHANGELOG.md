@@ -10,6 +10,13 @@ command line and what the tool writes.
 
 ## [Unreleased]
 
+### Added
+
+- A `side_buttons` key in `config.toml`, false by default. While it is
+  false, decade sends no side mouse button to a pane. ghostty never clears
+  a side button after one press and release, and from then on takes every
+  motion as a drag.
+
 ### Changed
 
 - A pane gets the release of a mouse button pressed in it when the pointer

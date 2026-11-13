@@ -16,6 +16,9 @@ pub struct Settings {
     pub ghost_scale: f64,
     pub ghost_opacity: f32,
     pub grab_ms: u64,
+
+    /// Whether the side mouse buttons reach clients.
+    pub side_buttons: bool,
 }
 
 impl Default for Settings {
@@ -27,6 +30,7 @@ impl Default for Settings {
             ghost_scale: 0.2,
             ghost_opacity: 0.8,
             grab_ms: 50,
+            side_buttons: false,
         }
     }
 }

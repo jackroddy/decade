@@ -47,6 +47,8 @@ pub const OUTBOX_RETRY: Duration = Duration::from_millis(5);
 // linux evdev codes, from <linux/input-event-codes.h>
 pub const BTN_LEFT: u32 = 0x110;
 pub const BTN_RIGHT: u32 = 0x111;
+pub const BTN_SIDE: u32 = 0x113;
+pub const BTN_BACK: u32 = 0x116;
 pub const KEY_LEFTCTRL: u32 = 29;
 pub const KEY_LEFTSHIFT: u32 = 42;
 pub const KEY_LEFTALT: u32 = 56;
