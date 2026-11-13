@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-13T05:37:01.35871797Z",
   "defer_until": null,
   "created_at": "2026-11-13T02:40:20.232281481Z",
-  "updated_at": "2026-11-13T05:22:01.35871797Z",
+  "updated_at": "2026-11-13T05:27:25.564815453Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/f5ffdd3d",
       "text": "Rewritten after a reproduction. The first body blamed the scratch pane. The cause is that decade renders, and so answers frame callbacks, only when a viewer sends Ready, and a viewer on a hidden Hyprland workspace sends none.",
       "commit": "b9f97c7",
+      "branch": "dev"
+    },
+    {
+      "id": "8329b1b4",
+      "at": "2026-11-13T05:27:25.564814823Z",
+      "author": "Jack Roddy/f5ffdd3d",
+      "text": "Implemented on `dev` and not yet committed. `capture_fresh` in `decade/src/server/compositor/screenshot.rs` takes the place of both direct `capture` calls. When the pane's window has an unanswered frame callback (`waits_for_frame` in `decade/src/server/compositor.rs`), decade answers it and stores a `Capturing`. The window's next commit completes the capture through `finish_captures`, called from the commit handler. A 200 ms timer completes it otherwise. A window with no pending callback is captured at once, so a screenshot while a viewer is on screen does not wait.\n\nChecked with an isolated server and a `decade script` viewer stopped with `SIGSTOP`. A ghostty pane printed the time twice a second, and a pane screenshot was taken over MCP 5 s after the stop. The build from before the change returned the frame from the moment of the stop. The new build returned the frame from the moment of the request. ghostty committed 0.7 ms after decade answered its callback. The timeout path was not exercised.",
+      "commit": "03221bb",
       "branch": "dev"
     }
   ],
