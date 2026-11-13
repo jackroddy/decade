@@ -1,0 +1,31 @@
+{
+  "id": "decade-7736aa",
+  "title": "A program can ask decade which pane its next window goes in",
+  "body": "A window from a process decade did not start is to be placed by its client's environment, as decided in decade-1919e9. decade reads `DECADE_SOCKET` from `/proc/<pid>/environ` to find the workspace, and `DECADE_PANE` to find the pane to split beside. The program has no say in the pane. acre's neovim plugin starts `acre-gui --stdio` as a viewer, and it may want that window in the scratch pane rather than beside neovim.\n\n## Proposal\n\nA request over `DECADE_SOCKET`, with a matching `decade-channel` call, that names the pane for a window the program is about to open. Placement by environment stays the default for every program that does not ask.\n\n## Cost\n\nA new socket request changes the protocol in `docs/protocol.md`. Under the versioning rule that moves the minor of both `decade` and `decade-channel`.\n\n## Open\n\n- How decade matches the request to the window: by the pid that will own it, or by a token the program passes to its child.\n- What the request does when the pane named already shows a window.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade",
+    "decade-channel"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T05:10:29.825417468Z",
+  "updated_at": "2026-11-13T05:10:29.825417468Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b9f97c7",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
