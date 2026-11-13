@@ -1,0 +1,28 @@
+{
+  "id": "decade-7091e6",
+  "title": "A window in the scratch pane gets no frame callbacks after its first frame",
+  "body": "acre-gui is an eframe 0.37 app, and decade started it as its own window in the scratch pane with `scratch_open` and `terminal: false`. The window draws its first frame and then shows nothing new until the pane gets input. acre's issue acre-4db16b holds the trace.\n\nA trace logged each call to eframe's `App::logic` and `App::ui`. `logic` ran every 250 to 750 ms, as the app's `request_repaint_after` asks. `ui` ran once, for the first frame. On Wayland, eframe calls `ui` only on winit's `RedrawRequested`, which waits for the compositor's frame callback. While no callback comes, eframe runs `logic` alone (`MISSED_REDRAW_TIMEOUT` in eframe's `src/native/run.rs`). So decade sends the window no frame callback after the first frame, though the window sits in a visible pane and keeps asking to redraw.\n\nWhat a person sees: an app that changes on its own, such as one that reloads a file or animates, looks frozen until they click or type into it. A screenshot of the pane shows the stale first frame too.\n\nTo see it, start any eframe app that calls `request_repaint_after` in the scratch pane with `terminal: false`, change something it shows, and take a screenshot without touching the pane.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-13T02:40:20.232281481Z",
+  "updated_at": "2026-11-13T02:40:20.232281481Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "b9f97c7",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
