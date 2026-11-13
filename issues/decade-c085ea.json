@@ -3,7 +3,7 @@
   "title": "A mouse button stays held in a pane when the pointer leaves decade or an overlay opens",
   "body": "decade forwards pointer buttons to the focused client in `State::forward_button`. In two places decade drops a release after the press already reached a client. The client then treats the button as still down.\n\n- `State::pointer_left` handles the viewer's `PointerLeft` by clearing hover state and nothing else. If the viewer loses the pointer while a button is down, for example through a Hyprland workspace switch, the release goes to another window and decade never sends one. The viewer's held buttons sit in `Viewer::buttons`, and only `viewer_gone` releases them.\n- `State::pointer_button` returns early in its `Overlay::Picker` branch for every button but left, and in its `Overlay::Context` branch for every release. A press forwarded before either overlay opened never gets its release.\n\nSeen 2026-11-12. A ghostty pane reported every motion as a drag with button 9 held, SGR code 161. crossterm drops reports for button 9, so coax in that pane received no motion and drew no hover. Pressing and releasing the thumb button over the pane cleared it. Which of the two places lost that release is not known.\n\n## Proposal\n\n- On `PointerLeft`, release each of the viewer's held buttons through `pointer_button`, as `viewer_gone` does.\n- Track the buttons forwarded to clients and not yet released. In the picker and context-menu branches, forward the release of such a button instead of dropping it.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [
     "decade"
@@ -15,10 +15,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-12T20:30:34.918999845Z",
-  "updated_at": "2026-11-13T00:20:26.399789499Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-13T00:20:26.410638369Z",
+  "closed_at": "2026-11-13T00:20:26.410638369Z",
+  "close_reason": "aac6899 releases the viewer's held buttons on `PointerLeft`, and passes a release through the picker and the context menu when the press reached a client. The dead hover that led here was a ghostty bug, not one of these paths. decade-05c2a3 works around it.",
+  "resolution": "done",
   "notes": [
     {
       "id": "9d6bab17",
@@ -50,6 +50,9 @@
       "commit": "d9e79c0",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "b9f97c7",
+      "branch": "dev"
+    }
   }
 }
