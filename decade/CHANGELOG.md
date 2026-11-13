@@ -19,6 +19,11 @@ command line and what the tool writes.
 
 ### Changed
 
+- A window from a program that decade did not start goes to the workspace
+  the program was launched from. It gets a new pane beside the pane the
+  program was launched from. decade finds both from the `DECADE_SOCKET` and
+  `DECADE_PANE` the program inherited. Before, the window went to whichever
+  workspace was on screen. A window with neither variable still does.
 - A pane gets the release of a mouse button pressed in it when the pointer
   leaves the decade window with the button down. It also gets the release
   while the picker or a context menu is open. Before, the pane kept the

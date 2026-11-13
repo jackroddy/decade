@@ -49,6 +49,12 @@ pub fn cwd(pid: u32) -> Option<PathBuf> {
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
 }
 
+/// The environment process `pid` started with, as NUL-separated
+/// `NAME=value` entries.
+pub fn environ(pid: u32) -> Option<Vec<u8>> {
+    std::fs::read(format!("/proc/{pid}/environ")).ok()
+}
+
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;

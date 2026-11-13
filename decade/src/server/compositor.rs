@@ -84,6 +84,7 @@ use crate::server::chrome::settings::{self, Settings};
 use crate::server::chrome::text::Text;
 use crate::server::mcp;
 use crate::server::panes::{self as panes, BarButton, CellRect, Layout, Pane};
+use crate::server::proc;
 use crate::server::save::{self, TerminalTab};
 use crate::server::workspace::{self, Group, Workspace};
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
@@ -1012,6 +1013,20 @@ impl State {
         self.focus(focused);
     }
 
+    /// The workspace, tab and pane process `pid` was started from, by the
+    /// `DECADE_SOCKET` and `DECADE_PANE` it inherited.
+    fn launched_from(&self, pid: u32) -> Option<(usize, usize, usize)> {
+        let (id, pane) = self.children.placement(&proc::environ(pid)?)?;
+        let index = self.workspace_index(id)?;
+        let workspace = &self.workspaces[index];
+        let launcher = pane.and_then(|pane| {
+            (workspace.tabs.iter().enumerate())
+                .find_map(|(tab, entry)| Some((tab, entry.layout.by_name(&pane)?)))
+        });
+        let (tab, at) = launcher.unwrap_or((workspace.active_tab, workspace.layout().focused));
+        Some((index, tab, at))
+    }
+
     fn workspace_index(&self, id: u32) -> Option<usize> {
         self.workspaces
             .iter()
@@ -1266,7 +1281,8 @@ impl State {
         let shown = &mut self.workspaces[current];
         let tab = shown.active_tab;
         let cwd = shown.cwd.clone();
-        let id = shown.add_pane(tab, "terminal", Some(cwd));
+        let at = shown.tabs[tab].layout.focused;
+        let id = shown.add_pane(tab, at, "terminal", Some(cwd));
         self.spawn_terminal(current, tab, id);
         self.relayout();
         self.focus(id);
@@ -1641,10 +1657,14 @@ impl CompositorHandler for State {
             let (workspace, tab, id, terminal_tab) = match placed {
                 Some(placed) => placed,
                 None => {
-                    let workspace = self.current();
-                    let shown = &mut self.workspaces[workspace];
-                    let tab = shown.active_tab;
-                    let id = shown.add_pane(tab, app_id.as_deref().unwrap_or("window"), None);
+                    let (workspace, tab, at) = pid
+                        .and_then(|pid| self.launched_from(pid))
+                        .unwrap_or_else(|| {
+                            let shown = &self.workspaces[self.current()];
+                            (self.current(), shown.active_tab, shown.layout().focused)
+                        });
+                    let base = app_id.as_deref().unwrap_or("window");
+                    let id = self.workspaces[workspace].add_pane(tab, at, base, None);
                     self.relayout_workspace(workspace);
                     (workspace, tab, id, false)
                 }

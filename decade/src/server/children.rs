@@ -32,6 +32,21 @@ impl Children {
         self.runtime.join(format!("decade-{pid}-w{workspace}.sock"))
     }
 
+    /// The workspace id and pane name a process's environment holds, when
+    /// its `DECADE_SOCKET` is one of this server's sockets.
+    pub fn placement(&self, environ: &[u8]) -> Option<(u32, Option<String>)> {
+        let var = |name: &str| {
+            environ
+                .split(|&byte| byte == 0)
+                .find_map(|entry| entry.strip_prefix(name.as_bytes())?.strip_prefix(b"="))
+                .map(|value| String::from_utf8_lossy(value).into_owned())
+        };
+        let socket = var("DECADE_SOCKET")?;
+        let (_, id) = socket.strip_suffix(".sock")?.rsplit_once("-w")?;
+        let id = id.parse().ok()?;
+        (Path::new(&socket) == self.socket_path(id)).then(|| (id, var("DECADE_PANE")))
+    }
+
     /// A program started in the workspace's directory, told its workspace
     /// and, for a program that goes in a pane, the pane's name.
     pub fn command(&self, workspace: &Workspace, program: &str, pane: Option<&str>) -> Command {
@@ -221,5 +236,33 @@ mod tests {
         assert_eq!(command.get_current_dir(), Some(Path::new("/home/jack")));
         assert_eq!(env(&command, "DECADE_PANE"), None);
         assert_eq!(env(&command, "DECADE_MCP"), None);
+    }
+
+    #[test]
+    fn an_environment_naming_one_of_this_servers_sockets_gives_its_workspace_and_pane() {
+        let children = Children::new("wayland-9".into(), "/run/user/1000".into(), None);
+        let pid = std::process::id();
+        let environ = format!(
+            "HOME=/home/jack\0DECADE_SOCKET=/run/user/1000/decade-{pid}-w7.sock\0DECADE_PANE=terminal3\0"
+        );
+        assert_eq!(
+            children.placement(environ.as_bytes()),
+            Some((7, Some("terminal3".to_string())))
+        );
+        let environ = format!("DECADE_SOCKET=/run/user/1000/decade-{pid}-w7.sock");
+        assert_eq!(children.placement(environ.as_bytes()), Some((7, None)));
+    }
+
+    #[test]
+    fn an_environment_from_another_server_or_with_no_socket_gives_no_workspace() {
+        let children = Children::new("wayland-9".into(), "/run/user/1000".into(), None);
+        let pid = std::process::id();
+        let other = format!("DECADE_SOCKET=/run/user/1000/decade-{}-w7.sock", pid + 1);
+        let elsewhere = format!("DECADE_SOCKET=/tmp/decade-{pid}-w7.sock");
+        let unset = "HOME=/home/jack\0DECADE_PANE=terminal3".to_string();
+        let empty = "DECADE_SOCKET_OLD=x\0DECADE_SOCKET=".to_string();
+        for environ in [other, elsewhere, unset, empty] {
+            assert_eq!(children.placement(environ.as_bytes()), None, "{environ:?}");
+        }
     }
 }

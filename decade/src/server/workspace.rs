@@ -319,12 +319,12 @@ impl Workspace {
         unique_name(base, "", |name| self.by_name(name).is_none())
     }
 
-    /// Add an empty pane named after `base` beside the focused pane of tab
-    /// `tab`, and return its id.
-    pub fn add_pane(&mut self, tab: usize, base: &str, cwd: Option<PathBuf>) -> usize {
+    /// Add an empty pane named after `base` beside pane `at` of tab `tab`,
+    /// and return its id.
+    pub fn add_pane(&mut self, tab: usize, at: usize, base: &str, cwd: Option<PathBuf>) -> usize {
         let name = self.unique_pane_name(base);
         let layout = &mut self.tabs[tab].layout;
-        let id = layout.add_transient(name);
+        let id = layout.add_beside(at, name);
         if let Some(pane) = layout.pane_mut(id) {
             pane.cwd = cwd;
         }
@@ -680,7 +680,12 @@ mod tests {
     fn an_added_pane_takes_a_free_name() {
         let mut workspace = at_home();
         workspace.add_tab(crate::server::panes::tests::AREA);
-        let id = workspace.add_pane(0, "terminal", Some(PathBuf::from("/tmp")));
+        let id = workspace.add_pane(
+            0,
+            workspace.tabs[0].layout.focused,
+            "terminal",
+            Some(PathBuf::from("/tmp")),
+        );
         let pane = workspace.tabs[0].layout.pane(id).unwrap();
         assert_eq!(pane.name, "terminal3");
         assert_eq!(pane.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
@@ -945,7 +950,7 @@ mod tests {
     fn a_new_pane_does_not_take_a_name_a_renamed_pane_answers_to() {
         let mut workspace = at_home();
         workspace.rename_pane(0, 0, "shell").unwrap();
-        let id = workspace.add_pane(0, "terminal", None);
+        let id = workspace.add_pane(0, workspace.tabs[0].layout.focused, "terminal", None);
         assert_eq!(workspace.tabs[0].layout.pane(id).unwrap().name, "terminal2");
     }
 

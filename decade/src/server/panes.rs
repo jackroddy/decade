@@ -644,10 +644,16 @@ impl Layout {
             .map(|pane| (pane.id, false))
     }
 
+    #[cfg(test)]
     pub fn add_transient(&mut self, name: String) -> usize {
+        self.add_beside(self.focused, name)
+    }
+
+    /// Split pane `at` to add a pane named `name`, focus the new pane, and
+    /// return its id.
+    pub fn add_beside(&mut self, at: usize, name: String) -> usize {
         let id = self.next_id;
         self.next_id += 1;
-        let at = self.focused;
         let side = match self.pane(at) {
             Some(pane) if pane.rect.columns >= pane.rect.rows * 2 => Side::Right,
             _ => Side::Below,
