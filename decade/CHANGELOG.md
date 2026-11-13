@@ -24,6 +24,10 @@ command line and what the tool writes.
   program was launched from. decade finds both from the `DECADE_SOCKET` and
   `DECADE_PANE` the program inherited. Before, the window went to whichever
   workspace was on screen. A window with neither variable still does.
+- A pane screenshot taken while no decade window is on screen shows what
+  the pane's program shows now. Before, it showed the last frame the
+  program drew before the window left the screen. decade now lets the
+  program draw and waits up to 200 ms for the new frame.
 - A pane gets the release of a mouse button pressed in it when the pointer
   leaves the decade window with the button down. It also gets the release
   while the picker or a context menu is open. Before, the pane kept the

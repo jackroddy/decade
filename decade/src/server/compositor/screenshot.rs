@@ -5,6 +5,7 @@ use smithay::backend::renderer::gles::GlesRenderbuffer;
 use smithay::backend::renderer::{Bind, ExportMem, Offscreen};
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Buffer, Physical, Rectangle, Size};
 
 use crate::png;
@@ -13,7 +14,7 @@ use crate::server::chrome::overlay::Cursor;
 use crate::server::chrome::prompt::{Answer, Prompt};
 use crate::server::mcp::{self, Reply};
 
-use super::State;
+use super::{State, popups_over, send_frames_surface_tree, waits_for_frame};
 
 /// How long decade waits for the person to answer before it refuses.
 const ASK_FOR: Duration = Duration::from_secs(30);
@@ -21,6 +22,19 @@ const ASK_FOR: Duration = Duration::from_secs(30);
 /// How long after the dialog appears its keys and clicks start to answer
 /// it, so a key typed or a click made as it appears does not.
 const ARMED_AFTER: Duration = Duration::from_millis(500);
+
+/// How long a screenshot waits for the pane's window to draw the frame it
+/// was waiting to draw.
+const FRESH_FOR: Duration = Duration::from_millis(200);
+
+/// A screenshot waiting for the pane's window to commit a new frame.
+pub(super) struct Capturing {
+    workspace: u32,
+    pane: String,
+    surface: WlSurface,
+    reply: Reply,
+    timer: Option<RegistrationToken>,
+}
 
 /// A screenshot waiting on the person's answer to the dialog.
 pub(super) struct Asking {
@@ -57,9 +71,7 @@ impl State {
         reply: Reply,
     ) {
         match self.screenshot_target(workspace, pane) {
-            Ok((name, true)) => {
-                let _ = reply.send(self.capture(workspace, &name).map(mcp::Answer::Png));
-            }
+            Ok((name, true)) => self.capture_fresh(workspace, name, reply),
             Ok((name, false)) => self.ask(workspace, name, caller, reply),
             Err(reason) => {
                 let _ = reply.send(Err(reason));
@@ -150,24 +162,81 @@ impl State {
         if let Some(workspace) = workspace {
             self.workspaces[workspace].end_point_at(pane);
         }
-        let result = match (workspace, answer) {
-            (None, _) => Err(format!("workspace {} is closed", asking.workspace)),
-            (Some(_), None) => Err(format!(
+        let refusal = match (workspace, answer) {
+            (None, _) => format!("workspace {} is closed", asking.workspace),
+            (Some(_), None) => format!(
                 "the person did not answer within {} seconds, so decade took no screenshot of pane {pane}",
                 ASK_FOR.as_secs()
-            )),
+            ),
             (Some(_), Some(Answer::Deny)) => {
-                Err(format!("the person refused a screenshot of pane {pane}"))
+                format!("the person refused a screenshot of pane {pane}")
             }
             (Some(workspace), Some(answer)) => {
                 if answer == Answer::Always {
                     self.accept_screenshots(workspace, pane);
                 }
-                self.capture(workspace, pane)
+                self.capture_fresh(workspace, asking.pane, asking.reply);
+                self.request_redraw();
+                return;
             }
         };
-        let _ = asking.reply.send(result.map(mcp::Answer::Png));
+        let _ = asking.reply.send(Err(refusal));
         self.request_redraw();
+    }
+
+    /// Capture pane `pane` once its window commits the frame it was
+    /// waiting to draw, or at once when it was waiting for none.
+    fn capture_fresh(&mut self, workspace: usize, pane: String, reply: Reply) {
+        let shown = &self.workspaces[workspace];
+        let surface = (shown.by_name(&pane))
+            .and_then(|(tab, id)| shown.tabs[tab].layout.pane(id)?.toplevel())
+            .map(|toplevel| toplevel.wl_surface().clone())
+            .filter(waits_for_frame);
+        let Some(surface) = surface else {
+            let _ = reply.send(self.capture(workspace, &pane).map(mcp::Answer::Png));
+            return;
+        };
+
+        // while no viewer is on screen nothing renders, so the
+        // window's last frame request is unanswered and its
+        // buffer is older than its state
+        let time = self.now();
+        send_frames_surface_tree(&surface, time);
+        for (popup, _) in popups_over(&surface) {
+            send_frames_surface_tree(popup.wl_surface(), time);
+        }
+        let waited = surface.clone();
+        let timer = Timer::from_duration(FRESH_FOR);
+        let timer = self.loop_handle.insert_source(timer, move |_, _, state| {
+            state.finish_captures(&waited, true);
+            TimeoutAction::Drop
+        });
+        self.capturing.push(Capturing {
+            workspace: self.workspaces[workspace].id,
+            pane,
+            surface,
+            reply,
+            timer: timer.ok(),
+        });
+    }
+
+    /// Answer the screenshots waiting on `surface`, which has committed or
+    /// whose wait ran out.
+    pub(super) fn finish_captures(&mut self, surface: &WlSurface, timed_out: bool) {
+        let (done, waiting) = std::mem::take(&mut self.capturing)
+            .into_iter()
+            .partition(|capturing| capturing.surface == *surface);
+        self.capturing = waiting;
+        for capturing in done {
+            if let Some(timer) = capturing.timer.filter(|_| !timed_out) {
+                self.loop_handle.remove(timer);
+            }
+            let result = match self.workspace_index(capturing.workspace) {
+                Some(workspace) => self.capture(workspace, &capturing.pane),
+                None => Err(format!("workspace {} is closed", capturing.workspace)),
+            };
+            let _ = capturing.reply.send(result.map(mcp::Answer::Png));
+        }
     }
 
     fn accept_screenshots(&mut self, workspace: usize, pane: &str) {

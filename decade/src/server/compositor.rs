@@ -157,6 +157,7 @@ pub struct State {
 
     /// The screenshot waiting on the person's answer to the dialog.
     asking: Option<screenshot::Asking>,
+    capturing: Vec<screenshot::Capturing>,
     unplaced: Vec<ToplevelSurface>,
     popups: PopupManager,
 
@@ -269,6 +270,7 @@ pub fn run() {
         groups: Vec::new(),
         next_group: 0,
         asking: None,
+        capturing: Vec::new(),
         unplaced: Vec::new(),
         popups: PopupManager::default(),
         popup_grab: None,
@@ -1601,6 +1603,23 @@ fn send_frames_surface_tree(surface: &WlSurface, time: u32) {
     );
 }
 
+/// Whether a surface under `surface` has asked for a frame callback that
+/// has not been answered.
+fn waits_for_frame(surface: &WlSurface) -> bool {
+    let mut waits = false;
+    with_surface_tree_downward(
+        surface,
+        (),
+        |_, _, &()| TraversalAction::DoChildren(()),
+        |_, states, &()| {
+            let mut attributes = states.cached_state.get::<SurfaceAttributes>();
+            waits |= !attributes.current().frame_callbacks.is_empty();
+        },
+        |_, _, &()| true,
+    );
+    waits
+}
+
 #[derive(Default)]
 struct ClientState {
     compositor_state: CompositorClientState,
@@ -1620,6 +1639,7 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<State>(surface);
         self.request_redraw();
+        self.finish_captures(surface, false);
         self.popups.commit(surface);
         self.popups.cleanup();
         if let Some(PopupKind::Xdg(popup)) = self.popups.find_popup(surface)
