@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T05:05:05.503491243Z",
-  "updated_at": "2026-11-13T05:05:05.503491243Z",
+  "updated_at": "2026-11-13T05:10:37.377982444Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "31b36016",
+      "at": "2026-11-13T05:10:37.377981474Z",
+      "author": "Jack Roddy/f5ffdd3d",
+      "text": "Decided with Jack: decade places such a window by its client's environment, keyed on `DECADE_SOCKET` and not on `DECADE_WORKSPACE`.\n\n- `DECADE_WORKSPACE` holds the workspace's name, and a rename changes it. `DECADE_SOCKET` is `$XDG_RUNTIME_DIR/decade-<server pid>-w<workspace id>.sock`, built by `Children::socket_path` in `decade/src/server/children.rs`. It names the workspace by id. Its server pid lets decade ignore a process left over from an earlier server.\n- Today the commit handler in `decade/src/server/compositor.rs` puts a window it cannot place in `current()`, the workspace of the active viewer. That is how each `acre-gui` window landed in whatever workspace Jack had on screen.\n- In that fallback, decade reads `/proc/<pid>/environ` for the window's client. If `DECADE_SOCKET` names this server and a workspace that still exists, the window goes to that workspace.\n- The window gets a new split beside the pane that `DECADE_PANE` names, in the tab that holds that pane. `Layout::add_transient` in `decade/src/server/panes.rs` splits beside the focused pane today, and this needs the same split beside a given pane. Without `DECADE_PANE`, or when no pane has that name, the window gets a new pane in the workspace's active tab.\n- The window never goes in the scratch pane. `scratch_open` replaces what the scratch pane shows. A window that replaced it unasked would surprise Jack.\n- A window whose process has no `DECADE_SOCKET` for this server keeps today's placement in the workspace on screen.\n\nRejected: the process tree loses the link when a process detaches from its parent. Many programs drop `XDG_ACTIVATION_TOKEN` before a child opens its window.\n\nPlacement on request went to decade-7736aa.",
+      "commit": "b9f97c7",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "b9f97c7",
