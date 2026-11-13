@@ -21,7 +21,7 @@ use crate::server::panes::{BACKGROUND, Chrome, Layout};
 use crate::server::workspace::{self, Workspace};
 
 use super::input::Drag;
-use super::{Overlay, State, popups_over, send_frames_surface_tree};
+use super::{Overlay, State, popups_over, send_frames_surface_tree, window_origin};
 
 const SCRIM: Rgba = [0.0, 0.0, 0.0, 0.35];
 
@@ -448,10 +448,15 @@ fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, layout: &Layout
                 Kind::Unspecified,
             ));
         }
+
+        // the pane shows the window geometry, so the buffer's
+        // corner sits up and left of the pane by the margin
+        // the client draws its shadow in
+        let origin = window_origin(toplevel.wl_surface()).to_physical_precise_round(paint.scale);
         surfaces.extend(render_elements_from_surface_tree(
             paint.renderer,
             toplevel.wl_surface(),
-            crop.loc,
+            crop.loc - origin,
             paint.scale,
             1.0,
             Kind::Unspecified,

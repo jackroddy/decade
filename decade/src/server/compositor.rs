@@ -1197,6 +1197,19 @@ impl State {
             let toplevel = &client.toplevel;
             toplevel.with_pending_state(|state| {
                 state.size = Some(size);
+
+                // a maximized client must take the size it is given,
+                // where an unmaximized one may restore a size of its
+                // own, and a tiled one drops its shadow and corners
+                for fixed in [
+                    xdg_toplevel::State::Maximized,
+                    xdg_toplevel::State::TiledLeft,
+                    xdg_toplevel::State::TiledRight,
+                    xdg_toplevel::State::TiledTop,
+                    xdg_toplevel::State::TiledBottom,
+                ] {
+                    state.states.set(fixed);
+                }
                 if focused && index == pane.shown {
                     state.states.set(xdg_toplevel::State::Activated);
                 } else {
@@ -1480,10 +1493,7 @@ impl State {
             let (workspace, tab, id) = self.pane_of_surface(&root)?;
             let pane = self.workspaces[workspace].tabs[tab].layout.pane(id)?;
             let (_, client) = self.client_geometry(pane);
-            Some((
-                client,
-                window_origin(&root) + get_popup_toplevel_coords(&kind),
-            ))
+            Some((client, get_popup_toplevel_coords(&kind)))
         });
         let geometry = match bounds {
             Some((client, parent)) => popup_geometry(positioner, client, parent),
@@ -1562,11 +1572,10 @@ fn window_origin(surface: &WlSurface) -> Point<i32, Logical> {
 }
 
 /// The popups open over `toplevel`, topmost first, each with where its
-/// buffer's corner sits from the corner of the toplevel's buffer.
+/// buffer's corner sits from the corner of the toplevel's window geometry.
 fn popups_over(toplevel: &WlSurface) -> impl Iterator<Item = (PopupKind, Point<i32, Logical>)> {
-    let origin = window_origin(toplevel);
-    PopupManager::popups_for_surface(toplevel).map(move |(popup, offset)| {
-        let at = origin + offset - popup.geometry().loc;
+    PopupManager::popups_for_surface(toplevel).map(|(popup, offset)| {
+        let at = offset - popup.geometry().loc;
         (popup, at)
     })
 }

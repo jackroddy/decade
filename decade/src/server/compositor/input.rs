@@ -22,7 +22,7 @@ use crate::wire::{
 };
 
 use super::viewers::hold;
-use super::{Overlay, State, popups_over};
+use super::{Overlay, State, popups_over, window_origin};
 
 const KEY_C: u32 = 46;
 const KEY_V: u32 = 47;
@@ -206,7 +206,10 @@ impl State {
             });
             Some(match popup {
                 Some((surface, at)) => (surface, at.to_f64()),
-                None => (toplevel.clone(), origin.to_f64()),
+                None => (
+                    toplevel.clone(),
+                    (origin - window_origin(toplevel)).to_f64(),
+                ),
             })
         });
         pointer.motion(

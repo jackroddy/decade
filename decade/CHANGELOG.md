@@ -28,6 +28,12 @@ command line and what the tool writes.
   the pane's program shows now. Before, it showed the last frame the
   program drew before the window left the screen. decade now lets the
   program draw and waits up to 200 ms for the new frame.
+- A GUI app's window lines up with its pane. decade places the window by
+  the geometry the app declares, so an app's shadow no longer pushes it
+  right and down past the pane's far edge. decade also configures every
+  window as maximized and tiled. An app then takes the pane's size and
+  does not restore a size of its own. GTK and Chromium apps also drop
+  their shadows and rounded corners.
 - A pane gets the release of a mouse button pressed in it when the pointer
   leaves the decade window with the button down. It also gets the release
   while the picker or a context menu is open. Before, the pane kept the
