@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-13T06:00:08.349737637Z",
   "defer_until": null,
   "created_at": "2026-11-07T07:20:54.715857133Z",
-  "updated_at": "2026-11-13T05:45:08.349737637Z",
+  "updated_at": "2026-11-13T05:51:55.567479242Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/575e4e76",
       "text": "Until 60ddbe2, decade's dmabuf global carried no feedback, so a client's Mesa had no GPU to open and could fall back to software rendering. That broke ghostty at large sizes. Some of the misbehaviour listed in this issue may have had the same cause, so the apps are worth trying again.",
       "commit": "60ddbe2",
+      "branch": "dev"
+    },
+    {
+      "id": "498a427e",
+      "at": "2026-11-13T05:51:55.567478402Z",
+      "author": "Jack Roddy/f5ffdd3d",
+      "text": "A retest on 2026-11-12, with an isolated server and `decade script`, launched each app from the palette.\n\n| app | toolkit | before this change | after |\n|---|---|---|---|\n| Files (Nautilus) | GTK4 | fits | fits |\n| CMake | Qt | fits, menus placed right | not retested |\n| Papers | GTK4 | offset about 30 px, right edge cropped | fits |\n| LocalSend | Flutter on GTK3 | offset and cropped | fits |\n| Obsidian | Electron | offset and cropped | cropped, see below |\n| Chrome, ChatGPT | Chromium | slight offset, with an isolated profile | not retested |\n\nTwo decade causes, both fixed on `dev` and not yet committed:\n\n- `paint_clients` in `decade/src/server/compositor/render.rs` and pointer focus in `decade/src/server/compositor/input.rs` put the toplevel's buffer corner at the pane's corner. They now subtract `window_origin`, the corner of the window geometry. `popups_over` and `place_popup` now measure from the window geometry's corner, as smithay's offsets do.\n- `configure` sent only `Activated`, so an app could treat the size as a hint. LocalSend took 656 by 828, then restored a saved 900 by 637. `configure` now also sets `Maximized` and the four tiled states.\n\nObsidian with no vault opens a welcome window whose minimum and maximum size are both 820 by 670. It cannot shrink to a narrower pane, so decade crops it. Its vault window is resizable.\n\nChrome and ChatGPT never appeared in decade in the first report because Chrome was already running outside decade, and a launch went to that instance. With `--user-data-dir` pointing at a fresh profile, both open in a pane. decade does not change this.\n\nThe popups and the old dmabuf fallback named in the issue body were fixed in `803bdf7` and `60ddbe2`.",
+      "commit": "68ce2dc",
       "branch": "dev"
     }
   ],
