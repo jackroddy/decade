@@ -3,7 +3,7 @@
   "title": "Which workspace and pane get a window from a process decade did not start?",
   "body": "decade places a window it started itself: `scratch_open` puts the first window of its program, or of a process under it, in the scratch pane. A window from a process decade did not start has no workspace. acre's neovim plugin starts a viewer, `acre-gui --stdio`, as a child of neovim. A session tested that from an agent's shell in workspace `acre`, and each viewer window opened in a different workspace. Nothing reached across workspaces on purpose. decade had no way to tell which workspace the window belonged to.\n\nEvery window a program in a pane launches indirectly has the same problem: an editor starting a viewer, a build script opening a preview, a shell running a GUI program.\n\n## Options\n\n- **By environment.** decade sets `DECADE_WORKSPACE` and `DECADE_PANE` on what it starts, and children inherit them through editors, shells and double-forked daemons. On a new window, decade reads its client process's `/proc/<pid>/environ` and puts the window in that workspace. No program changes. Cost: one environment read per new window. A program that clears its environment, which is rare, loses the link.\n- **By process tree.** Walk the window's parent processes up to a program decade started in some pane. Works with no new variables. A process that detaches from its parent loses the link, which the environment survives.\n- **On request.** A program asks decade where to put its window over `DECADE_SOCKET`, through a command or a `decade-channel` call. This is the only option that can name a pane, such as the scratch pane or a split beside the launcher. Programs have to opt in.\n- **Activation tokens.** decade hands out an `XDG_ACTIVATION_TOKEN` per workspace, and a window that presents it is placed there. This is the standard Wayland way, but many programs drop the variable before a child opens its window.\n\nThe session that filed this leans toward the environment option as the default for every window, with placement on request on top for programs that want a particular pane. The acre plugin would then work with no change and could ask for the scratch pane when `DECADE_SOCKET` is set.\n\n## Open\n\n- Which pane a window placed by workspace alone goes to: the scratch pane when there is one, a new split beside the launcher's pane, or a floating window inside the workspace.\n- What happens to a window whose process carries no decade environment at all.",
   "type": "decision",
-  "status": "open",
+  "status": "in_progress",
   "priority": 2,
   "labels": [
     "decade"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/f5ffdd3d",
+  "lease_expires": "2026-11-13T05:26:49.343791975Z",
   "defer_until": null,
   "created_at": "2026-11-13T05:05:05.503491243Z",
-  "updated_at": "2026-11-13T05:10:43.032453727Z",
+  "updated_at": "2026-11-13T05:11:49.343791975Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
