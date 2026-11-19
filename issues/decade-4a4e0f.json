@@ -1,6 +1,6 @@
 {
   "id": "decade-4a4e0f",
-  "title": "A UI kit separable from decade",
+  "title": "A UI kit crate for programs that look like decade",
   "body": "decade's UI kit becomes its own crate in this workspace, under the working name `decade-ui`. The kit serves programs that look and behave like decade. Their chrome sits on a grid of monospace cells, their panes sit in a split tree with tabs and bars, and their overlays are boxed lists. A toolkit for any 2D UI, such as a game HUD, is out of scope. egui and Dear ImGui already fill that role.\n\nThe first program besides decade's server to run the kit is the remote viewer in decade-e3a784. That viewer draws the chrome itself, and on macOS it has no smithay.\n\n## What the kit holds\n\n- the cell grid, `Rgba` and the theme colours\n- `Scene` and its shapes\n- fonts, and text rasterized to CPU bitmaps\n- the overlay widgets: boxed lists, rows, the cursor, key caps, hints, the text field, the confirm dialog and the context menu widget\n- panes: the split tree, tabs, pane bars, drop zones, zoom, hit testing, and the drag state machine that resizes, moves and focuses panes\n\n## What stays out\n\n- Windows, the event loop, Wayland and the GPU. Each program writes a painter that turns a `Scene` and text bitmaps into draws. decade keeps its GLES `Paint` and its texture cache. The kit ships no painter until the macOS viewer exists.\n- What a pane shows. A pane tab holds an opaque content id, and the kit leaves a `Shape::Content { id, rect }` placeholder for it.\n- The program's verbs. Widgets and pane input return actions of the program's own type.\n- decade's own widgets: the top bar, the sidebar, the palette, the picker and the settings panel. They stay in the `decade` crate, in a module that imports no smithay, so a macOS build of the viewer compiles them without the server.\n\n## Decided\n\nJack signed off this design on 2026-11-19.\n\n- A program adds tags and bar buttons to a pane as data on the pane. Each button carries the program's own action, and the kit returns that action on a click. decade fills these from its scratch and screenshot state. This answers the note of 2026-11-11.\n- The kit owns pane input.\n- Crate and type names are settled after the crate is built.\n\nThe design must not change how decade owns and manages Wayland windows.",
   "type": "milestone",
   "status": "open",
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T22:30:49.622266013Z",
-  "updated_at": "2026-11-19T21:03:21.006268983Z",
+  "updated_at": "2026-11-19T21:03:25.727968432Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
