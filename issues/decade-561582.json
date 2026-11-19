@@ -10,14 +10,15 @@
   ],
   "parent": "decade-4a4e0f",
   "blocked_by": [
-    "decade-cf9482"
+    "decade-cf9482",
+    "decade-7be19b"
   ],
   "related": [],
   "assignee": null,
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T21:03:21.055444439Z",
-  "updated_at": "2026-11-19T21:03:21.055444439Z",
+  "updated_at": "2026-11-19T21:03:25.716295228Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
