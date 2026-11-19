@@ -17,7 +17,7 @@
   "lease_expires": "2026-11-19T23:30:40.046663367Z",
   "defer_until": null,
   "created_at": "2026-11-08T22:30:49.645299748Z",
-  "updated_at": "2026-11-19T23:15:40.046663367Z",
+  "updated_at": "2026-11-19T23:15:40.05901786Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -36,6 +36,14 @@
       "author": "Jack Roddy/8a3a6cd2",
       "text": "Jack signed off these on 2026-11-19:\n\n- The kit owns pane input. The boundary and pane drags of `Drag` in `decade/src/server/compositor/input.rs` move into the kit. The kit returns actions such as focus, resize, move, close and switch tab, or input for a content id at a pane-local point. Sidebar drags stay in decade.\n- A program adds tags and bar buttons to a pane as data on the pane. Each button carries the program's own action, and the kit returns it on a click. decade fills these from its scratch and screenshot state, which lives in `panes.rs` today as `Pane.screenshots`, `BarButton::{Screenshots, Scratch}` and `Chrome.scratch`.",
       "commit": "bf36ffa",
+      "branch": "dev"
+    },
+    {
+      "id": "b9ef8658",
+      "at": "2026-11-19T23:15:40.05901714Z",
+      "author": "Jack Roddy/8a3a6cd2",
+      "text": "Jack signed off this plan on 2026-11-19. It lands as four commits on `dev`, and each one keeps decade's frames byte-identical to the build before it.\n\n1. A pane's tabs become a list of `ContentId` with a label each. decade keeps `HashMap<ContentId, Client>`, plus a map from pane id to `PaneInfo`, which holds `pinned`, `app_id`, `cwd`, `pid`, `agent`, `next_tab` and `screenshots`. Tab labels come from decade.\n2. Each pane carries tags, bar buttons, and the text and button an empty pane shows, all supplied by the program. Each button holds the program's action, so `Layout` takes the action type as a parameter. The kit builds in zoom and close.\n3. Boundary and pane drags move from `Drag` in `compositor/input.rs` onto `Layout`, as `press`, `motion` and `release` returning actions. Sidebar drags stay in decade.\n4. The generic code moves into `decade-ui`, and the kit draws a `Shape::Content { id, rect }` for each shown tab.\n\n`Layout::place`, pinning, the terminal-tab rules, `restartable`, configure, frame callbacks, focus, popups, the picker and `save.rs` stay in decade.",
+      "commit": "2f084d9",
       "branch": "dev"
     }
   ],
