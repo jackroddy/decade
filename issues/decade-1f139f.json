@@ -15,11 +15,20 @@
   "lease_expires": "2026-11-19T21:18:25.739579027Z",
   "defer_until": null,
   "created_at": "2026-11-08T22:30:49.63403366Z",
-  "updated_at": "2026-11-19T21:03:31.663257144Z",
+  "updated_at": "2026-11-19T23:12:02.924041182Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "e140d4dd",
+      "at": "2026-11-19T23:12:02.924040582Z",
+      "author": "Jack Roddy/8a3a6cd2",
+      "text": "Landed in 2f084d9. `round_trip` and `pad` stayed in decade's `text.rs`, not in the kit as the Decided section says. They only make a texture's size survive smithay's round trip through logical pixels, so they belong to the upload. `Font::load` became public because decade's tests build a `Scene` from a font, and the `CellRect` helpers became public because `panes.rs` calls them from outside the kit.",
+      "commit": "2f084d9",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "6bcc95b",
