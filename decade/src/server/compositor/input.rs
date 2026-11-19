@@ -15,7 +15,7 @@ use crate::server::chrome::frame::Hit;
 use crate::server::chrome::menu::{MenuKey, Outcome};
 use crate::server::chrome::prompt::{self, Answer};
 use crate::server::chrome::rename::Named;
-use crate::server::panes;
+use crate::server::clients;
 use crate::server::panes::{BarButton, Boundary, Direction, Drop};
 use crate::wire::{
     self, BTN_BACK, BTN_LEFT, BTN_RIGHT, BTN_SIDE, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
@@ -199,7 +199,7 @@ impl State {
         let focus = under.and_then(|id| {
             let pane = self.layout().pane(id)?;
             let (origin, _) = self.client_geometry(pane);
-            let toplevel = pane.toplevel()?.wl_surface();
+            let toplevel = self.tab().toplevel(id)?.wl_surface();
             let popup = popups_over(toplevel).find_map(|(popup, at)| {
                 let surface = popup.wl_surface();
                 under_from_surface_tree(surface, self.pointer, origin + at, WindowSurfaceType::ALL)
@@ -418,10 +418,7 @@ impl State {
         };
         let palette = self.overlay.is_some();
         let dialog = (self.asking.as_ref()).map(|asking| asking.armed(Instant::now()));
-        let restartable = self
-            .layout()
-            .pane(self.layout().focused)
-            .is_some_and(|pane| pane.restartable());
+        let restartable = self.tab().restartable(self.layout().focused);
         let mut control_key = false;
         let key = keyboard.input::<Option<Key>, _>(
             self,
@@ -482,11 +479,8 @@ impl State {
     }
 
     fn send_chord(&mut self, chord: Chord) {
-        let terminal = self
-            .layout()
-            .pane(self.layout().focused)
-            .and_then(|pane| pane.toplevel())
-            .and_then(|toplevel| panes::app_id(toplevel.wl_surface()))
+        let terminal = (self.tab().toplevel(self.layout().focused))
+            .and_then(|toplevel| clients::app_id(toplevel.wl_surface()))
             .is_some_and(|app_id| app_id.starts_with("decade."));
         let keys: &[u32] = match (terminal, chord) {
             (true, Chord::Copy | Chord::Cut) => &[KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_C],
@@ -588,7 +582,7 @@ impl State {
             Key::PreviousPaneTab | Key::NextPaneTab => {
                 let focused = self.layout().focused;
                 if let Some(pane) = self.layout_mut().pane_mut(focused)
-                    && pane.clients.len() > 1
+                    && pane.tabs.len() > 1
                 {
                     pane.step_tab(key == Key::NextPaneTab);
                     self.focus(focused);
@@ -669,11 +663,7 @@ impl State {
             self.start_pane_drag(id);
             return true;
         }
-        if self
-            .layout()
-            .pane(id)
-            .is_some_and(|pane| pane.restartable())
-        {
+        if self.tab().restartable(id) {
             self.focus(id);
             self.restart_pane(self.current(), id);
             return true;
@@ -742,10 +732,8 @@ impl State {
         {
             return false;
         }
-        layout
-            .pane_at(column, row)
-            .and_then(|id| layout.pane(id))
-            .and_then(|pane| pane.toplevel())
+        (layout.pane_at(column, row))
+            .and_then(|id| self.tab().toplevel(id))
             .is_some_and(|toplevel| popups_over(toplevel.wl_surface()).next().is_some())
     }
 
@@ -792,12 +780,13 @@ impl State {
         let shown = &self.workspaces[self.current()];
         let layout = shown.layout();
         let pane = layout.pane(id)?;
+        let info = shown.tab().info(id);
         Some(Place::Pane {
             id,
-            pinned: pane.pinned,
+            pinned: info.pinned,
             zoomed: layout.zoom == Some(id),
             scratch: shown.scratch_pane() == Some(pane.name.as_str()),
-            screenshots: pane.screenshots,
+            screenshots: info.screenshots,
         })
     }
 

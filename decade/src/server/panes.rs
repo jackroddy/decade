@@ -1,16 +1,6 @@
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
-
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::wayland::compositor::with_states;
-use smithay::wayland::shell::xdg::{
-    ToplevelSurface, XdgToplevelSurfaceData, XdgToplevelSurfaceRoleAttributes,
-};
-
 use decade_ui::palette::{self, Rgba};
 use decade_ui::{CellRect, Face, Scene, fit};
 
-use crate::server::proc;
 use crate::server::workspace::Point;
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
@@ -31,7 +21,6 @@ const TAG_TEXT: Rgba = palette::DARK_BACKGROUND;
 const UNPINNED: Rgba = palette::MUTED;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 
-const RUNNING_EVERY: Duration = Duration::from_secs(2);
 const MIN_PANE: u32 = 4;
 const EDGE_BAND: u32 = 2;
 const BUTTON_WIDTH: u32 = 4;
@@ -66,89 +55,16 @@ pub enum Axis {
     Vertical,
 }
 
-/// One window in a pane, shown as one of the pane's tabs.
-pub struct Client {
-    pub toplevel: ToplevelSurface,
-    pub app_id: Option<String>,
-    pub pid: Option<u32>,
+/// The id decade gives what one of a pane's tabs shows.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ContentId(pub u64);
 
-    /// Whether decade started the client as a terminal tab of the pane.
-    pub terminal_tab: bool,
+/// One of a pane's tabs.
+pub struct Tab {
+    pub content: ContentId,
 
-    /// What the client runs, as last read, and when it was read.
-    running: Option<(Instant, Option<String>)>,
-}
-
-impl Client {
-    pub fn new(
-        toplevel: ToplevelSurface,
-        app_id: Option<String>,
-        pid: Option<u32>,
-        terminal_tab: bool,
-    ) -> Client {
-        Client {
-            toplevel,
-            app_id,
-            pid,
-            terminal_tab,
-            running: None,
-        }
-    }
-
-    /// The client's pid, when it is a ghostty decade started for the
-    /// pane whose ghostty is `pane_pid`.
-    fn terminal(&self, pane_pid: Option<u32>) -> Option<u32> {
-        let pid = self.pid?;
-        (self.terminal_tab || pane_pid == Some(pid)).then_some(pid)
-    }
-
-    /// Read what the client runs again if it is a terminal and it was
-    /// last read `RUNNING_EVERY` or more before `now`.
-    fn refresh_running(&mut self, pane_pid: Option<u32>, now: Instant, home: &Path) {
-        let Some(ghostty) = self.terminal(pane_pid) else {
-            return;
-        };
-        if let Some((read, _)) = self.running
-            && now.duration_since(read) < RUNNING_EVERY
-        {
-            return;
-        }
-        self.running = Some((now, running(ghostty, home)));
-    }
-
-    /// What the client runs: a terminal's program as last read, or the
-    /// last part of another client's app id.
-    fn running_label(&self, pane_pid: Option<u32>) -> Option<String> {
-        if self.terminal(pane_pid).is_some() {
-            return self.running.as_ref()?.1.clone();
-        }
-        let app_id = self.app_id.as_deref()?;
-        Some(app_id.rsplit('.').next().unwrap_or(app_id).to_string())
-    }
-
-    /// The client's title, or the last part of its app id.
-    fn label(&self) -> Option<String> {
-        let title = toplevel_data(self.toplevel.wl_surface(), |data| data.title.clone());
-        title.filter(|title| !title.is_empty()).or_else(|| {
-            let app_id = self.app_id.as_deref()?;
-            Some(app_id.rsplit('.').next().unwrap_or(app_id).to_string())
-        })
-    }
-}
-
-/// The app id a toplevel's client set.
-pub fn app_id(surface: &WlSurface) -> Option<String> {
-    toplevel_data(surface, |data| data.app_id.clone())
-}
-
-fn toplevel_data(
-    surface: &WlSurface,
-    read: impl FnOnce(&XdgToplevelSurfaceRoleAttributes) -> Option<String>,
-) -> Option<String> {
-    with_states(surface, |states| {
-        let data = states.data_map.get::<XdgToplevelSurfaceData>()?;
-        read(&data.lock().unwrap())
-    })
+    /// The text on the tab's pill.
+    pub label: String,
 }
 
 pub struct Pane {
@@ -157,36 +73,11 @@ pub struct Pane {
 
     /// The names the pane had before it was renamed, which still reach it.
     pub aliases: Vec<String>,
-
-    /// Whether the pane stays, waiting for its program, when its last
-    /// client goes.
-    pub pinned: bool,
     pub rect: CellRect,
+    pub tabs: Vec<Tab>,
 
-    /// The pane's tabs, one window each.
-    pub clients: Vec<Client>,
-
-    /// The index in `clients` of the tab drawn.
+    /// The index in `tabs` of the tab drawn.
     pub shown: usize,
-
-    /// The number in the app id of the next terminal tab decade starts.
-    pub next_tab: u32,
-
-    /// The app id of the last client in the pane that is not a terminal
-    /// tab, which an empty pane waits for.
-    pub app_id: Option<String>,
-
-    /// Where decade starts the pane's shell, for a pane that holds a terminal.
-    pub cwd: Option<PathBuf>,
-
-    /// The ghostty decade started for the pane.
-    pub pid: Option<u32>,
-
-    /// The name of the live agent in the pane, which labels its first tab.
-    pub agent: Option<String>,
-
-    /// Whether an agent may take a screenshot of the pane without asking.
-    pub screenshots: bool,
 }
 
 impl Pane {
@@ -207,91 +98,33 @@ impl Pane {
         self.aliases.push(old);
     }
 
-    /// Whether the pane is a pinned terminal whose shell has exited.
-    pub fn restartable(&self) -> bool {
-        self.clients.is_empty() && self.cwd.is_some() && self.pinned
-    }
-
     /// The cells the pane's client fills.
     pub fn client_rect(&self) -> CellRect {
-        client_area(self.rect, self.clients.len())
-    }
-
-    /// Read again what the clients whose labels are drawn run: every
-    /// client when the pane shows its tabs, or else the shown one.
-    pub fn refresh_running(&mut self, now: Instant, home: &Path) {
-        let pane_pid = self.pid;
-        if self.clients.len() > 1 {
-            for client in &mut self.clients {
-                client.refresh_running(pane_pid, now, home);
-            }
-        } else if let Some(client) = self.clients.get_mut(self.shown) {
-            client.refresh_running(pane_pid, now, home);
-        }
-    }
-
-    /// What runs in the pane: the agent's name when the shown tab is its
-    /// first, or else what its shown client runs, or the pane's name.
-    pub fn running_label(&self) -> String {
-        self.tab_label(self.shown)
-            .unwrap_or_else(|| self.name.clone())
-    }
-
-    /// The label of each tab: what its client runs, or the tab's number.
-    fn tab_labels(&self) -> Vec<String> {
-        (0..self.clients.len())
-            .map(|index| {
-                self.tab_label(index)
-                    .unwrap_or_else(|| (index + 1).to_string())
-            })
-            .collect()
-    }
-
-    /// The agent's name for the first tab, or else what tab `index` runs.
-    fn tab_label(&self, index: usize) -> Option<String> {
-        let client = self.clients.get(index)?;
-
-        // an agent names only the pane it claimed, not which of the
-        // pane's clients runs it, so the first tab takes the name
-        match &self.agent {
-            Some(agent) if index == 0 => Some(agent.clone()),
-            _ => client.running_label(self.pid),
-        }
+        client_area(self.rect, self.tabs.len())
     }
 
     /// The start column and width of each tab's pill on the strip.
-    fn tab_pills(&self, inner: CellRect, labels: &[String]) -> Vec<(u32, u32)> {
-        let lengths: Vec<usize> = labels.iter().map(|label| label.chars().count()).collect();
+    fn tab_pills(&self, inner: CellRect) -> Vec<(u32, u32)> {
+        let lengths: Vec<usize> = (self.tabs.iter())
+            .map(|tab| tab.label.chars().count())
+            .collect();
         tab_pills(inner.column, inner.columns, &lengths)
     }
 
-    /// The shown client's title, or the last part of its app id.
-    pub fn title(&self) -> Option<String> {
-        self.clients.get(self.shown)?.label()
+    /// What the tab drawn shows.
+    pub fn content(&self) -> Option<ContentId> {
+        self.tabs.get(self.shown).map(|tab| tab.content)
     }
 
-    /// The window of the tab drawn.
-    pub fn toplevel(&self) -> Option<&ToplevelSurface> {
-        self.clients.get(self.shown).map(|client| &client.toplevel)
-    }
-
-    /// Add a window as a tab and show it. A terminal tab decade started
-    /// goes last. Any other window goes first, and an empty pane waits for
-    /// its app id.
-    pub fn add_client(&mut self, client: Client) {
-        if client.terminal_tab {
-            self.clients.push(client);
-            self.shown = self.clients.len() - 1;
-        } else {
-            self.app_id = client.app_id.clone();
-            self.clients.insert(0, client);
-            self.shown = 0;
-        }
+    /// Put `tab` at `index` among the tabs and show it.
+    pub fn add_tab(&mut self, index: usize, tab: Tab) {
+        self.tabs.insert(index, tab);
+        self.shown = index;
     }
 
     /// Show the tab at `index`, and return whether the pane has one.
     pub fn show(&mut self, index: usize) -> bool {
-        let shown = index < self.clients.len();
+        let shown = index < self.tabs.len();
         if shown {
             self.shown = index;
         }
@@ -300,14 +133,15 @@ impl Pane {
 
     /// Show the next tab, or the previous one, wrapping at the ends.
     pub fn step_tab(&mut self, forward: bool) {
-        self.shown = stepped(self.shown, self.clients.len(), forward);
+        self.shown = stepped(self.shown, self.tabs.len(), forward);
     }
 
     /// Remove the tab at `index`, showing the tab after it, or the one
     /// before it when it was the last.
-    pub fn remove_client(&mut self, index: usize) {
-        self.clients.remove(index);
-        self.shown = shown_after_removal(self.shown, index, self.clients.len());
+    pub fn remove_tab(&mut self, index: usize) -> Tab {
+        let removed = self.tabs.remove(index);
+        self.shown = shown_after_removal(self.shown, index, self.tabs.len());
+        removed
     }
 
     pub fn new(id: usize, name: String) -> Pane {
@@ -315,39 +149,11 @@ impl Pane {
             id,
             name,
             aliases: Vec::new(),
-            pinned: false,
             rect: CellRect::EMPTY,
-            clients: Vec::new(),
+            tabs: Vec::new(),
             shown: 0,
-            next_tab: 2,
-            app_id: None,
-            cwd: None,
-            pid: None,
-            agent: None,
-            screenshots: false,
         }
     }
-}
-
-/// What a terminal decade started runs: its shell's foreground program,
-/// or at the prompt the last directory of the shell's cwd.
-fn running(ghostty: u32, home: &Path) -> Option<String> {
-    let shell = proc::first_child(ghostty)?;
-    match proc::foreground_group(shell) {
-        Some(group) => proc::comm(group),
-        None => Some(last_directory(&proc::cwd(shell)?, home)),
-    }
-}
-
-/// The last directory of `cwd`, or `~` for `home`.
-fn last_directory(cwd: &Path, home: &Path) -> String {
-    if cwd == home {
-        return "~".to_string();
-    }
-    cwd.file_name().map_or_else(
-        || "/".to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
 }
 
 pub enum Node {
@@ -414,6 +220,34 @@ pub struct Chrome<'a> {
     /// The pane whose screenshot was just taken, and how bright its
     /// screenshot tag still flashes, from 0 to 1.
     pub flash: Option<(&'a str, f32)>,
+
+    /// The marks of each pane by id, for a pane that has any.
+    pub marks: &'a [(usize, Marks<'a>)],
+}
+
+impl<'a> Chrome<'a> {
+    fn marks(&self, id: usize) -> Marks<'a> {
+        (self.marks.iter())
+            .find(|&&(pane, _)| pane == id)
+            .map_or_else(Marks::default, |&(_, marks)| marks)
+    }
+}
+
+/// What decade shows on a pane's outline, bar and placeholder.
+#[derive(Clone, Copy, Default)]
+pub struct Marks<'a> {
+    /// Whether the pane stays, waiting for its program, when its last
+    /// client goes.
+    pub pinned: bool,
+
+    /// Whether an agent may take a screenshot of the pane without asking.
+    pub screenshots: bool,
+
+    /// Whether the pane is a pinned terminal whose shell has exited.
+    pub restartable: bool,
+
+    /// The app id an empty pinned pane waits for.
+    pub app_id: Option<&'a str>,
 }
 
 pub struct Layout {
@@ -512,7 +346,7 @@ impl Layout {
         let pane = self
             .visible()
             .find(|pane| pane.rect.contains(column, row))?;
-        let on_client = !pane.clients.is_empty() && pane.client_rect().contains(column, row);
+        let on_client = !pane.tabs.is_empty() && pane.client_rect().contains(column, row);
         (!on_client).then_some(pane.id)
     }
 
@@ -571,31 +405,6 @@ impl Layout {
         self.drag_boundary(&boundary, edge, edge);
     }
 
-    /// The pane a new window with this app id goes in, and whether the
-    /// window is a terminal tab decade started for that pane.
-    pub fn place(&self, app_id: Option<&str>, prefix: &str) -> Option<(usize, bool)> {
-        let app_id = app_id?;
-        if let Some(pane) = self
-            .panes
-            .iter()
-            .find(|pane| (pane.names()).any(|name| is_terminal_tab(app_id, prefix, name)))
-        {
-            return Some((pane.id, true));
-        }
-
-        // a restored pane's own terminal can arrive after its tabs
-        if let Some(pane) = self.panes.iter().find(|pane| {
-            (app_id.strip_prefix(prefix)).is_some_and(|name| pane.answers_to(name))
-                && pane.clients.iter().all(|client| client.terminal_tab)
-        }) {
-            return Some((pane.id, false));
-        }
-        self.panes
-            .iter()
-            .find(|pane| pane.clients.is_empty() && pane.app_id.as_deref() == Some(app_id))
-            .map(|pane| (pane.id, false))
-    }
-
     #[cfg(test)]
     pub fn add_transient(&mut self, name: String) -> usize {
         self.add_beside(self.focused, name)
@@ -623,7 +432,7 @@ impl Layout {
             return;
         };
         if self.panes.len() == 1 {
-            self.panes[index].clients.clear();
+            self.panes[index].tabs.clear();
             self.panes[index].shown = 0;
             return;
         }
@@ -750,13 +559,13 @@ impl Layout {
     /// The pane and tab index of the tab label under the cell.
     pub fn tab_hit(&self, column: u32, row: u32) -> Option<(usize, usize)> {
         self.visible()
-            .filter(|pane| pane.clients.len() > 1)
+            .filter(|pane| pane.tabs.len() > 1)
             .find_map(|pane| {
                 let inner = pane.rect.inner();
                 if inner.is_empty() || row != inner.row {
                     return None;
                 }
-                let index = tab_at(&pane.tab_pills(inner, &pane.tab_labels()), column)?;
+                let index = tab_at(&pane.tab_pills(inner), column)?;
                 Some((pane.id, index))
             })
     }
@@ -778,8 +587,9 @@ impl Layout {
             let flash = (chrome.flash)
                 .filter(|&(name, _)| name == pane.name)
                 .map_or(0.0, |(_, flash)| flash);
-            self.draw_outline(scene, pane, outline, (scratched, flash), point);
-            draw_waiting(scene, pane, pane.rect.inner(), scratched);
+            let marks = chrome.marks(pane.id);
+            self.draw_outline(scene, pane, marks, outline, (scratched, flash), point);
+            draw_waiting(scene, pane, pane.rect.inner(), scratched, marks);
             let hover = (chrome.tab_hover)
                 .filter(|&(id, _)| id == pane.id)
                 .map(|(_, index)| index);
@@ -801,6 +611,7 @@ impl Layout {
         &self,
         scene: &mut Scene,
         pane: &Pane,
+        marks: Marks,
         color: Rgba,
         (scratched, flash): (bool, f32),
         point: Option<(&Point, f32)>,
@@ -844,7 +655,7 @@ impl Layout {
         let screenshot_tag = x + left + cell_width * 2;
         let screenshot_end = screenshot_tag + cell_width;
         let screenshot_fits = screenshot_end + padding < x + width - right - cell_width * 2;
-        if pane.screenshots && screenshot_fits {
+        if marks.screenshots && screenshot_fits {
             let size = (cell_width + padding * 2, height);
             let fill = palette::mix(color, palette::FOREGROUND, flash);
             scene.rounded(screenshot_tag - padding, pill_y, size, radius, fill, fill);
@@ -853,7 +664,7 @@ impl Layout {
             limit = screenshot_end + padding + scene.scaled(TAG_GAP);
         }
         let mut end = x + width - right - cell_width * 2;
-        let pinned = pane.pinned;
+        let pinned = marks.pinned;
         let zoomed = self.zoom == Some(pane.id);
         for (text, face) in [
             (PIN_ICON.to_string(), Face::Icon),
@@ -908,7 +719,7 @@ impl Layout {
             ..pane.rect.inner()
         };
         let scratched = chrome.scratch == Some(pane.name.as_str());
-        draw_waiting(scene, pane, inner, scratched);
+        draw_waiting(scene, pane, inner, scratched, chrome.marks(id));
         draw_strip(scene, pane, inner, pane.id == self.focused, None);
         if chrome.bar {
             self.draw_bar(scene, pane, inner, chrome);
@@ -932,7 +743,8 @@ impl Layout {
         let room = buttons[0].1.saturating_sub(start + 2) as usize;
         let (name_x, y) = scene.px(start + 1, row);
         scene.text_px(name_x, y, &fit(&pane.name, room), face, fg);
-        let pinned = pane.pinned;
+        let marks = chrome.marks(pane.id);
+        let pinned = marks.pinned;
         let zoomed = self.zoom == Some(pane.id);
         for (button, x) in buttons {
             let (icon, color) = match button {
@@ -949,7 +761,7 @@ impl Layout {
                 BarButton::Pin if focused => (if pinned { PIN_ICON } else { UNPINNED_ICON }, fg),
                 BarButton::Pin if pinned => (PIN_ICON, FOREGROUND),
                 BarButton::Pin => (UNPINNED_ICON, UNPINNED),
-                BarButton::Screenshots if pane.screenshots => (SCREENSHOTS_ICON, FOREGROUND),
+                BarButton::Screenshots if marks.screenshots => (SCREENSHOTS_ICON, FOREGROUND),
                 BarButton::Screenshots if focused => (NO_SCREENSHOTS_ICON, fg),
                 BarButton::Screenshots => (NO_SCREENSHOTS_ICON, UNPINNED),
                 BarButton::Zoom if zoomed => (UNZOOM_ICON, fg),
@@ -974,20 +786,6 @@ impl Layout {
             scene.icon(x + 1, row, icon, color);
         }
     }
-
-    /// Pin the pane to wait for a window with the app id when it is empty.
-    pub fn pin(&mut self, id: usize, app_id: String) {
-        if let Some(pane) = self.pane_mut(id) {
-            pane.pinned = true;
-            pane.app_id = Some(app_id);
-        }
-    }
-
-    pub fn unpin(&mut self, id: usize) {
-        if let Some(pane) = self.pane_mut(id) {
-            pane.pinned = false;
-        }
-    }
 }
 
 /// The row of tab pills at the top of a pane with more than one client,
@@ -999,15 +797,14 @@ fn draw_strip(
     focused: bool,
     hover: Option<usize>,
 ) {
-    if pane.clients.len() < 2 || inner.is_empty() {
+    if pane.tabs.len() < 2 || inner.is_empty() {
         return;
     }
     scene.fill(CellRect { rows: 1, ..inner }, BAR);
-    let labels = pane.tab_labels();
-    let pills = pane.tab_pills(inner, &labels);
+    let pills = pane.tab_pills(inner);
     let (cell_width, cell_height) = scene.cell();
     let radius = scene.scaled(PILL_RADIUS);
-    for (index, (label, (column, width))) in labels.iter().zip(pills).enumerate() {
+    for (index, (tab, (column, width))) in pane.tabs.iter().zip(pills).enumerate() {
         let shown = index == pane.shown;
         let (x, y) = scene.px(column, inner.row);
         if shown || hover == Some(index) {
@@ -1020,7 +817,7 @@ fn draw_strip(
             (false, _) => (DIM, Face::Chrome),
         };
         if width > 2 {
-            let label = fit(label, width as usize - 2);
+            let label = fit(&tab.label, width as usize - 2);
             scene.text_px(x + cell_width, y, &label, face, color);
         }
     }
@@ -1115,22 +912,12 @@ fn shown_after_removal(shown: usize, removed: usize, remaining: usize) -> usize 
     }
 }
 
-/// Whether the app id is `{prefix}{pane}.t{n}`, the class of a terminal
-/// decade starts as a tab of the pane.
-fn is_terminal_tab(app_id: &str, prefix: &str, pane: &str) -> bool {
-    app_id
-        .strip_prefix(prefix)
-        .and_then(|rest| rest.strip_prefix(pane))
-        .and_then(|rest| rest.strip_prefix(".t"))
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
-fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool) {
-    if inner.is_empty() || !pane.clients.is_empty() {
+fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool, marks: Marks) {
+    if inner.is_empty() || !pane.tabs.is_empty() {
         return;
     }
     let centered = |text: &str| inner.column + inner.columns.saturating_sub(text.len() as u32) / 2;
-    if pane.restartable() {
+    if marks.restartable {
         scene.fill(inner, BACKGROUND);
 
         // the message, a blank row, then a button three rows tall
@@ -1162,8 +949,8 @@ fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool
         scene.text(centered(hint), middle, hint, UNPINNED);
         return;
     }
-    let text = match &pane.app_id {
-        Some(app_id) if pane.pinned => format!("waiting for {app_id}"),
+    let text = match marks.app_id {
+        Some(app_id) if marks.pinned => format!("waiting for {app_id}"),
         _ => "no client".to_string(),
     };
     scene.text(centered(&text), middle, &text, DIM);
@@ -1558,29 +1345,27 @@ pub(super) mod tests {
         rows: 40,
     };
 
-    fn three_anchors() -> Layout {
+    pub fn three_anchors() -> Layout {
         let mut layout = Layout::new(AREA, "chat".to_string());
         layout.add_transient("terminal".to_string());
         layout.add_transient("code".to_string());
-        for (id, name) in [(0, "chat"), (1, "terminal"), (2, "code")] {
-            layout.pin(id, format!("decade.{name}"));
-        }
         layout.focused = 1;
         layout
     }
 
-    #[test]
-    fn a_terminal_at_its_prompt_is_named_by_the_last_directory_of_its_shell() {
-        let home = Path::new("/home/jack");
-        let found =
-            proc::tests::under_shell("cd /usr && setsid sleep 5; true", |sh| running(sh, home));
-        assert_eq!(found.as_deref(), Some("usr"));
-        assert_eq!(last_directory(home, home), "~");
-        assert_eq!(last_directory(Path::new("/"), home), "/");
-        assert_eq!(
-            last_directory(&home.join("projects/decade"), home),
-            "decade"
-        );
+    fn pinned(app_id: Option<&str>) -> Marks<'_> {
+        Marks {
+            pinned: true,
+            app_id,
+            ..Marks::default()
+        }
+    }
+
+    fn screenshots() -> Marks<'static> {
+        Marks {
+            screenshots: true,
+            ..Marks::default()
+        }
     }
 
     #[test]
@@ -1718,40 +1503,6 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_terminal_started_under_a_former_name_lands_in_the_renamed_pane() {
-        let mut layout = three_anchors();
-        let id = layout.add_transient("terminal2".to_string());
-        layout.pane_mut(id).unwrap().rename("build".to_string());
-        assert_eq!(layout.by_name("terminal2"), Some(id));
-        assert_eq!(
-            layout.place(Some("decade.w0.terminal2"), "decade.w0."),
-            Some((id, false))
-        );
-        assert_eq!(
-            layout.place(Some("decade.w0.terminal2.t3"), "decade.w0."),
-            Some((id, true))
-        );
-        assert_eq!(
-            layout.place(Some("decade.w0.build.t2"), "decade.w0."),
-            Some((id, true))
-        );
-    }
-
-    #[test]
-    fn a_transient_pane_is_placed_by_the_app_id_of_the_terminal_started_for_it() {
-        let mut layout = three_anchors();
-        let id = layout.add_transient("terminal2".to_string());
-        assert_eq!(
-            layout.place(Some("decade.w0.terminal2"), "decade.w0."),
-            Some((id, false))
-        );
-        assert_eq!(
-            layout.place(Some("decade.w0.terminal3"), "decade.w0."),
-            None
-        );
-    }
-
-    #[test]
     fn swapping_two_panes_exchanges_their_rects_and_nothing_else() {
         let mut layout = three_anchors();
         let chat = layout.pane(0).unwrap().rect;
@@ -1760,9 +1511,7 @@ pub(super) mod tests {
         assert_eq!(layout.pane(0).unwrap().rect, code);
         assert_eq!(layout.pane(2).unwrap().rect, chat);
         assert_eq!(layout.pane(0).unwrap().name, "chat");
-        let code = layout.pane(2).unwrap();
-        assert!(code.pinned);
-        assert_eq!(code.app_id.as_deref(), Some("decade.code"));
+        assert_eq!(layout.pane(2).unwrap().name, "code");
     }
 
     #[test]
@@ -1777,9 +1526,11 @@ pub(super) mod tests {
     #[test]
     fn a_dragged_pane_leaves_its_slot_empty_and_its_ghost_is_the_inside_of_the_pane() {
         let layout = three_anchors();
+        let marks = [(0, pinned(Some("decade.chat")))];
         let chrome = Chrome {
             dragging: Some(0),
             bar: true,
+            marks: &marks,
             ..Chrome::default()
         };
         let font = decade_ui::Font::load(14.0);
@@ -1802,27 +1553,6 @@ pub(super) mod tests {
                 y: 0
             })
         );
-    }
-
-    #[test]
-    fn a_pinned_transient_pane_waits_for_its_clients_app_id() {
-        let mut layout = three_anchors();
-        let id = layout.add_transient("nautilus".to_string());
-        layout.pin(id, "org.gnome.Nautilus".to_string());
-        assert_eq!(
-            layout.place(Some("org.gnome.Nautilus"), "decade.w0."),
-            Some((id, false))
-        );
-        assert_eq!(layout.pane(id).unwrap().name, "nautilus");
-    }
-
-    #[test]
-    fn an_unpinned_pane_no_longer_waits_for_its_window() {
-        let mut layout = three_anchors();
-        layout.unpin(0);
-        let texts = drawn_texts(&layout, Chrome::default());
-        assert!(!texts.iter().any(|text| text == "waiting for decade.chat"));
-        assert!(texts.iter().any(|text| text == "waiting for decade.code"));
     }
 
     #[test]
@@ -1913,7 +1643,7 @@ pub(super) mod tests {
         assert_eq!(layout.pane(1).unwrap().rect.rows, terminal - 2);
     }
 
-    fn drawn_texts(layout: &Layout, chrome: Chrome) -> Vec<String> {
+    pub fn drawn_texts(layout: &Layout, chrome: Chrome) -> Vec<String> {
         let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
         layout.draw(&mut scene, chrome);
@@ -1929,16 +1659,6 @@ pub(super) mod tests {
                 _ => None,
             })
             .collect()
-    }
-
-    #[test]
-    fn a_pinned_terminal_whose_shell_exited_shows_a_restart_button() {
-        let mut layout = Layout::new(AREA, "terminal".to_string());
-        layout.panes[0].cwd = Some(PathBuf::from("/home/jack"));
-        layout.pin(0, "decade.w0.terminal".to_string());
-        let texts = drawn_texts(&layout, Chrome::default());
-        assert!(texts.iter().any(|text| text == "shell exited"));
-        assert!(texts.iter().any(|text| text == "restart"));
     }
 
     #[test]
@@ -1963,20 +1683,6 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_pinned_gui_pane_without_its_window_waits_and_offers_no_restart() {
-        let mut layout = Layout::new(AREA, "terminal".to_string());
-        layout.pin(0, "org.gnome.Nautilus".to_string());
-        assert!(!layout.panes[0].restartable());
-        let texts = drawn_texts(&layout, Chrome::default());
-        assert!(
-            texts
-                .iter()
-                .any(|text| text == "waiting for org.gnome.Nautilus")
-        );
-        assert!(!texts.iter().any(|text| text == "restart"));
-    }
-
-    #[test]
     fn an_empty_scratch_pane_says_it_is_the_scratch_pane() {
         let layout = Layout::new(AREA, "terminal".to_string());
         let chrome = Chrome {
@@ -1986,32 +1692,6 @@ pub(super) mod tests {
         let texts = drawn_texts(&layout, chrome);
         assert!(texts.iter().any(|text| text == "agents show things here"));
         assert!(!texts.iter().any(|text| text == "no client"));
-    }
-
-    #[test]
-    fn a_window_with_a_tab_class_goes_into_its_pane_even_when_the_pane_has_a_client() {
-        let mut layout = three_anchors();
-        let id = layout.add_transient("terminal2".to_string());
-        assert_eq!(
-            layout.place(Some("decade.w0.terminal2.t2"), "decade.w0."),
-            Some((id, true))
-        );
-        assert_eq!(
-            layout.place(Some("decade.w0.terminal.t13"), "decade.w0."),
-            Some((1, true))
-        );
-        assert_eq!(
-            layout.place(Some("decade.w0.terminal2.t"), "decade.w0."),
-            None
-        );
-        assert_eq!(
-            layout.place(Some("decade.w0.terminal3.t2"), "decade.w0."),
-            None
-        );
-        assert_eq!(
-            layout.place(Some("decade.w1.terminal2.t2"), "decade.w0."),
-            None
-        );
     }
 
     #[test]
@@ -2107,11 +1787,15 @@ pub(super) mod tests {
     #[test]
     fn a_zoomed_pinned_pane_has_two_tags_on_its_top_line_in_its_outline_colour() {
         let mut layout = Layout::new(AREA, "terminal".to_string());
-        layout.pin(0, "decade.terminal".to_string());
         layout.toggle_zoom(0);
         let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, Chrome::default());
+        let marks = [(0, pinned(Some("decade.terminal")))];
+        let chrome = Chrome {
+            marks: &marks,
+            ..Chrome::default()
+        };
+        layout.draw(&mut scene, chrome);
         let tags = rounded(&scene);
         assert_eq!(tags.len(), 2);
         let (_, cell_height) = scene.cell();
@@ -2144,8 +1828,8 @@ pub(super) mod tests {
 
     #[test]
     fn a_pane_accepting_screenshots_has_a_tag_at_the_left_of_its_top_line_that_flashes() {
-        let mut layout = Layout::new(AREA, "terminal".to_string());
-        layout.panes[0].screenshots = true;
+        let layout = Layout::new(AREA, "terminal".to_string());
+        let marks = [(0, screenshots())];
         let font = decade_ui::Font::load(14.0);
         let tags = |flash: Option<(&str, f32)>| {
             let mut scene = Scene::new(&font);
@@ -2153,6 +1837,7 @@ pub(super) mod tests {
                 &mut scene,
                 Chrome {
                     flash,
+                    marks: &marks,
                     ..Chrome::default()
                 },
             );
@@ -2178,12 +1863,21 @@ pub(super) mod tests {
             ..AREA
         };
         let mut layout = Layout::new(narrow, "terminal".to_string());
-        layout.panes[0].screenshots = true;
-        layout.pin(0, "decade.terminal".to_string());
         layout.toggle_zoom(0);
+        let marks = [(
+            0,
+            Marks {
+                screenshots: true,
+                ..pinned(Some("decade.terminal"))
+            },
+        )];
+        let chrome = Chrome {
+            marks: &marks,
+            ..Chrome::default()
+        };
         let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, Chrome::default());
+        layout.draw(&mut scene, chrome);
         let texts = texts(&scene);
         assert!(texts.contains(&SCREENSHOTS_ICON.to_string()));
         assert!(!texts.contains(&"zoom".to_string()));

@@ -1,12 +1,16 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use smithay::reexports::calloop::RegistrationToken;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::wayland::shell::xdg::ToplevelSurface;
 
 use decade_ui::CellRect;
 
 use crate::server::channel::{Out, PaneNames, Router};
-use crate::server::panes::{Layout, Pane};
+use crate::server::clients::Client;
+use crate::server::panes::{self, ContentId, Layout, Marks, Pane};
 use crate::server::scratch::Scratch;
 use decade_channel::AgentState;
 use serde_json::Value;
@@ -36,6 +40,9 @@ pub struct Workspace {
     /// The pane whose screenshot was taken last, and when, while its
     /// screenshot tag flashes.
     pub flash: Option<(String, Instant)>,
+
+    /// The id the next client to arrive in a pane gets.
+    next_content: u64,
 }
 
 /// A named set of workspaces, which only the sidebar shows.
@@ -59,11 +66,306 @@ pub struct Point {
 pub struct Tab {
     pub layout: Layout,
 
+    /// What decade keeps about each pane of `layout`, by pane id.
+    pub info: HashMap<usize, PaneInfo>,
+
+    /// The window each tab of the panes shows.
+    pub clients: HashMap<ContentId, Client>,
+
     /// The name the person gave the tab, shown in place of its label.
     pub name: Option<String>,
 
     /// Whether the tab goes once its last client has.
     pub closing: bool,
+}
+
+/// What decade keeps about a pane besides its place in the layout.
+pub struct PaneInfo {
+    /// Whether the pane stays, waiting for its program, when its last
+    /// client goes.
+    pub pinned: bool,
+
+    /// The number in the app id of the next terminal tab decade starts.
+    pub next_tab: u32,
+
+    /// The app id of the last client in the pane that is not a terminal
+    /// tab, which an empty pane waits for.
+    pub app_id: Option<String>,
+
+    /// Where decade starts the pane's shell, for a pane that holds a terminal.
+    pub cwd: Option<PathBuf>,
+
+    /// The ghostty decade started for the pane.
+    pub pid: Option<u32>,
+
+    /// The name of the live agent in the pane, which labels its first tab.
+    pub agent: Option<String>,
+
+    /// Whether an agent may take a screenshot of the pane without asking.
+    pub screenshots: bool,
+}
+
+impl Default for PaneInfo {
+    fn default() -> PaneInfo {
+        PaneInfo {
+            pinned: false,
+            next_tab: 2,
+            app_id: None,
+            cwd: None,
+            pid: None,
+            agent: None,
+            screenshots: false,
+        }
+    }
+}
+
+impl Tab {
+    /// A tab holding `layout`, with nothing kept yet about its panes.
+    pub fn new(layout: Layout) -> Tab {
+        let info = (layout.panes.iter())
+            .map(|pane| (pane.id, PaneInfo::default()))
+            .collect();
+        Tab {
+            layout,
+            info,
+            clients: HashMap::new(),
+            name: None,
+            closing: false,
+        }
+    }
+
+    pub fn info(&self, id: usize) -> &PaneInfo {
+        &self.info[&id]
+    }
+
+    pub fn info_mut(&mut self, id: usize) -> &mut PaneInfo {
+        self.info.get_mut(&id).unwrap()
+    }
+
+    /// Split pane `at` to add a pane named `name`, focus the new pane, and
+    /// return its id.
+    pub fn add_pane(&mut self, at: usize, name: String) -> usize {
+        let id = self.layout.add_beside(at, name);
+        self.info.insert(id, PaneInfo::default());
+        id
+    }
+
+    /// Remove pane `id` and the clients in its tabs. The layout's last
+    /// pane stays, with no tabs.
+    pub fn remove_pane(&mut self, id: usize) {
+        if let Some(pane) = self.layout.pane(id) {
+            for tab in &pane.tabs {
+                self.clients.remove(&tab.content);
+            }
+        }
+        self.layout.remove(id);
+        if self.layout.pane(id).is_none() {
+            self.info.remove(&id);
+        }
+    }
+
+    /// The clients in the pane's tabs, in tab order.
+    pub fn clients_in<'a>(&'a self, pane: &'a Pane) -> impl Iterator<Item = &'a Client> {
+        (pane.tabs.iter()).map(|tab| &self.clients[&tab.content])
+    }
+
+    /// The window of the tab pane `id` draws.
+    pub fn toplevel(&self, id: usize) -> Option<&ToplevelSurface> {
+        let content = self.layout.pane(id)?.content()?;
+        Some(&self.clients[&content].toplevel)
+    }
+
+    /// The pane with a tab showing `surface`.
+    pub fn pane_of_surface(&self, surface: &WlSurface) -> Option<usize> {
+        (self.layout.panes.iter())
+            .find(|pane| {
+                self.clients_in(pane)
+                    .any(|client| client.toplevel.wl_surface() == surface)
+            })
+            .map(|pane| pane.id)
+    }
+
+    /// Add a window as a tab of pane `id` and show it. A terminal tab
+    /// decade started goes last. Any other window goes first, and an empty
+    /// pane waits for its app id.
+    pub fn add_client(&mut self, id: usize, content: ContentId, client: Client) {
+        let Some(pane) = self.layout.pane_mut(id) else {
+            return;
+        };
+        let tab = panes::Tab {
+            content,
+            label: String::new(),
+        };
+        if client.terminal_tab {
+            pane.add_tab(pane.tabs.len(), tab);
+        } else {
+            if let Some(info) = self.info.get_mut(&id) {
+                info.app_id = client.app_id.clone();
+            }
+            pane.add_tab(0, tab);
+        }
+        self.clients.insert(content, client);
+        self.relabel(id);
+    }
+
+    /// Remove the tab of pane `id` that shows `toplevel`.
+    pub fn remove_client(&mut self, id: usize, toplevel: &ToplevelSurface) {
+        let Some(pane) = self.layout.pane_mut(id) else {
+            return;
+        };
+        let index =
+            (pane.tabs.iter()).position(|tab| self.clients[&tab.content].toplevel == *toplevel);
+        if let Some(index) = index {
+            let removed = pane.remove_tab(index);
+            self.clients.remove(&removed.content);
+        }
+        self.relabel(id);
+    }
+
+    /// Record `pid` as the ghostty decade started for pane `id`.
+    pub fn started(&mut self, id: usize, pid: u32) {
+        self.info_mut(id).pid = Some(pid);
+        self.relabel(id);
+    }
+
+    /// Whether pane `id` is a pinned terminal whose shell has exited.
+    pub fn restartable(&self, id: usize) -> bool {
+        let (Some(pane), Some(info)) = (self.layout.pane(id), self.info.get(&id)) else {
+            return false;
+        };
+        pane.tabs.is_empty() && info.cwd.is_some() && info.pinned
+    }
+
+    /// The pane a new window with this app id goes in, and whether the
+    /// window is a terminal tab decade started for that pane.
+    pub fn place(&self, app_id: Option<&str>, prefix: &str) -> Option<(usize, bool)> {
+        let app_id = app_id?;
+        let panes = &self.layout.panes;
+        if let Some(pane) = (panes.iter())
+            .find(|pane| (pane.names()).any(|name| is_terminal_tab(app_id, prefix, name)))
+        {
+            return Some((pane.id, true));
+        }
+
+        // a restored pane's own terminal can arrive after its tabs
+        if let Some(pane) = panes.iter().find(|pane| {
+            (app_id.strip_prefix(prefix)).is_some_and(|name| pane.answers_to(name))
+                && self.clients_in(pane).all(|client| client.terminal_tab)
+        }) {
+            return Some((pane.id, false));
+        }
+        (panes.iter())
+            .find(|pane| {
+                pane.tabs.is_empty() && self.info(pane.id).app_id.as_deref() == Some(app_id)
+            })
+            .map(|pane| (pane.id, false))
+    }
+
+    /// Pin the pane to wait for a window with the app id when it is empty.
+    pub fn pin(&mut self, id: usize, app_id: String) {
+        if let Some(info) = self.info.get_mut(&id) {
+            info.pinned = true;
+            info.app_id = Some(app_id);
+        }
+    }
+
+    pub fn unpin(&mut self, id: usize) {
+        if let Some(info) = self.info.get_mut(&id) {
+            info.pinned = false;
+        }
+    }
+
+    /// Read again what the clients of pane `id` whose labels are drawn
+    /// run: every client when the pane shows its tabs, or else the shown
+    /// one.
+    fn refresh_running(&mut self, id: usize, now: Instant, home: &Path) {
+        let Some(pane) = self.layout.pane(id) else {
+            return;
+        };
+        let pane_pid = self.info(id).pid;
+        let drawn = if pane.tabs.len() > 1 {
+            &pane.tabs[..]
+        } else {
+            pane.tabs.get(pane.shown..=pane.shown).unwrap_or_default()
+        };
+        for tab in drawn {
+            if let Some(client) = self.clients.get_mut(&tab.content) {
+                client.refresh_running(pane_pid, now, home);
+            }
+        }
+        self.relabel(id);
+    }
+
+    /// Label each tab of pane `id` with what its client runs, or else
+    /// with its number.
+    fn relabel(&mut self, id: usize) {
+        let Some(pane) = self.layout.pane_mut(id) else {
+            return;
+        };
+        let info = &self.info[&id];
+        for (index, tab) in pane.tabs.iter_mut().enumerate() {
+            let client = &self.clients[&tab.content];
+            tab.label = tab_label(info, client, index).unwrap_or_else(|| (index + 1).to_string());
+        }
+    }
+
+    /// What runs in pane `id`: the agent's name when the shown tab is its
+    /// first, or else what its shown client runs, or the pane's name.
+    pub fn running_label(&self, id: usize) -> Option<String> {
+        let pane = self.layout.pane(id)?;
+        let label = (pane.tabs.get(pane.shown))
+            .and_then(|tab| tab_label(self.info(id), &self.clients[&tab.content], pane.shown));
+        Some(label.unwrap_or_else(|| pane.name.clone()))
+    }
+
+    /// The title of pane `id`'s shown client, or the last part of its app
+    /// id, or else the pane's name.
+    pub fn title(&self, id: usize) -> Option<String> {
+        let pane = self.layout.pane(id)?;
+        let client = pane.content().map(|content| &self.clients[&content]);
+        Some(
+            client
+                .and_then(Client::label)
+                .unwrap_or_else(|| pane.name.clone()),
+        )
+    }
+
+    /// The marks of each pane, for drawing the layout.
+    pub fn marks(&self) -> Vec<(usize, Marks<'_>)> {
+        (self.layout.panes.iter())
+            .map(|pane| {
+                let info = self.info(pane.id);
+                let marks = Marks {
+                    pinned: info.pinned,
+                    screenshots: info.screenshots,
+                    restartable: self.restartable(pane.id),
+                    app_id: info.app_id.as_deref(),
+                };
+                (pane.id, marks)
+            })
+            .collect()
+    }
+}
+
+/// The agent's name for the first tab, or else what tab `index`'s client
+/// runs.
+fn tab_label(info: &PaneInfo, client: &Client, index: usize) -> Option<String> {
+    // an agent names only the pane it claimed, not which of the
+    // pane's clients runs it, so the first tab takes the name
+    match &info.agent {
+        Some(agent) if index == 0 => Some(agent.clone()),
+        _ => client.running_label(info.pid),
+    }
+}
+
+/// Whether the app id is `{prefix}{pane}.t{n}`, the class of a terminal
+/// decade starts as a tab of the pane.
+fn is_terminal_tab(app_id: &str, prefix: &str, pane: &str) -> bool {
+    app_id
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_prefix(pane))
+        .and_then(|rest| rest.strip_prefix(".t"))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 /// The name a pane sees in `from` on a verb sent over MCP.
@@ -186,26 +488,18 @@ impl Workspace {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| cwd.display().to_string());
-        let mut layout = Layout::new(area, "terminal".to_string());
-        layout.panes[0].cwd = Some(cwd.clone());
-        Workspace::with_tabs(id, name, cwd, vec![layout], 0)
+        let mut tab = Tab::new(Layout::new(area, "terminal".to_string()));
+        tab.info_mut(0).cwd = Some(cwd.clone());
+        Workspace::with_tabs(id, name, cwd, vec![tab], 0)
     }
 
     pub fn with_tabs(
         id: u32,
         name: String,
         cwd: PathBuf,
-        layouts: Vec<Layout>,
+        tabs: Vec<Tab>,
         active_tab: usize,
     ) -> Workspace {
-        let tabs: Vec<Tab> = layouts
-            .into_iter()
-            .map(|layout| Tab {
-                layout,
-                name: None,
-                closing: false,
-            })
-            .collect();
         Workspace {
             id,
             name,
@@ -220,6 +514,7 @@ impl Workspace {
             point: None,
             group: None,
             flash: None,
+            next_content: 0,
         }
     }
 
@@ -243,9 +538,10 @@ impl Workspace {
         for (index, tab) in self.tabs.iter_mut().enumerate() {
             let focused = tab.layout.focused;
             let active = index == self.active_tab;
-            for pane in &mut tab.layout.panes {
-                if active || pane.id == focused {
-                    pane.refresh_running(now, home);
+            for index in 0..tab.layout.panes.len() {
+                let id = tab.layout.panes[index].id;
+                if active || id == focused {
+                    tab.refresh_running(id, now, home);
                 }
             }
         }
@@ -254,11 +550,27 @@ impl Workspace {
     /// Give each pane the name of the live agent in it, or `None`.
     pub fn name_agents(&mut self) {
         let agents = &self.router.agents.list;
-        for pane in self.tabs.iter_mut().flat_map(|tab| &mut tab.layout.panes) {
-            pane.agent = (agents.iter())
-                .find(|agent| agent.live() && agent.pane.as_deref() == Some(pane.name.as_str()))
-                .map(|agent| agent.name.clone());
+        for tab in &mut self.tabs {
+            for index in 0..tab.layout.panes.len() {
+                let pane = &tab.layout.panes[index];
+                let agent = (agents.iter())
+                    .find(|agent| agent.live() && agent.pane.as_deref() == Some(pane.name.as_str()))
+                    .map(|agent| agent.name.clone());
+                let id = pane.id;
+                let info = tab.info_mut(id);
+                if info.agent != agent {
+                    info.agent = agent;
+                    tab.relabel(id);
+                }
+            }
         }
+    }
+
+    /// Add a window as a tab of pane `id` in tab `tab`, and show it.
+    pub fn add_client(&mut self, tab: usize, id: usize, client: Client) {
+        let content = ContentId(self.next_content);
+        self.next_content += 1;
+        self.tabs[tab].add_client(id, content, client);
     }
 
     /// Answer one line from socket client `id`.
@@ -302,6 +614,15 @@ impl Workspace {
         &mut self.tabs[self.active_tab].layout
     }
 
+    /// The active tab.
+    pub fn tab(&self) -> &Tab {
+        &self.tabs[self.active_tab]
+    }
+
+    pub fn tab_mut(&mut self) -> &mut Tab {
+        &mut self.tabs[self.active_tab]
+    }
+
     /// The panes of every tab.
     pub fn panes(&self) -> impl Iterator<Item = &Pane> {
         self.tabs.iter().flat_map(|tab| &tab.layout.panes)
@@ -325,11 +646,9 @@ impl Workspace {
     /// and return its id.
     pub fn add_pane(&mut self, tab: usize, at: usize, base: &str, cwd: Option<PathBuf>) -> usize {
         let name = self.unique_pane_name(base);
-        let layout = &mut self.tabs[tab].layout;
-        let id = layout.add_beside(at, name);
-        if let Some(pane) = layout.pane_mut(id) {
-            pane.cwd = cwd;
-        }
+        let entry = &mut self.tabs[tab];
+        let id = entry.add_pane(at, name);
+        entry.info_mut(id).cwd = cwd;
         id
     }
 
@@ -337,13 +656,9 @@ impl Workspace {
     /// its index and the terminal's name.
     pub fn add_tab(&mut self, area: CellRect) -> (usize, String) {
         let name = self.unique_pane_name("terminal");
-        let mut layout = Layout::new(area, name.clone());
-        layout.panes[0].cwd = Some(self.cwd.clone());
-        self.tabs.push(Tab {
-            layout,
-            name: None,
-            closing: false,
-        });
+        let mut tab = Tab::new(Layout::new(area, name.clone()));
+        tab.info_mut(0).cwd = Some(self.cwd.clone());
+        self.tabs.push(tab);
         (self.tabs.len() - 1, name)
     }
 
@@ -399,10 +714,8 @@ impl Workspace {
 
     /// The closing tabs that no client is left in.
     pub fn closed_tabs(&self) -> impl Iterator<Item = usize> + '_ {
-        self.tabs.iter().enumerate().filter_map(|(index, tab)| {
-            let clients = tab.layout.panes.iter().any(|pane| !pane.clients.is_empty());
-            (tab.closing && !clients).then_some(index)
-        })
+        (self.tabs.iter().enumerate())
+            .filter_map(|(index, tab)| (tab.closing && tab.clients.is_empty()).then_some(index))
     }
 
     /// Remove a tab and its panes, keeping the active tab where it was
@@ -492,21 +805,22 @@ impl Workspace {
         self.flash.is_some()
     }
 
-    /// Whether the pane stays when it has no client: it is pinned or it is
-    /// the scratch pane.
-    pub fn keeps_empty(&self, pane: &Pane) -> bool {
-        pane.pinned || self.is_scratch(pane)
+    /// Whether the pane of tab `tab` stays when it has no client: it is
+    /// pinned or it is the scratch pane.
+    pub fn keeps_empty(&self, tab: usize, pane: &Pane) -> bool {
+        self.tabs[tab].info(pane.id).pinned || self.is_scratch(pane)
     }
 
     /// Whether tab `tab` has nothing left in it and closes: no pane has a
     /// client or a running program, and none is kept empty. The
     /// workspace's only tab never does.
     pub fn tab_is_spent(&self, tab: usize, mut running: impl FnMut(u32) -> bool) -> bool {
+        let entry = &self.tabs[tab];
         self.tabs.len() > 1
-            && self.tabs[tab].layout.panes.iter().all(|pane| {
-                pane.clients.is_empty()
-                    && !self.keeps_empty(pane)
-                    && !pane.pid.is_some_and(&mut running)
+            && entry.layout.panes.iter().all(|pane| {
+                pane.tabs.is_empty()
+                    && !self.keeps_empty(tab, pane)
+                    && !entry.info(pane.id).pid.is_some_and(&mut running)
             })
     }
 
@@ -674,7 +988,7 @@ mod tests {
         assert_eq!(workspace.unique_pane_name("terminal"), "terminal4");
         assert_eq!(workspace.unique_pane_name("nautilus"), "nautilus");
         assert_eq!(workspace.by_name("terminal2"), Some((1, 0)));
-        let cwd = workspace.tabs[1].layout.panes[0].cwd.as_deref();
+        let cwd = workspace.tabs[1].info(0).cwd.as_deref();
         assert_eq!(cwd, Some(std::path::Path::new("/home/jack")));
     }
 
@@ -690,19 +1004,20 @@ mod tests {
         );
         let pane = workspace.tabs[0].layout.pane(id).unwrap();
         assert_eq!(pane.name, "terminal3");
-        assert_eq!(pane.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
+        let cwd = workspace.tabs[0].info(id).cwd.as_deref();
+        assert_eq!(cwd, Some(std::path::Path::new("/tmp")));
         assert_eq!(workspace.tabs[0].layout.focused, id);
     }
 
     #[test]
     fn an_empty_pane_is_kept_while_it_is_pinned_or_the_scratch_pane() {
         let mut workspace = at_home();
-        assert!(!workspace.keeps_empty(&workspace.layout().panes[0]));
+        assert!(!workspace.keeps_empty(0, &workspace.layout().panes[0]));
         workspace.toggle_scratch("terminal");
-        assert!(workspace.keeps_empty(&workspace.layout().panes[0]));
+        assert!(workspace.keeps_empty(0, &workspace.layout().panes[0]));
         workspace.toggle_scratch("terminal");
-        workspace.layout_mut().pin(0, "decade.terminal".to_string());
-        assert!(workspace.keeps_empty(&workspace.layout().panes[0]));
+        workspace.tab_mut().pin(0, "decade.terminal".to_string());
+        assert!(workspace.keeps_empty(0, &workspace.layout().panes[0]));
     }
 
     #[test]
@@ -711,7 +1026,7 @@ mod tests {
         assert!(!workspace.tab_is_spent(0, |_| false));
         workspace.add_tab(crate::server::panes::tests::AREA);
         assert!(workspace.tab_is_spent(1, |_| false));
-        workspace.tabs[1].layout.panes[0].pid = Some(7);
+        workspace.tabs[1].info_mut(0).pid = Some(7);
         assert!(!workspace.tab_is_spent(1, |pid| pid == 7));
         assert!(workspace.tab_is_spent(1, |_| false));
         let name = workspace.tabs[1].layout.panes[0].name.clone();
@@ -719,9 +1034,7 @@ mod tests {
         assert!(!workspace.tab_is_spent(1, |_| false));
         workspace.toggle_scratch(&name);
         let id = workspace.tabs[1].layout.panes[0].id;
-        workspace.tabs[1]
-            .layout
-            .pin(id, "decade.terminal".to_string());
+        workspace.tabs[1].pin(id, "decade.terminal".to_string());
         assert!(!workspace.tab_is_spent(1, |_| false));
     }
 
@@ -797,8 +1110,7 @@ mod tests {
             r#"{"hello": {"name": "coax", "pane": "terminal2", "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#,
         );
         workspace.name_agents();
-        let agent =
-            |workspace: &Workspace, tab: usize| workspace.tabs[tab].layout.panes[0].agent.clone();
+        let agent = |workspace: &Workspace, tab: usize| workspace.tabs[tab].info(0).agent.clone();
         assert_eq!(agent(&workspace, 0), None);
         assert_eq!(agent(&workspace, 1).as_deref(), Some("coax"));
         workspace.router.disconnect(1, Instant::now());
@@ -966,5 +1278,147 @@ mod tests {
         workspace.rename_tab(0, "work").unwrap();
         workspace.rename_tab(1, "play").unwrap();
         assert_eq!(workspace.tabs[1].name.as_deref(), Some("play"));
+    }
+
+    fn three_anchors() -> Tab {
+        let mut tab = Tab::new(panes::tests::three_anchors());
+        for (id, name) in [(0, "chat"), (1, "terminal"), (2, "code")] {
+            tab.pin(id, format!("decade.{name}"));
+        }
+        tab
+    }
+
+    fn add_transient(tab: &mut Tab, name: &str) -> usize {
+        let focused = tab.layout.focused;
+        tab.add_pane(focused, name.to_string())
+    }
+
+    fn drawn_texts(tab: &Tab) -> Vec<String> {
+        let marks = tab.marks();
+        let chrome = panes::Chrome {
+            marks: &marks,
+            ..panes::Chrome::default()
+        };
+        panes::tests::drawn_texts(&tab.layout, chrome)
+    }
+
+    #[test]
+    fn a_terminal_started_under_a_former_name_lands_in_the_renamed_pane() {
+        let mut tab = three_anchors();
+        let id = add_transient(&mut tab, "terminal2");
+        tab.layout.pane_mut(id).unwrap().rename("build".to_string());
+        assert_eq!(tab.layout.by_name("terminal2"), Some(id));
+        assert_eq!(
+            tab.place(Some("decade.w0.terminal2"), "decade.w0."),
+            Some((id, false))
+        );
+        assert_eq!(
+            tab.place(Some("decade.w0.terminal2.t3"), "decade.w0."),
+            Some((id, true))
+        );
+        assert_eq!(
+            tab.place(Some("decade.w0.build.t2"), "decade.w0."),
+            Some((id, true))
+        );
+    }
+
+    #[test]
+    fn a_transient_pane_is_placed_by_the_app_id_of_the_terminal_started_for_it() {
+        let mut tab = three_anchors();
+        let id = add_transient(&mut tab, "terminal2");
+        assert_eq!(
+            tab.place(Some("decade.w0.terminal2"), "decade.w0."),
+            Some((id, false))
+        );
+        assert_eq!(tab.place(Some("decade.w0.terminal3"), "decade.w0."), None);
+    }
+
+    #[test]
+    fn a_pinned_transient_pane_waits_for_its_clients_app_id() {
+        let mut tab = three_anchors();
+        let id = add_transient(&mut tab, "nautilus");
+        tab.pin(id, "org.gnome.Nautilus".to_string());
+        assert_eq!(
+            tab.place(Some("org.gnome.Nautilus"), "decade.w0."),
+            Some((id, false))
+        );
+        assert_eq!(tab.layout.pane(id).unwrap().name, "nautilus");
+    }
+
+    #[test]
+    fn an_unpinned_pane_no_longer_waits_for_its_window() {
+        let mut tab = three_anchors();
+        tab.unpin(0);
+        let texts = drawn_texts(&tab);
+        assert!(!texts.iter().any(|text| text == "waiting for decade.chat"));
+        assert!(texts.iter().any(|text| text == "waiting for decade.code"));
+    }
+
+    #[test]
+    fn a_swapped_pane_keeps_its_pin_and_app_id() {
+        let mut tab = three_anchors();
+        tab.layout.apply_drop(0, panes::Drop::Swap(2));
+        let code = tab.info(2);
+        assert!(code.pinned);
+        assert_eq!(code.app_id.as_deref(), Some("decade.code"));
+    }
+
+    #[test]
+    fn a_pinned_terminal_whose_shell_exited_shows_a_restart_button() {
+        let mut tab = Tab::new(Layout::new(panes::tests::AREA, "terminal".to_string()));
+        tab.info_mut(0).cwd = Some(PathBuf::from("/home/jack"));
+        tab.pin(0, "decade.w0.terminal".to_string());
+        assert!(tab.restartable(0));
+        let texts = drawn_texts(&tab);
+        assert!(texts.iter().any(|text| text == "shell exited"));
+        assert!(texts.iter().any(|text| text == "restart"));
+    }
+
+    #[test]
+    fn a_pinned_gui_pane_without_its_window_waits_and_offers_no_restart() {
+        let mut tab = Tab::new(Layout::new(panes::tests::AREA, "terminal".to_string()));
+        tab.pin(0, "org.gnome.Nautilus".to_string());
+        assert!(!tab.restartable(0));
+        let texts = drawn_texts(&tab);
+        assert!(
+            texts
+                .iter()
+                .any(|text| text == "waiting for org.gnome.Nautilus")
+        );
+        assert!(!texts.iter().any(|text| text == "restart"));
+    }
+
+    #[test]
+    fn a_window_with_a_tab_class_goes_into_its_pane_even_when_the_pane_has_a_client() {
+        let mut tab = three_anchors();
+        let id = add_transient(&mut tab, "terminal2");
+        assert_eq!(
+            tab.place(Some("decade.w0.terminal2.t2"), "decade.w0."),
+            Some((id, true))
+        );
+        assert_eq!(
+            tab.place(Some("decade.w0.terminal.t13"), "decade.w0."),
+            Some((1, true))
+        );
+        assert_eq!(tab.place(Some("decade.w0.terminal2.t"), "decade.w0."), None);
+        assert_eq!(
+            tab.place(Some("decade.w0.terminal3.t2"), "decade.w0."),
+            None
+        );
+        assert_eq!(
+            tab.place(Some("decade.w1.terminal2.t2"), "decade.w0."),
+            None
+        );
+    }
+
+    #[test]
+    fn removing_a_pane_drops_what_is_kept_about_it_but_the_last_pane_keeps_its_own() {
+        let mut tab = three_anchors();
+        tab.remove_pane(2);
+        assert!(!tab.info.contains_key(&2));
+        tab.remove_pane(1);
+        tab.remove_pane(0);
+        assert!(tab.info(0).pinned);
+        assert_eq!(tab.info.len(), 1);
     }
 }

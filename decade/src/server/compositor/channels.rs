@@ -203,12 +203,11 @@ impl State {
         )?;
         let occupants = shown
             .by_name(name)
-            .and_then(|(tab, id)| shown.tabs[tab].layout.pane(id))
-            .map(|pane| {
-                pane.clients
-                    .iter()
-                    .map(|client| client.toplevel.clone())
-                    .collect()
+            .and_then(|(tab, id)| {
+                let entry = &shown.tabs[tab];
+                let pane = entry.layout.pane(id)?;
+                let toplevels = entry.clients_in(pane).map(|client| client.toplevel.clone());
+                Some(toplevels.collect())
             })
             .unwrap_or_default();
         Ok((launch, wait, occupants))
@@ -390,7 +389,7 @@ impl State {
             }) else {
                 continue;
             };
-            if !workspace.tabs[tab].layout.pane(id)?.clients.is_empty() {
+            if !workspace.tabs[tab].layout.pane(id)?.tabs.is_empty() {
                 continue;
             }
             scratch.expected = None;

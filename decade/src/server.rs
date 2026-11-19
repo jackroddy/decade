@@ -3,6 +3,7 @@ mod apps;
 mod channel;
 mod children;
 pub(super) mod chrome;
+mod clients;
 pub(super) mod compositor;
 mod mcp;
 mod panes;

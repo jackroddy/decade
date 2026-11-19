@@ -96,7 +96,7 @@ impl State {
             .layout
             .pane(id)
             .ok_or_else(|| format!("no pane named {pane}"))?;
-        Ok((pane.name.clone(), pane.screenshots))
+        Ok((pane.name.clone(), shown.tabs[tab].info(id).screenshots))
     }
 
     /// Put up the dialog for a screenshot of the pane named `pane`, take
@@ -189,7 +189,7 @@ impl State {
     fn capture_fresh(&mut self, workspace: usize, pane: String, reply: Reply) {
         let shown = &self.workspaces[workspace];
         let surface = (shown.by_name(&pane))
-            .and_then(|(tab, id)| shown.tabs[tab].layout.pane(id)?.toplevel())
+            .and_then(|(tab, id)| shown.tabs[tab].toplevel(id))
             .map(|toplevel| toplevel.wl_surface().clone())
             .filter(waits_for_frame);
         let Some(surface) = surface else {
@@ -242,16 +242,16 @@ impl State {
     fn accept_screenshots(&mut self, workspace: usize, pane: &str) {
         let shown = &mut self.workspaces[workspace];
         if let Some((tab, id)) = shown.by_name(pane)
-            && let Some(pane) = shown.tabs[tab].layout.pane_mut(id)
+            && let Some(info) = shown.tabs[tab].info.get_mut(&id)
         {
-            pane.screenshots = true;
+            info.screenshots = true;
         }
     }
 
     /// Turn the accept screenshots mode of pane `id` on screen on or off.
     pub(super) fn toggle_screenshots(&mut self, id: usize) {
-        if let Some(pane) = self.layout_mut().pane_mut(id) {
-            pane.screenshots = !pane.screenshots;
+        if let Some(info) = self.tab_mut().info.get_mut(&id) {
+            info.screenshots = !info.screenshots;
             self.request_redraw();
         }
     }

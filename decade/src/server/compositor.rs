@@ -84,8 +84,9 @@ use crate::server::chrome::picker::{Grid, Picker};
 use crate::server::chrome::rename::{NameField, Named};
 use crate::server::chrome::settings::{self, Settings};
 use crate::server::chrome::text::Text;
+use crate::server::clients::{self, Client as PaneClient};
 use crate::server::mcp;
-use crate::server::panes::{self as panes, BarButton, Layout, Pane};
+use crate::server::panes::{BarButton, Layout, Pane};
 use crate::server::proc;
 use crate::server::save::{self, TerminalTab};
 use crate::server::workspace::{self, Group, Workspace};
@@ -583,7 +584,7 @@ impl State {
         let terminals: Vec<(usize, usize)> = (self.workspaces[workspace].tabs.iter().enumerate())
             .flat_map(|(tab, entry)| {
                 (entry.layout.panes.iter())
-                    .filter(|pane| pane.cwd.is_some())
+                    .filter(|pane| entry.info(pane.id).cwd.is_some())
                     .map(move |pane| (tab, pane.id))
             })
             .collect();
@@ -597,12 +598,14 @@ impl State {
 
     /// Start a ghostty that goes in the pane as a new tab.
     fn spawn_pane_tab(&mut self, workspace: usize, tab: usize, id: usize, cwd: &Path) {
-        let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane_mut(id) else {
+        let entry = &mut self.workspaces[workspace].tabs[tab];
+        let Some(pane) = entry.layout.pane(id) else {
             return;
         };
-        let class = format!("{}.t{}", pane.name, pane.next_tab);
-        pane.next_tab += 1;
         let name = pane.name.clone();
+        let info = entry.info_mut(id);
+        let class = format!("{name}.t{}", info.next_tab);
+        info.next_tab += 1;
         let ghostty = self
             .children
             .ghostty(&self.workspaces[workspace], &name, &class, cwd);
@@ -617,13 +620,14 @@ impl State {
         let Some(pane) = shown.tabs[tab].layout.pane(id) else {
             return;
         };
-        let cwd = pane.cwd.as_deref().unwrap_or(&shown.cwd);
+        let cwd = shown.tabs[tab]
+            .info(id)
+            .cwd
+            .as_deref()
+            .unwrap_or(&shown.cwd);
         let ghostty = self.children.ghostty(shown, &pane.name, &pane.name, cwd);
         match self.children.spawn(ghostty) {
-            Ok(pid) => {
-                let layout = &mut self.workspaces[workspace].tabs[tab].layout;
-                layout.pane_mut(id).unwrap().pid = Some(pid);
-            }
+            Ok(pid) => self.workspaces[workspace].tabs[tab].started(id, pid),
             Err(error) => eprintln!("decade: {error}"),
         }
     }
@@ -656,20 +660,27 @@ impl State {
         self.workspaces[current].layout_mut()
     }
 
+    /// The active tab of the workspace on screen.
+    fn tab(&self) -> &workspace::Tab {
+        self.workspaces[self.current()].tab()
+    }
+
+    fn tab_mut(&mut self) -> &mut workspace::Tab {
+        let current = self.current();
+        self.workspaces[current].tab_mut()
+    }
+
     /// The workspace, tab and id of the pane showing `surface`.
     fn pane_of_surface(&self, surface: &WlSurface) -> Option<(usize, usize, usize)> {
         self.workspaces
             .iter()
             .enumerate()
             .find_map(|(index, workspace)| {
-                workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
-                    let pane = entry.layout.panes.iter().find(|pane| {
-                        pane.clients
-                            .iter()
-                            .any(|client| client.toplevel.wl_surface() == surface)
-                    })?;
-                    Some((index, tab, pane.id))
-                })
+                workspace
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .find_map(|(tab, entry)| Some((index, tab, entry.pane_of_surface(surface)?)))
             })
     }
 
@@ -737,7 +748,7 @@ impl State {
     fn mark_closing(&mut self, workspace: usize, tab: usize) {
         let closed = &mut self.workspaces[workspace].tabs[tab];
         closed.closing = true;
-        for client in closed.layout.panes.iter().flat_map(|pane| &pane.clients) {
+        for client in closed.clients.values() {
             client.toplevel.send_close();
         }
     }
@@ -841,8 +852,9 @@ impl State {
             if shown {
                 continue;
             }
-            for pane in &workspace.layout().panes {
-                if let Some(toplevel) = pane.toplevel() {
+            let tab = workspace.tab();
+            for pane in &tab.layout.panes {
+                if let Some(toplevel) = tab.toplevel(pane.id) {
                     send_frames_surface_tree(toplevel.wl_surface(), time);
                 }
             }
@@ -1044,11 +1056,9 @@ impl State {
         if rescaled {
             self.scale = scale;
             self.text = Text::new(&self.settings, scale);
-            for client in self
-                .workspaces
-                .iter()
-                .flat_map(|workspace| workspace.panes())
-                .flat_map(|pane| &pane.clients)
+            for client in (self.workspaces.iter())
+                .flat_map(|workspace| &workspace.tabs)
+                .flat_map(|tab| tab.clients.values())
             {
                 self.send_scale(client.toplevel.wl_surface());
             }
@@ -1185,7 +1195,8 @@ impl State {
 
     fn configure(&self, workspace: usize, tab: usize, id: usize) {
         let shown = &self.workspaces[workspace];
-        let layout = &shown.tabs[tab].layout;
+        let entry = &shown.tabs[tab];
+        let layout = &entry.layout;
         let Some(pane) = layout.pane(id) else {
             return;
         };
@@ -1195,7 +1206,7 @@ impl State {
         }
         let focused =
             workspace == self.current() && tab == shown.active_tab && layout.focused == id;
-        for (index, client) in pane.clients.iter().enumerate() {
+        for (index, client) in entry.clients_in(pane).enumerate() {
             let toplevel = &client.toplevel;
             toplevel.with_pending_state(|state| {
                 state.size = Some(size);
@@ -1235,11 +1246,7 @@ impl State {
         if previous != id {
             self.end_point_at(id);
         }
-        let surface = self
-            .layout()
-            .pane(id)
-            .and_then(|pane| pane.toplevel())
-            .map(|toplevel| toplevel.wl_surface().clone());
+        let surface = (self.tab().toplevel(id)).map(|toplevel| toplevel.wl_surface().clone());
         let keyboard = self.seat.get_keyboard().unwrap();
         keyboard.set_focus(self, surface, SERIAL_COUNTER.next_serial());
         let current = self.current();
@@ -1311,10 +1318,10 @@ impl State {
         let current = self.current();
         let shown = &self.workspaces[current];
         let id = shown.layout().focused;
-        let Some(pane) = shown.layout().pane(id) else {
+        if shown.layout().pane(id).is_none() {
             return;
-        };
-        let cwd = pane.cwd.clone().unwrap_or_else(|| shown.cwd.clone());
+        }
+        let cwd = (shown.tab().info(id).cwd.clone()).unwrap_or_else(|| shown.cwd.clone());
         let tab = shown.active_tab;
         self.spawn_pane_tab(current, tab, id, &cwd);
     }
@@ -1350,13 +1357,15 @@ impl State {
     }
 
     fn restart_pane(&mut self, workspace: usize, id: usize) {
-        let Some(pane) = self.workspaces[workspace].layout().pane(id) else {
-            return;
-        };
-        if !pane.restartable() {
+        let tab = self.workspaces[workspace].tab();
+        if !tab.restartable(id) {
             return;
         }
-        if pane.pid.is_some_and(|pid| self.children.running(pid)) {
+        if tab
+            .info(id)
+            .pid
+            .is_some_and(|pid| self.children.running(pid))
+        {
             return;
         }
         let tab = self.workspaces[workspace].active_tab;
@@ -1365,13 +1374,13 @@ impl State {
 
     fn remove_pane(&mut self, workspace: usize, tab: usize, id: usize) {
         let shown = &mut self.workspaces[workspace];
-        let layout = &mut shown.tabs[tab].layout;
-        let Some(pane) = layout.pane(id) else {
+        let entry = &mut shown.tabs[tab];
+        let Some(pane) = entry.layout.pane(id) else {
             return;
         };
         let name = pane.name.clone();
-        let removed = pane.pid;
-        layout.remove(id);
+        let removed = entry.info(id).pid;
+        entry.remove_pane(id);
         shown.forget_pane(&name);
         let children = &mut self.children;
 
@@ -1398,7 +1407,7 @@ impl State {
         let Some(pane) = shown.tabs[tab].layout.pane(id) else {
             return false;
         };
-        if !pane.clients.is_empty() || shown.keeps_empty(pane) {
+        if !pane.tabs.is_empty() || shown.keeps_empty(tab, pane) {
             return false;
         }
         self.remove_pane(workspace, tab, id);
@@ -1411,9 +1420,10 @@ impl State {
         };
         let current = self.current();
         let scratched = self.workspaces[current].is_scratch(pane);
-        match pane.toplevel() {
+        let tab = self.tab();
+        match tab.toplevel(id) {
             Some(toplevel) => toplevel.send_close(),
-            None if !pane.pinned || scratched => {
+            None if !tab.info(id).pinned || scratched => {
                 let tab = self.workspaces[current].active_tab;
                 self.remove_pane(current, tab, id);
             }
@@ -1441,19 +1451,20 @@ impl State {
     }
 
     fn toggle_pin(&mut self, id: usize) {
-        let Some(pane) = self.layout().pane(id) else {
+        let tab = self.tab();
+        let Some(pane) = tab.layout.pane(id) else {
             return;
         };
-        let pinned = pane.pinned;
-        let app_id =
-            (pane.clients.first()).and_then(|client| panes::app_id(client.toplevel.wl_surface()));
+        let pinned = tab.info(id).pinned;
+        let app_id = (tab.clients_in(pane).next())
+            .and_then(|client| clients::app_id(client.toplevel.wl_surface()));
         if pinned {
-            self.layout_mut().unpin(id);
+            self.tab_mut().unpin(id);
             let current = self.current();
             let tab = self.workspaces[current].active_tab;
             self.prune(current, tab, id);
         } else if let Some(app_id) = app_id {
-            self.layout_mut().pin(id, app_id);
+            self.tab_mut().pin(id, app_id);
         }
         self.request_redraw();
         self.schedule_save();
@@ -1519,7 +1530,7 @@ impl State {
         };
         for workspace in &self.workspaces {
             for tab in &workspace.tabs {
-                for client in tab.layout.panes.iter().flat_map(|pane| &pane.clients) {
+                for client in tab.clients.values() {
                     let root = client.toplevel.wl_surface();
                     let open: Vec<PopupKind> = PopupManager::popups_for_surface(root)
                         .map(|(popup, _)| popup)
@@ -1546,10 +1557,7 @@ impl State {
         if serials.iter().any(|&held| pointer.has_grab(held)) {
             pointer.unset_grab(self, serial, self.now());
         }
-        let surface = self
-            .layout()
-            .pane(self.layout().focused)
-            .and_then(|pane| pane.toplevel())
+        let surface = (self.tab().toplevel(self.layout().focused))
             .map(|toplevel| toplevel.wl_surface().clone());
         keyboard.set_focus(self, surface, serial);
     }
@@ -1663,7 +1671,7 @@ impl CompositorHandler for State {
             .iter()
             .position(|toplevel| toplevel.wl_surface() == surface)
         {
-            let app_id = panes::app_id(surface);
+            let app_id = clients::app_id(surface);
             let toplevel = self.unplaced.remove(i);
             let pid = surface
                 .client()
@@ -1679,8 +1687,7 @@ impl CompositorHandler for State {
                     .find_map(|(index, workspace)| {
                         let prefix = workspace::app_id_prefix(workspace.id);
                         workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
-                            let (id, terminal_tab) =
-                                entry.layout.place(app_id.as_deref(), &prefix)?;
+                            let (id, terminal_tab) = entry.place(app_id.as_deref(), &prefix)?;
                             Some((index, tab, id, terminal_tab))
                         })
                     })
@@ -1700,9 +1707,8 @@ impl CompositorHandler for State {
                     (workspace, tab, id, false)
                 }
             };
-            if let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane_mut(id) {
-                pane.add_client(panes::Client::new(toplevel, app_id, pid, terminal_tab));
-            }
+            let client = PaneClient::new(toplevel, app_id, pid, terminal_tab);
+            self.workspaces[workspace].add_client(tab, id, client);
             self.configure(workspace, tab, id);
 
             // ghostty draws itself focused until its first keyboard leave,
@@ -1714,10 +1720,10 @@ impl CompositorHandler for State {
             self.focus(focused);
         }
         if let Some((workspace, tab, id)) = self.pane_of_surface(surface)
-            && let Some(pane) = self.workspaces[workspace].tabs[tab].layout.pane(id)
-            && pane
-                .clients
-                .iter()
+            && let entry = &self.workspaces[workspace].tabs[tab]
+            && let Some(pane) = entry.layout.pane(id)
+            && entry
+                .clients_in(pane)
                 .any(|client| !client.toplevel.is_initial_configure_sent())
         {
             self.configure(workspace, tab, id);
@@ -1741,17 +1747,11 @@ impl XdgShellHandler for State {
         };
         let shown = &mut self.workspaces[workspace];
         let closing = shown.tabs[tab].closing;
-        let Some(pane) = shown.tabs[tab].layout.pane_mut(id) else {
+        shown.tabs[tab].remove_client(id, &surface);
+        let Some(pane) = shown.tabs[tab].layout.pane(id) else {
             return;
         };
-        if let Some(index) = pane
-            .clients
-            .iter()
-            .position(|client| client.toplevel == surface)
-        {
-            pane.remove_client(index);
-        }
-        if !pane.clients.is_empty() {
+        if !pane.tabs.is_empty() {
             self.configure(workspace, tab, id);
             self.refocus(workspace, tab);
             self.request_redraw();

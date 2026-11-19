@@ -19,8 +19,8 @@ use crate::server::chrome::draw::{Element, Paint, Shrink};
 use crate::server::chrome::frame;
 use crate::server::chrome::picker::{Grid, Picker};
 use crate::server::chrome::settings::Settings;
-use crate::server::panes::{BACKGROUND, Chrome, Layout};
-use crate::server::workspace::{self, Workspace};
+use crate::server::panes::{BACKGROUND, Chrome};
+use crate::server::workspace::{self, Tab, Workspace};
 
 use super::input::Drag;
 use super::{Overlay, State, popups_over, send_frames_surface_tree, window_origin};
@@ -70,7 +70,9 @@ impl State {
             rounded,
             ..
         } = self;
-        let layout = workspaces[workspace].layout();
+        let tab = workspaces[workspace].tab();
+        let layout = &tab.layout;
+        let marks = tab.marks();
         let scratch = workspaces[workspace].scratch_pane();
         let now = Instant::now();
         let point = (workspaces[workspace].point.as_ref()).map(|point| (point, point.pulse(now)));
@@ -95,12 +97,14 @@ impl State {
                 tab_hover: *tab_hover,
                 point,
                 flash,
+                marks: &marks,
             }
         } else {
             Chrome {
                 scratch,
                 point,
                 flash,
+                marks: &marks,
                 ..Chrome::default()
             }
         };
@@ -176,7 +180,7 @@ impl State {
         {
             let shrink;
             (shrink, animating) = ghost_shrink(settings, *start, pointer);
-            paint_ghost(&mut paint, &mut elements, layout, chrome, shrink, *grab);
+            paint_ghost(&mut paint, &mut elements, tab, chrome, shrink, *grab);
         }
 
         let mut above = Scene::new(&paint.text.fonts.chrome);
@@ -207,7 +211,7 @@ impl State {
         }
 
         if let Some(frame) = frame {
-            paint_clients(&mut paint, &mut elements, layout, chrome);
+            paint_clients(&mut paint, &mut elements, tab, chrome);
             let mut below = Scene::new(&paint.text.fonts.chrome);
             layout.draw(&mut below, chrome);
             frame.draw(&mut below);
@@ -232,7 +236,7 @@ impl State {
 
         let time = start.elapsed().as_millis() as u32;
         for pane in layout.visible() {
-            if let Some(toplevel) = pane.toplevel() {
+            if let Some(toplevel) = tab.toplevel(pane.id) {
                 send_frames_surface_tree(toplevel.wl_surface(), time);
                 for (popup, _) in popups_over(toplevel.wl_surface()) {
                     send_frames_surface_tree(popup.wl_surface(), time);
@@ -281,10 +285,9 @@ impl State {
                     })
                     .filter_map(|agent| agent.report.state)
                     .max();
-                let focused = tab.layout.pane(tab.layout.focused);
                 let label = match &tab.name {
                     Some(name) => name.clone(),
-                    None => focused.map(|pane| pane.running_label()).unwrap_or_default(),
+                    None => tab.running_label(tab.layout.focused).unwrap_or_default(),
                 };
                 frame::Tab {
                     label,
@@ -294,10 +297,7 @@ impl State {
             })
             .collect();
         let layout = shown.layout();
-        let focused = layout.pane(layout.focused);
-        let title = focused
-            .map(|pane| pane.title().unwrap_or_else(|| pane.name.clone()))
-            .unwrap_or_default();
+        let title = shown.tab().title(layout.focused).unwrap_or_default();
         let mut frame = frame::Frame::new(
             self.grid(),
             self.sidebar_open,
@@ -375,11 +375,12 @@ fn ghost_shrink(
 fn paint_ghost(
     paint: &mut Paint,
     elements: &mut Vec<Element>,
-    layout: &Layout,
+    tab: &Tab,
     chrome: Chrome,
     shrink: Shrink,
     grab: Point<i32, Physical>,
 ) {
+    let layout = &tab.layout;
     let Some(pane) = chrome.dragging.and_then(|id| layout.pane(id)) else {
         return;
     };
@@ -403,7 +404,7 @@ fn paint_ghost(
     let mut ghost = Scene::new(&paint.text.fonts.chrome);
     layout.draw_ghost(pane.id, &mut ghost, chrome);
     paint.scene(elements, &ghost, origin + cell, Some(shrink));
-    let Some(toplevel) = pane.toplevel() else {
+    let Some(toplevel) = tab.toplevel(pane.id) else {
         return;
     };
     let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
@@ -426,9 +427,9 @@ fn paint_ghost(
 
 /// Draw the client of every visible pane but the one being dragged, with
 /// its popups in front, cropped to the pane.
-fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, layout: &Layout, chrome: Chrome) {
-    for pane in layout.visible() {
-        let Some(toplevel) = pane.toplevel() else {
+fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, tab: &Tab, chrome: Chrome) {
+    for pane in tab.layout.visible() {
+        let Some(toplevel) = tab.toplevel(pane.id) else {
             continue;
         };
         if chrome.dragging == Some(pane.id) {
@@ -484,7 +485,8 @@ fn paint_picker(
     let (over, under) = picker.draw(grid, workspaces, current, pointer, paint.text);
     let mut surfaces = Vec::new();
     for (cell, workspace) in grid.cells.iter().zip(workspaces) {
-        let layout = workspace.layout();
+        let tab = workspace.tab();
+        let layout = &tab.layout;
 
         // the cell shows the pane area, not the top bar and sidebar, so
         // positions are taken from the area's corner and scaled to fit it
@@ -498,7 +500,7 @@ fn paint_picker(
                 (cell.size.h - (height as f64 * scale) as i32) / 2,
             ));
         for pane in layout.visible() {
-            let Some(toplevel) = pane.toplevel() else {
+            let Some(toplevel) = tab.toplevel(pane.id) else {
                 continue;
             };
             let client = paint.text.px_rect(pane.client_rect());
