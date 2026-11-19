@@ -5,7 +5,9 @@
   "type": "milestone",
   "status": "open",
   "priority": 1,
-  "labels": [],
+  "labels": [
+    "decade"
+  ],
   "parent": null,
   "blocked_by": [],
   "related": [],
@@ -13,7 +15,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T22:30:49.622266013Z",
-  "updated_at": "2026-11-19T21:03:25.727968432Z",
+  "updated_at": "2026-11-19T21:03:31.663259674Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,

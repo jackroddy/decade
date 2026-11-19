@@ -5,7 +5,9 @@
   "type": "feature",
   "status": "in_progress",
   "priority": 1,
-  "labels": [],
+  "labels": [
+    "decade"
+  ],
   "parent": "decade-4a4e0f",
   "blocked_by": [],
   "related": [],
@@ -13,7 +15,7 @@
   "lease_expires": "2026-11-19T21:18:25.739579027Z",
   "defer_until": null,
   "created_at": "2026-11-08T22:30:49.63403366Z",
-  "updated_at": "2026-11-19T21:03:25.739579027Z",
+  "updated_at": "2026-11-19T21:03:31.663257144Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
