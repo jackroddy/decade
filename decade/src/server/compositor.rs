@@ -69,6 +69,8 @@ use smithay::{
     delegate_xdg_shell,
 };
 
+use decade_ui::CellRect;
+
 use crate::control::{self, viewer_socket_path};
 use crate::files;
 use crate::gpu::Gpu;
@@ -83,7 +85,7 @@ use crate::server::chrome::rename::{NameField, Named};
 use crate::server::chrome::settings::{self, Settings};
 use crate::server::chrome::text::Text;
 use crate::server::mcp;
-use crate::server::panes::{self as panes, BarButton, CellRect, Layout, Pane};
+use crate::server::panes::{self as panes, BarButton, Layout, Pane};
 use crate::server::proc;
 use crate::server::save::{self, TerminalTab};
 use crate::server::workspace::{self, Group, Workspace};
@@ -794,7 +796,7 @@ impl State {
         Grid::new(
             self.workspaces.len() + 1,
             self.size,
-            self.text.chrome.cell_height as i32,
+            self.text.fonts.chrome.cell_height as i32,
         )
     }
 
@@ -911,7 +913,7 @@ impl State {
         let current = self.current();
         let shown = &self.workspaces[current];
         let frame = self.frame(current);
-        let font = &self.text.chrome;
+        let font = &self.text.fonts.chrome;
         let cell = (font.cell_width as i32, font.cell_height as i32);
         let place = match named {
             Named::Workspace(id) => (self.workspaces.iter())
@@ -987,7 +989,7 @@ impl State {
     /// Open the menu for `place` at the pointer, when it has entries.
     fn open_context_menu(&mut self, place: Place) {
         let pointer = self.pointer.to_physical(self.scale).to_i32_round();
-        let font = &self.text.chrome;
+        let font = &self.text.fonts.chrome;
         let Some(menu) = ContextMenu::open(
             context_menu::entries(place, &self.groups),
             (pointer.x, pointer.y),
@@ -1066,8 +1068,8 @@ impl State {
 
     fn grid(&self) -> (u32, u32) {
         (
-            self.size.w as u32 / self.text.chrome.cell_width,
-            self.size.h as u32 / self.text.chrome.cell_height,
+            self.size.w as u32 / self.text.fonts.chrome.cell_width,
+            self.size.h as u32 / self.text.fonts.chrome.cell_height,
         )
     }
 
@@ -1478,7 +1480,7 @@ impl State {
     }
 
     fn client_geometry(&self, pane: &Pane) -> (Point<i32, Logical>, Size<i32, Logical>) {
-        let rect = self.text.chrome.px_rect(pane.client_rect());
+        let rect = self.text.px_rect(pane.client_rect());
         (
             rect.loc.to_f64().to_logical(self.scale).to_i32_round(),
             rect.size.to_f64().to_logical(self.scale).to_i32_round(),

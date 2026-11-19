@@ -303,7 +303,7 @@ impl State {
         let layout = shown.layout();
         let rect = (layout.by_name(&name))
             .and_then(|id| layout.pane(id))
-            .map(|pane| self.text.chrome.px_rect(pane.client_rect()))
+            .map(|pane| self.text.px_rect(pane.client_rect()))
             .ok_or_else(|| format!("no pane named {name}"))?;
         let frame = Rectangle::from_size(self.size);
         let rect = rect

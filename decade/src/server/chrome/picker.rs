@@ -1,12 +1,12 @@
 use smithay::utils::{Physical, Point, Rectangle, Size};
 
-use crate::server::chrome::draw::{Face, Scene};
+use decade_ui::palette::{self, ACCENT};
+use decade_ui::{Face, Scene, fit};
+
 use crate::server::chrome::frame::mark;
 use crate::server::chrome::menu::{Action, MenuKey, Outcome};
 use crate::server::chrome::overlay::{LARGE, draw_hint, hint_width};
-use crate::server::chrome::palette::{self, ACCENT};
 use crate::server::chrome::text::Text;
-use crate::server::chrome::text::fit;
 use crate::server::workspace::Workspace;
 
 const DRAG_THRESHOLD: i32 = 8;
@@ -209,9 +209,12 @@ impl Picker {
         pointer: Point<i32, Physical>,
         text: &Text,
     ) -> (Scene, Scene) {
-        let (menu_width, menu_height) = (text.menu.cell_width as i32, text.menu.cell_height as i32);
-        let mut over = Scene::new(&text.chrome);
-        let mut under = Scene::new(&text.chrome);
+        let (menu_width, menu_height) = (
+            text.fonts.menu.cell_width as i32,
+            text.fonts.menu.cell_height as i32,
+        );
+        let mut over = Scene::new(&text.fonts.chrome);
+        let mut under = Scene::new(&text.fonts.chrome);
         let line = over.line_width();
         let label_width = |text: &str| text.chars().count() as i32 * menu_width;
         let drop_target = self.dragging.and_then(|_| grid.cell_at(pointer));

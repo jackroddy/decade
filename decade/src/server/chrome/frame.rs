@@ -3,12 +3,10 @@ use std::f32::consts::TAU;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::server::chrome::draw::{Face, Scene, scaled};
+use decade_ui::palette::{self, Rgba};
+use decade_ui::{CellRect, Face, Scene, fit, scaled, tail};
+
 use crate::server::chrome::overlay::{SMALL, draw_box};
-use crate::server::chrome::palette;
-use crate::server::chrome::palette::Rgba;
-use crate::server::chrome::text::{fit, tail};
-use crate::server::panes::CellRect;
 use crate::server::workspace::Group;
 use decade_channel::{AgentState, Context, Tokens};
 
@@ -1495,7 +1493,7 @@ impl Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::chrome::draw::Shape;
+    use decade_ui::Shape;
 
     fn agent(name: &str, state: Option<AgentState>) -> Agent {
         Agent {
@@ -1719,7 +1717,7 @@ mod tests {
         let mut frame = frame(true);
         frame.hover = hover;
         frame.breath = breath;
-        let mut scene = Scene::new(&crate::server::chrome::text::Font::load(14.0));
+        let mut scene = Scene::new(&decade_ui::Font::load(14.0));
         frame.draw(&mut scene);
         scene.shapes
     }
@@ -1732,7 +1730,7 @@ mod tests {
     /// The fill of the card whose top is `top`, when it has one.
     fn card_fill(shapes: &[Shape], top: i32) -> Option<[u8; 4]> {
         shapes.iter().find_map(|shape| match shape {
-            Shape::Rounded { at, size, fill, .. } if at.y == top && size.w == 244 => {
+            Shape::Rounded { at, size, fill, .. } if at.y == top && size.width == 244 => {
                 Some(bytes(*fill))
             }
             _ => None,
@@ -2384,11 +2382,11 @@ mod tests {
         let ring = |y: i32| {
             let mut frame = grouped(true, false);
             frame.drag = Some((Hit::Show(0), (100, y)));
-            let mut scene = Scene::new(&crate::server::chrome::text::Font::load(14.0));
+            let mut scene = Scene::new(&decade_ui::Font::load(14.0));
             frame.draw(&mut scene);
             scene.shapes.iter().find_map(|shape| match shape {
                 Shape::Rounded { at, size, fill, .. } if bytes(*fill) == bytes(palette::ACCENT) => {
-                    Some((at.y, at.y + size.h))
+                    Some((at.y, at.y + size.height))
                 }
                 _ => None,
             })

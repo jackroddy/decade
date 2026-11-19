@@ -3,8 +3,10 @@ use std::time::{Duration, Instant};
 
 use smithay::reexports::calloop::RegistrationToken;
 
+use decade_ui::CellRect;
+
 use crate::server::channel::{Out, PaneNames, Router};
-use crate::server::panes::{CellRect, Layout, Pane};
+use crate::server::panes::{Layout, Pane};
 use crate::server::scratch::Scratch;
 use decade_channel::AgentState;
 use serde_json::Value;

@@ -52,9 +52,10 @@ use wayland_protocols::wp::viewporter::client::{
     wp_viewport::WpViewport, wp_viewporter::WpViewporter,
 };
 
+use decade_ui::palette::BACKGROUND;
+
 use crate::control::connect_or_start;
 use crate::lines::Lines;
-use crate::server::chrome::palette::BACKGROUND;
 use crate::wire::{self, Decoder, Format, Outbox, Plane, SCALE, ServerMessage, ViewerMessage};
 use clipboard::Clipboard;
 use hypr::Hyprland;

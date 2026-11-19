@@ -4,6 +4,7 @@ resolver = "3"
 members = [
     "decade",
     "decade-channel",
+    "decade-ui",
 ]
 
 [workspace.package]

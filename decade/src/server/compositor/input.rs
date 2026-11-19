@@ -141,7 +141,7 @@ impl State {
         }
         let (column, row) = self.pointer_cell();
         let (x, y) = self.pointer_px();
-        let threshold = self.text.chrome.cell_height as i32 / 2;
+        let threshold = self.text.fonts.chrome.cell_height as i32 / 2;
         let current = self.current();
         match &mut self.drag {
             Some(Drag::Boundary(boundary)) => {
@@ -693,8 +693,8 @@ impl State {
         match frame.hit(x, y) {
             Some(Hit::Show(id)) => {
                 let ((left, top), room) = frame.workspace_name_at(id)?;
-                let width = room * self.text.chrome.cell_width as i32;
-                let height = self.text.chrome.cell_height as i32;
+                let width = room * self.text.fonts.chrome.cell_width as i32;
+                let height = self.text.fonts.chrome.cell_height as i32;
                 let on_name = (left..left + width).contains(&x) && (top..top + height).contains(&y);
                 on_name.then_some(Named::Workspace(id))
             }
@@ -855,12 +855,12 @@ impl State {
         let Some(pane) = self.layout().pane(id) else {
             return Point::default();
         };
-        self.text.chrome.px_rect(pane.rect).loc
+        self.text.px_rect(pane.rect).loc
     }
 
     /// The palette font's cell.
     pub(super) fn menu_cell(&self) -> (i32, i32) {
-        let font = &self.text.menu;
+        let font = &self.text.fonts.menu;
         (font.cell_width as i32, font.cell_height as i32)
     }
 
@@ -876,8 +876,8 @@ impl State {
     fn pointer_cell(&self) -> (u32, u32) {
         let physical = self.pointer.to_physical(self.scale);
         (
-            (physical.x.max(0.0) / self.text.chrome.cell_width as f64) as u32,
-            (physical.y.max(0.0) / self.text.chrome.cell_height as f64) as u32,
+            (physical.x.max(0.0) / self.text.fonts.chrome.cell_width as f64) as u32,
+            (physical.y.max(0.0) / self.text.fonts.chrome.cell_height as f64) as u32,
         )
     }
 

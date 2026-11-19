@@ -11,10 +11,12 @@ use smithay::backend::renderer::utils::draw_render_elements;
 use smithay::backend::renderer::{Bind, Color32F, Frame, Renderer};
 use smithay::utils::{Physical, Point, Rectangle, Transform};
 
+use decade_ui::Scene;
+use decade_ui::palette::{ACCENT, Rgba};
+
 use crate::server::agents;
-use crate::server::chrome::draw::{Element, Paint, Scene, Shrink};
+use crate::server::chrome::draw::{Element, Paint, Shrink};
 use crate::server::chrome::frame;
-use crate::server::chrome::palette::{ACCENT, Rgba};
 use crate::server::chrome::picker::{Grid, Picker};
 use crate::server::chrome::settings::Settings;
 use crate::server::panes::{BACKGROUND, Chrome, Layout};
@@ -75,7 +77,7 @@ impl State {
         let flash = workspaces[workspace].flash_at(now);
         let shutter = (workspaces[workspace].shutter_at(now))
             .and_then(|(name, alpha)| Some((layout.pane(layout.by_name(name)?)?, alpha)))
-            .map(|(pane, alpha)| (text.chrome.px_rect(pane.client_rect()), alpha));
+            .map(|(pane, alpha)| (text.px_rect(pane.client_rect()), alpha));
         let (overlay, drag) = if workspace == current {
             (overlay.as_ref(), drag.as_ref())
         } else {
@@ -118,7 +120,7 @@ impl State {
         };
         let mut elements: Vec<Element> = Vec::new();
         if let Some(prompt) = &prompt {
-            let mut scene = Scene::new(&paint.text.menu);
+            let mut scene = Scene::new(&paint.text.fonts.menu);
             prompt.draw(&mut scene);
             paint.scene(&mut elements, &scene, Point::default(), None);
         }
@@ -126,22 +128,22 @@ impl State {
         let window = (size.w, size.h);
         match overlay {
             Some(Overlay::Menu(menu)) => {
-                let mut scene = Scene::new(&paint.text.menu);
+                let mut scene = Scene::new(&paint.text.fonts.menu);
                 menu.draw(&mut scene, window);
                 paint.scene(&mut elements, &scene, Point::default(), None);
             }
             Some(Overlay::Context(menu)) => {
-                let mut scene = Scene::new(&paint.text.chrome);
+                let mut scene = Scene::new(&paint.text.fonts.chrome);
                 menu.draw(&mut scene);
                 paint.scene(&mut elements, &scene, Point::default(), None);
             }
             Some(Overlay::Rename(field)) => {
-                let mut scene = Scene::new(&paint.text.chrome);
+                let mut scene = Scene::new(&paint.text.fonts.chrome);
                 field.draw(&mut scene);
                 paint.scene(&mut elements, &scene, Point::default(), None);
             }
             Some(Overlay::Panel(panel)) => {
-                let mut scene = Scene::new(&paint.text.menu);
+                let mut scene = Scene::new(&paint.text.fonts.menu);
                 panel.draw(&mut scene, settings, window);
                 paint.scene(&mut elements, &scene, Point::default(), None);
             }
@@ -161,7 +163,7 @@ impl State {
         let scrimmed =
             |overlay: &Overlay| !matches!(overlay, Overlay::Context(_) | Overlay::Rename(_));
         if prompt.is_some() || overlay.is_some_and(scrimmed) {
-            let mut scrim = Scene::new(&paint.text.chrome);
+            let mut scrim = Scene::new(&paint.text.fonts.chrome);
             scrim.rect(0, 0, size.w, size.h, SCRIM);
             paint.scene(&mut elements, &scrim, Point::default(), None);
         }
@@ -177,7 +179,7 @@ impl State {
             paint_ghost(&mut paint, &mut elements, layout, chrome, shrink, *grab);
         }
 
-        let mut above = Scene::new(&paint.text.chrome);
+        let mut above = Scene::new(&paint.text.fonts.chrome);
         layout.draw_bars(&mut above, chrome);
         if let Some(frame) = &frame {
             frame.draw_above(&mut above);
@@ -193,7 +195,7 @@ impl State {
         paint.scene(&mut elements, &above, Point::default(), None);
 
         if let Some((rect, alpha)) = shutter {
-            let mut layer = Scene::new(&paint.text.chrome);
+            let mut layer = Scene::new(&paint.text.fonts.chrome);
             layer.rect(
                 rect.loc.x,
                 rect.loc.y,
@@ -206,7 +208,7 @@ impl State {
 
         if let Some(frame) = frame {
             paint_clients(&mut paint, &mut elements, layout, chrome);
-            let mut below = Scene::new(&paint.text.chrome);
+            let mut below = Scene::new(&paint.text.fonts.chrome);
             layout.draw(&mut below, chrome);
             frame.draw(&mut below);
             paint.scene(&mut elements, &below, Point::default(), None);
@@ -304,8 +306,8 @@ impl State {
             title,
             layout.zoom.is_some(),
             (
-                self.text.chrome.cell_width as i32,
-                self.text.chrome.cell_height as i32,
+                self.text.fonts.chrome.cell_width as i32,
+                self.text.fonts.chrome.cell_height as i32,
             ),
         );
         frame.hover = hover;
@@ -381,14 +383,14 @@ fn paint_ghost(
     let Some(pane) = chrome.dragging.and_then(|id| layout.pane(id)) else {
         return;
     };
-    let font = &paint.text.chrome;
+    let font = &paint.text.fonts.chrome;
     let origin = shrink.about - grab;
     let cell: Point<i32, Physical> = (font.cell_width as i32, font.cell_height as i32).into();
-    let outer = font.px_rect(pane.rect).size;
-    let offset = font.px_rect(pane.client_rect()).loc - font.px_rect(pane.rect).loc;
+    let outer = paint.text.px_rect(pane.rect).size;
+    let offset = paint.text.px_rect(pane.client_rect()).loc - paint.text.px_rect(pane.rect).loc;
     let start = shrink.point(origin + cell.downscale(2));
     let end = shrink.point(origin + outer - cell.downscale(2));
-    let mut outline = Scene::new(&paint.text.chrome);
+    let mut outline = Scene::new(&paint.text.fonts.chrome);
     let line = outline.line_width();
     outline.box_lines(
         start.x,
@@ -398,7 +400,7 @@ fn paint_ghost(
         ACCENT,
     );
     paint.scene(elements, &outline, Point::default(), None);
-    let mut ghost = Scene::new(&paint.text.chrome);
+    let mut ghost = Scene::new(&paint.text.fonts.chrome);
     layout.draw_ghost(pane.id, &mut ghost, chrome);
     paint.scene(elements, &ghost, origin + cell, Some(shrink));
     let Some(toplevel) = pane.toplevel() else {
@@ -436,7 +438,7 @@ fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, layout: &Layout
         if rect.columns == 0 || rect.rows == 0 {
             continue;
         }
-        let crop = paint.text.chrome.px_rect(rect);
+        let crop = paint.text.px_rect(rect);
         let mut surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = Vec::new();
         for (popup, at) in popups_over(toplevel.wl_surface()) {
             surfaces.extend(render_elements_from_surface_tree(
@@ -486,7 +488,7 @@ fn paint_picker(
 
         // the cell shows the pane area, not the top bar and sidebar, so
         // positions are taken from the area's corner and scaled to fit it
-        let area = paint.text.chrome.px_rect(layout.area);
+        let area = paint.text.px_rect(layout.area);
         let (width, height) = (area.size.w, area.size.h);
         let scale = (cell.size.w as f64 / width.max(1) as f64)
             .min(cell.size.h as f64 / height.max(1) as f64);
@@ -499,7 +501,7 @@ fn paint_picker(
             let Some(toplevel) = pane.toplevel() else {
                 continue;
             };
-            let client = paint.text.chrome.px_rect(pane.client_rect());
+            let client = paint.text.px_rect(pane.client_rect());
             let origin = anchor - area.loc + client.loc;
             let tree: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                 render_elements_from_surface_tree(

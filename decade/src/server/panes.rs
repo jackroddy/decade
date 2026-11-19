@@ -7,10 +7,9 @@ use smithay::wayland::shell::xdg::{
     ToplevelSurface, XdgToplevelSurfaceData, XdgToplevelSurfaceRoleAttributes,
 };
 
-use crate::server::chrome::draw::{Face, Scene};
-use crate::server::chrome::palette;
-use crate::server::chrome::palette::Rgba;
-use crate::server::chrome::text::fit;
+use decade_ui::palette::{self, Rgba};
+use decade_ui::{CellRect, Face, Scene, fit};
+
 use crate::server::proc;
 use crate::server::workspace::Point;
 
@@ -52,53 +51,6 @@ const BUTTON_INSET: i32 = 2;
 const TAG_PADDING: i32 = 4;
 const TAG_INSET: i32 = 2;
 const TAG_GAP: i32 = 4;
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct CellRect {
-    pub column: u32,
-    pub row: u32,
-    pub columns: u32,
-    pub rows: u32,
-}
-
-impl CellRect {
-    const EMPTY: CellRect = CellRect {
-        column: 0,
-        row: 0,
-        columns: 0,
-        rows: 0,
-    };
-
-    fn contains(&self, column: u32, row: u32) -> bool {
-        column >= self.column
-            && column < self.column + self.columns
-            && row >= self.row
-            && row < self.row + self.rows
-    }
-
-    fn center(&self) -> (i64, i64) {
-        (
-            (self.column * 2 + self.columns) as i64,
-            (self.row * 2 + self.rows) as i64,
-        )
-    }
-
-    fn inner(&self) -> CellRect {
-        if self.columns < 3 || self.rows < 3 {
-            return CellRect::EMPTY;
-        }
-        CellRect {
-            column: self.column + 1,
-            row: self.row + 1,
-            columns: self.columns - 2,
-            rows: self.rows - 2,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.columns == 0 || self.rows == 0
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Direction {
@@ -1830,22 +1782,26 @@ pub(super) mod tests {
             bar: true,
             ..Chrome::default()
         };
-        let font = crate::server::chrome::text::Font::load(14.0);
+        let font = decade_ui::Font::load(14.0);
         let mut drawn = Scene::new(&font);
         layout.draw(&mut drawn, chrome);
         let waiting = drawn.shapes.iter().any(|shape| {
-            matches!(shape, crate::server::chrome::draw::Shape::Text { text, .. } if text.contains("decade.chat"))
+            matches!(shape, decade_ui::Shape::Text { text, .. } if text.contains("decade.chat"))
         });
         assert!(!waiting);
         let mut ghost = Scene::new(&font);
         layout.draw_ghost(0, &mut ghost, chrome);
         let name = ghost.shapes.iter().find_map(|shape| match shape {
-            crate::server::chrome::draw::Shape::Text { at, text, .. } if text == "chat" => {
-                Some(*at)
-            }
+            decade_ui::Shape::Text { at, text, .. } if text == "chat" => Some(*at),
             _ => None,
         });
-        assert_eq!(name, Some((font.cell_width as i32, 0).into()));
+        assert_eq!(
+            name,
+            Some(decade_ui::Point {
+                x: font.cell_width as i32,
+                y: 0
+            })
+        );
     }
 
     #[test]
@@ -1904,18 +1860,19 @@ pub(super) mod tests {
         assert_eq!(layout.drop_at(1, 30, 1), Some(Drop::Edge(Side::Above)));
         assert_eq!(layout.drop_at(1, 30, 40), Some(Drop::Edge(Side::Below)));
 
-        let font = crate::server::chrome::text::Font::load(14.0);
+        let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
         layout.draw_drop(&mut scene, 1, (24, 20));
         let active = scene.shapes.iter().find_map(|shape| match shape {
-            crate::server::chrome::draw::Shape::Rect { at, color, .. } if color[3] < 1.0 => {
-                Some(*at)
-            }
+            decade_ui::Shape::Rect { at, color, .. } if color[3] < 1.0 => Some(*at),
             _ => None,
         });
         assert_eq!(
             active,
-            Some((24 * font.cell_width as i32, font.cell_height as i32).into())
+            Some(decade_ui::Point {
+                x: 24 * font.cell_width as i32,
+                y: font.cell_height as i32,
+            })
         );
     }
 
@@ -1957,7 +1914,7 @@ pub(super) mod tests {
     }
 
     fn drawn_texts(layout: &Layout, chrome: Chrome) -> Vec<String> {
-        let font = crate::server::chrome::text::Font::load(14.0);
+        let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
         layout.draw(&mut scene, chrome);
         texts(&scene)
@@ -1968,9 +1925,7 @@ pub(super) mod tests {
             .shapes
             .iter()
             .filter_map(|shape| match shape {
-                crate::server::chrome::draw::Shape::Text { text, .. } => {
-                    Some(text.trim().to_string())
-                }
+                decade_ui::Shape::Text { text, .. } => Some(text.trim().to_string()),
                 _ => None,
             })
             .collect()
@@ -1990,7 +1945,7 @@ pub(super) mod tests {
     fn a_long_name_on_the_ctrl_bar_is_cut_before_the_icons() {
         let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.panes[0].name = "x".repeat(200);
-        let font = crate::server::chrome::text::Font::load(14.0);
+        let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
         let chrome = Chrome {
             bar: true,
@@ -2116,8 +2071,8 @@ pub(super) mod tests {
     fn rounded(scene: &Scene) -> Vec<(i32, i32, i32, i32, Rgba)> {
         (scene.shapes.iter())
             .filter_map(|shape| match shape {
-                crate::server::chrome::draw::Shape::Rounded { at, size, fill, .. } => {
-                    Some((at.x, at.y, size.w, size.h, *fill))
+                decade_ui::Shape::Rounded { at, size, fill, .. } => {
+                    Some((at.x, at.y, size.width, size.height, *fill))
                 }
                 _ => None,
             })
@@ -2127,7 +2082,7 @@ pub(super) mod tests {
     #[test]
     fn a_hovered_close_button_is_a_dark_red_square_inside_its_cell() {
         let layout = Layout::new(AREA, "terminal".to_string());
-        let font = crate::server::chrome::text::Font::load(14.0);
+        let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
         let chrome = Chrome {
             bar: true,
@@ -2154,7 +2109,7 @@ pub(super) mod tests {
         let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.pin(0, "decade.terminal".to_string());
         layout.toggle_zoom(0);
-        let font = crate::server::chrome::text::Font::load(14.0);
+        let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
         layout.draw(&mut scene, Chrome::default());
         let tags = rounded(&scene);
@@ -2191,7 +2146,7 @@ pub(super) mod tests {
     fn a_pane_accepting_screenshots_has_a_tag_at_the_left_of_its_top_line_that_flashes() {
         let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.panes[0].screenshots = true;
-        let font = crate::server::chrome::text::Font::load(14.0);
+        let font = decade_ui::Font::load(14.0);
         let tags = |flash: Option<(&str, f32)>| {
             let mut scene = Scene::new(&font);
             layout.draw(
@@ -2226,7 +2181,7 @@ pub(super) mod tests {
         layout.panes[0].screenshots = true;
         layout.pin(0, "decade.terminal".to_string());
         layout.toggle_zoom(0);
-        let font = crate::server::chrome::text::Font::load(14.0);
+        let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
         layout.draw(&mut scene, Chrome::default());
         let texts = texts(&scene);

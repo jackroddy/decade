@@ -1,6 +1,7 @@
-use crate::server::chrome::draw::{Face, Scene};
+use decade_ui::palette::{self, Rgba};
+use decade_ui::{Face, Scene};
+
 use crate::server::chrome::menu::MenuKey;
-use crate::server::chrome::palette::{self, Rgba};
 
 /// The text columns of a large box.
 pub const LARGE_COLUMNS: i32 = 40;

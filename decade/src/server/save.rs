@@ -4,8 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use decade_ui::CellRect;
+
 use crate::files;
-use crate::server::panes::{Axis, CellRect, Layout, Node, Pane};
+use crate::server::panes::{Axis, Layout, Node, Pane};
 use crate::server::proc;
 use crate::server::workspace::{Group, Workspace};
 

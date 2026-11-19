@@ -1,4 +1,5 @@
-use crate::server::chrome::draw::Scene;
+use decade_ui::Scene;
+
 use crate::server::chrome::menu::{Action, MenuKey, Outcome};
 use crate::server::chrome::overlay::{Cursor, Layout, Row, SMALL, Step};
 use crate::server::chrome::rename::Named;

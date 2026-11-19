@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
+use decade_ui::palette;
+use decade_ui::{Scene, fit, tail};
+
 use crate::server::apps::App;
 use crate::server::chrome::context_menu::Command;
-use crate::server::chrome::draw::Scene;
 use crate::server::chrome::overlay::{self, Cursor, LARGE, LARGE_COLUMNS, Layout, Step};
-use crate::server::chrome::palette;
 use crate::server::chrome::settings::Settings;
-use crate::server::chrome::text::{fit, tail};
 
 const APP_ICON: char = '\u{f08c6}';
 const FOLDER_ICON: char = '\u{f024b}';

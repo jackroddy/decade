@@ -1,0 +1,13 @@
+[package]
+name = "decade-ui"
+version = "0.1.0"
+description = "the cell grid, scene, text and panes decade's chrome is drawn from"
+edition.workspace = true
+rust-version = "1.88"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+fontdb = "0.24.0"
+swash = "0.2.10"

@@ -1,7 +1,7 @@
-use crate::server::chrome::draw::Scene;
+use decade_ui::{Scene, fit};
+
 use crate::server::chrome::menu::MenuKey;
 use crate::server::chrome::overlay::{Cursor, LARGE, LARGE_COLUMNS, Layout, Row, Step};
-use crate::server::chrome::text::fit;
 
 /// How the person answers decade's question whether an agent may take a
 /// screenshot of a pane.
