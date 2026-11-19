@@ -3,7 +3,7 @@
   "title": "Define the seam between the drawing kit and decade's renderer",
   "body": "`draw.rs` in `decade/src/server/chrome/` holds `Scene`, a list of shapes in pixels with cell-grid helpers, beside `Paint`, which turns a scene into smithay GLES elements. `Shape` uses smithay's `Point` and `Size` as plain data. `text.rs` beside it holds `Font`, the swash rasterizer (`raster_run`, `raster_icon`) and `Text`. `Text` uploads each run as a `GlesTexture` and caches it under `(String, Face, color)`. `Text::new` reads the two font sizes from `Settings`. `Scene` imports `CellRect` from `decade/src/server/panes.rs`.\n\n## Proposal\n\nA new workspace crate, `decade-ui`, holds `Scene`, `Shape`, `Face`, `CellRect`, `Rgba` with the theme colours, `Font`, and rasterizing a run to a CPU bitmap. It defines its own point and size types and depends on no smithay. decade keeps `Paint` and the texture cache, which calls the kit's rasterizer on a miss. decade reads the font sizes from `Settings` and passes them to the kit as numbers.\n\n`decade-ui`'s `Cargo.toml` names no smithay, so the compiler enforces the seam and no test scans the source.\n\n## Decided\n\nJack signed off on 2026-11-19.\n\n- Font sizes stay with decade's settings, and the kit takes them as numbers.\n- The texture cache and its key stay with the upload in decade. `round_trip` and `pad` move with the rasterizer.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [
     "decade"
@@ -12,13 +12,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/8a3a6cd2",
-  "lease_expires": "2026-11-19T21:18:25.739579027Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-08T22:30:49.63403366Z",
-  "updated_at": "2026-11-19T23:12:02.924041182Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-19T23:12:02.935415707Z",
+  "closed_at": "2026-11-19T23:12:02.935415707Z",
+  "close_reason": "Landed in 2f084d9: the decade-ui crate holds Scene, its shapes, CellRect, the palette, Font and the rasterizer. The note of 2026-11-19 lists where the code differs from the proposal.",
+  "resolution": "done",
   "notes": [
     {
       "id": "e140d4dd",
@@ -34,6 +34,9 @@
       "commit": "6bcc95b",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "2f084d9",
+      "branch": "dev"
+    }
   }
 }
