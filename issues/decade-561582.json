@@ -18,11 +18,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T21:03:21.055444439Z",
-  "updated_at": "2026-11-19T21:03:25.716295228Z",
+  "updated_at": "2026-11-20T02:21:37.644387226Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "ae32cdef",
+      "at": "2026-11-20T02:21:37.644386446Z",
+      "author": "Jack Roddy/8a3a6cd2",
+      "text": "The new `chrome` module names no smithay and no `crate::server`, but it is not yet compiled for any target besides Linux. `main.rs` declares it as `#[cfg(target_os = \"linux\")] mod chrome;`, like its siblings. `settings.rs` uses `crate::files`, which is declared the same way, although its contents are portable std code. A macOS viewer has to lift both gates, and nothing has checked the module on another target.\n\nOn the open question: the picker only lays out a `Grid` of thumbnail rectangles. `paint_picker` in `server/compositor/render.rs` paints each workspace into its rectangle, so a remote viewer paints whatever the server sends for a thumbnail.",
+      "commit": "fdf507f",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "bf36ffa",
