@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use decade_ui::CellRect;
 
 use crate::files;
-use crate::server::panes::{Axis, Layout, Node, Pane};
+use crate::server::panes::{Axis, Node};
 use crate::server::proc;
-use crate::server::workspace::{Group, Tab, Workspace};
+use crate::server::workspace::{Group, Layout, Pane, Tab, Workspace};
 
 const VERSION: u32 = 4;
 

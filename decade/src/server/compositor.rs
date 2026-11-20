@@ -86,10 +86,10 @@ use crate::server::chrome::settings::{self, Settings};
 use crate::server::chrome::text::Text;
 use crate::server::clients::{self, Client as PaneClient};
 use crate::server::mcp;
-use crate::server::panes::{BarButton, Layout, Pane};
+use crate::server::panes::BarButton;
 use crate::server::proc;
 use crate::server::save::{self, TerminalTab};
-use crate::server::workspace::{self, Group, Workspace};
+use crate::server::workspace::{self, Group, Layout, Pane, PaneAction, Workspace};
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
 use decade_channel::AgentState;
 
@@ -183,7 +183,7 @@ pub struct State {
 
     /// Whether the Ctrl bar is shown on the workspace on screen.
     bar: bool,
-    hover: Option<(usize, BarButton)>,
+    hover: Option<(usize, BarButton<PaneAction>)>,
 
     /// The pane and index of the pane tab under the pointer.
     tab_hover: Option<(usize, usize)>,
@@ -1466,6 +1466,8 @@ impl State {
         } else if let Some(app_id) = app_id {
             self.tab_mut().pin(id, app_id);
         }
+        let current = self.current();
+        self.workspaces[current].mark_panes();
         self.request_redraw();
         self.schedule_save();
     }

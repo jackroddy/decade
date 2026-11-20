@@ -246,12 +246,15 @@ impl State {
         {
             info.screenshots = true;
         }
+        shown.mark_panes();
     }
 
     /// Turn the accept screenshots mode of pane `id` on screen on or off.
     pub(super) fn toggle_screenshots(&mut self, id: usize) {
         if let Some(info) = self.tab_mut().info.get_mut(&id) {
             info.screenshots = !info.screenshots;
+            let current = self.current();
+            self.workspaces[current].mark_panes();
             self.request_redraw();
         }
     }

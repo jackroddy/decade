@@ -19,8 +19,8 @@ use crate::server::chrome::draw::{Element, Paint, Shrink};
 use crate::server::chrome::frame;
 use crate::server::chrome::picker::{Grid, Picker};
 use crate::server::chrome::settings::Settings;
-use crate::server::panes::{BACKGROUND, Chrome};
-use crate::server::workspace::{self, Tab, Workspace};
+use crate::server::panes::{BACKGROUND, Chrome, Pulse};
+use crate::server::workspace::{self, PaneAction, Tab, Workspace};
 
 use super::input::Drag;
 use super::{Overlay, State, popups_over, send_frames_surface_tree, window_origin};
@@ -72,11 +72,17 @@ impl State {
         } = self;
         let tab = workspaces[workspace].tab();
         let layout = &tab.layout;
-        let marks = tab.marks();
-        let scratch = workspaces[workspace].scratch_pane();
         let now = Instant::now();
-        let point = (workspaces[workspace].point.as_ref()).map(|point| (point, point.pulse(now)));
-        let flash = workspaces[workspace].flash_at(now);
+        let named = |name: &str| (layout.panes.iter()).find(|pane| pane.name == name);
+        let pulse = (workspaces[workspace].point.as_ref()).and_then(|point| {
+            Some(Pulse {
+                pane: named(&point.pane)?.id,
+                strength: point.pulse(now),
+                note: point.note.as_deref(),
+            })
+        });
+        let flash = (workspaces[workspace].flash_at(now))
+            .and_then(|(name, flash)| Some((named(name)?.id, flash)));
         let shutter = (workspaces[workspace].shutter_at(now))
             .and_then(|(name, alpha)| Some((layout.pane(layout.by_name(name)?)?, alpha)))
             .map(|(pane, alpha)| (text.px_rect(pane.client_rect()), alpha));
@@ -87,7 +93,6 @@ impl State {
         };
         let chrome = if workspace == current {
             Chrome {
-                scratch,
                 dragging: match drag {
                     Some(Drag::Pane { id, .. }) => Some(*id),
                     _ => None,
@@ -95,16 +100,13 @@ impl State {
                 bar: *bar,
                 hover: *hover,
                 tab_hover: *tab_hover,
-                point,
+                pulse,
                 flash,
-                marks: &marks,
             }
         } else {
             Chrome {
-                scratch,
-                point,
+                pulse,
                 flash,
-                marks: &marks,
                 ..Chrome::default()
             }
         };
@@ -376,7 +378,7 @@ fn paint_ghost(
     paint: &mut Paint,
     elements: &mut Vec<Element>,
     tab: &Tab,
-    chrome: Chrome,
+    chrome: Chrome<PaneAction>,
     shrink: Shrink,
     grab: Point<i32, Physical>,
 ) {
@@ -427,7 +429,12 @@ fn paint_ghost(
 
 /// Draw the client of every visible pane but the one being dragged, with
 /// its popups in front, cropped to the pane.
-fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, tab: &Tab, chrome: Chrome) {
+fn paint_clients(
+    paint: &mut Paint,
+    elements: &mut Vec<Element>,
+    tab: &Tab,
+    chrome: Chrome<PaneAction>,
+) {
     for pane in tab.layout.visible() {
         let Some(toplevel) = tab.toplevel(pane.id) else {
             continue;

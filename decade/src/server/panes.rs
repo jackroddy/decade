@@ -1,38 +1,30 @@
 use decade_ui::palette::{self, Rgba};
 use decade_ui::{CellRect, Face, Scene, fit};
 
-use crate::server::workspace::Point;
-
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;
 const PANE: Rgba = palette::DARK_BACKGROUND;
 const OUTLINE: Rgba = palette::MUTED;
 const FOCUS: Rgba = palette::CYAN;
-const POINTED: Rgba = palette::MAGENTA;
+const PULSE: Rgba = palette::MAGENTA;
 const DROP: Rgba = palette::ACCENT;
 const BAR: Rgba = palette::LIGHTER_BACKGROUND;
-const RESTART: Rgba = palette::ACCENT;
-const RESTART_TEXT: Rgba = palette::DARK_BACKGROUND;
+const BUTTON: Rgba = palette::ACCENT;
+const BUTTON_TEXT: Rgba = palette::DARK_BACKGROUND;
 const HOVER: Rgba = palette::SELECTION;
 const CLOSE_HOVER: Rgba = palette::DARK_RED;
 const CLOSE_HOVER_ICON: Rgba = palette::LIGHT_RED;
 const SHOWN_TAB: Rgba = palette::SELECTION;
 const TAG_TEXT: Rgba = palette::DARK_BACKGROUND;
-const UNPINNED: Rgba = palette::MUTED;
+const MUTED: Rgba = palette::MUTED;
 const DIM: Rgba = palette::LIGHT_FOREGROUND;
 
 const MIN_PANE: u32 = 4;
 const EDGE_BAND: u32 = 2;
 const BUTTON_WIDTH: u32 = 4;
-const PIN_ICON: char = '\u{f0403}';
-const UNPINNED_ICON: char = '\u{f0931}';
 const ZOOM_ICON: char = '\u{f0293}';
 const UNZOOM_ICON: char = '\u{f0294}';
 const CLOSE_ICON: char = '\u{f0156}';
-const SCRATCH_ICON: char = '\u{f0093}';
-const UNSCRATCHED_ICON: char = '\u{f0096}';
-const SCREENSHOTS_ICON: char = '\u{f0100}';
-const NO_SCREENSHOTS_ICON: char = '\u{f05df}';
 
 // the sizes below are in pixels at 18 px rows, for `Scene::scaled`
 const PILL_RADIUS: i32 = 4;
@@ -55,7 +47,7 @@ pub enum Axis {
     Vertical,
 }
 
-/// The id decade gives what one of a pane's tabs shows.
+/// The id the program gives what one of a pane's tabs shows.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ContentId(pub u64);
 
@@ -67,7 +59,7 @@ pub struct Tab {
     pub label: String,
 }
 
-pub struct Pane {
+pub struct Pane<A> {
     pub id: usize,
     pub name: String,
 
@@ -78,9 +70,10 @@ pub struct Pane {
 
     /// The index in `tabs` of the tab drawn.
     pub shown: usize,
+    pub marks: Marks<A>,
 }
 
-impl Pane {
+impl<A> Pane<A> {
     /// Whether `name` is the pane's name or one it had before.
     pub fn answers_to(&self, name: &str) -> bool {
         self.name == name || self.aliases.iter().any(|alias| alias == name)
@@ -144,7 +137,7 @@ impl Pane {
         removed
     }
 
-    pub fn new(id: usize, name: String) -> Pane {
+    pub fn new(id: usize, name: String) -> Pane<A> {
         Pane {
             id,
             name,
@@ -152,6 +145,7 @@ impl Pane {
             rect: CellRect::EMPTY,
             tabs: Vec::new(),
             shown: 0,
+            marks: Marks::default(),
         }
     }
 }
@@ -166,14 +160,71 @@ pub enum Node {
     },
 }
 
+/// What a pane's bar holds under a cell.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BarButton {
-    Screenshots,
-    Scratch,
-    Pin,
+pub enum BarButton<A> {
+    Name,
     Zoom,
     Close,
-    Name,
+
+    /// One of the program's buttons, by its action.
+    Action(A),
+}
+
+/// What the program shows on a pane's outline, bar and placeholder.
+pub struct Marks<A> {
+    /// The program's buttons on the bar, left to right, before zoom and
+    /// close.
+    pub buttons: Vec<Button<A>>,
+
+    /// The icon tagged at the left of the outline's top edge.
+    pub left_tag: Option<char>,
+
+    /// The tags at the right of the outline's top edge, from the corner in.
+    pub tags: Vec<Tag>,
+    pub placeholder: Placeholder<A>,
+}
+
+impl<A> Default for Marks<A> {
+    fn default() -> Marks<A> {
+        Marks {
+            buttons: Vec::new(),
+            left_tag: None,
+            tags: Vec::new(),
+            placeholder: Placeholder {
+                lines: Vec::new(),
+                button: None,
+            },
+        }
+    }
+}
+
+/// A button the program puts on a pane's bar.
+pub struct Button<A> {
+    pub icon: char,
+
+    /// Whether the button is on, which draws it bright on an unfocused pane.
+    pub on: bool,
+    pub action: A,
+}
+
+/// A tag on the top edge of a pane's outline.
+pub enum Tag {
+    Icon(char),
+    Text(String),
+
+    /// The place of the zoom tag, drawn while the pane is zoomed.
+    Zoom,
+}
+
+/// What a pane with no tabs shows.
+pub struct Placeholder<A> {
+    /// The lines of text. Without a button, the first is brighter than the
+    /// rest.
+    pub lines: Vec<String>,
+
+    /// The label and action of a button below the lines.
+    pub button: Option<(String, A)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -197,11 +248,8 @@ pub struct Boundary {
 }
 
 /// What is drawn over the layout on screen besides its panes.
-#[derive(Clone, Copy, Default)]
-pub struct Chrome<'a> {
-    /// The name of the workspace's scratch pane.
-    pub scratch: Option<&'a str>,
-
+#[derive(Clone, Copy)]
+pub struct Chrome<'a, A> {
     /// The pane being dragged, drawn as a ghost rather than in its slot.
     pub dragging: Option<usize>,
 
@@ -209,70 +257,66 @@ pub struct Chrome<'a> {
     pub bar: bool,
 
     /// The bar button under the pointer.
-    pub hover: Option<(usize, BarButton)>,
+    pub hover: Option<(usize, BarButton<A>)>,
 
     /// The pane and index of the tab under the pointer.
     pub tab_hover: Option<(usize, usize)>,
 
-    /// The workspace's point and how far its pulse is toward its peak.
-    pub point: Option<(&'a Point, f32)>,
+    /// The pane whose outline pulses to draw the eye.
+    pub pulse: Option<Pulse<'a>>,
 
-    /// The pane whose screenshot was just taken, and how bright its
-    /// screenshot tag still flashes, from 0 to 1.
-    pub flash: Option<(&'a str, f32)>,
-
-    /// The marks of each pane by id, for a pane that has any.
-    pub marks: &'a [(usize, Marks<'a>)],
+    /// The pane whose left tag flashes, and how bright, from 0 to 1.
+    pub flash: Option<(usize, f32)>,
 }
 
-impl<'a> Chrome<'a> {
-    fn marks(&self, id: usize) -> Marks<'a> {
-        (self.marks.iter())
-            .find(|&&(pane, _)| pane == id)
-            .map_or_else(Marks::default, |&(_, marks)| marks)
+impl<A> Default for Chrome<'_, A> {
+    fn default() -> Self {
+        Chrome {
+            dragging: None,
+            bar: false,
+            hover: None,
+            tab_hover: None,
+            pulse: None,
+            flash: None,
+        }
     }
 }
 
-/// What decade shows on a pane's outline, bar and placeholder.
-#[derive(Clone, Copy, Default)]
-pub struct Marks<'a> {
-    /// Whether the pane stays, waiting for its program, when its last
-    /// client goes.
-    pub pinned: bool,
+/// A pane whose outline pulses to draw the eye.
+#[derive(Clone, Copy)]
+pub struct Pulse<'a> {
+    pub pane: usize,
 
-    /// Whether an agent may take a screenshot of the pane without asking.
-    pub screenshots: bool,
+    /// How far the pulse is toward its peak, from 0 to 1.
+    pub strength: f32,
 
-    /// Whether the pane is a pinned terminal whose shell has exited.
-    pub restartable: bool,
-
-    /// The app id an empty pinned pane waits for.
-    pub app_id: Option<&'a str>,
+    /// The text of a tag on the outline beside the pane's own tags.
+    pub note: Option<&'a str>,
 }
 
-pub struct Layout {
-    /// The cells the panes share, inside decade's top bar and sidebar.
+pub struct Layout<A> {
+    /// The cells the panes share.
     pub area: CellRect,
-    pub panes: Vec<Pane>,
+    pub panes: Vec<Pane<A>>,
     pub focused: usize,
     pub zoom: Option<usize>,
     root: Node,
     next_id: usize,
 }
 
-impl Layout {
+impl<A: Copy + PartialEq> Layout<A> {
     /// A layout holding one empty pane with this name.
-    pub fn new(area: CellRect, name: String) -> Layout {
+    pub fn new(area: CellRect, name: String) -> Layout<A> {
         Layout::restore(area, vec![Pane::new(0, name)], Node::Leaf(0), 0, None)
     }
 
     pub fn restore(
         area: CellRect,
-        panes: Vec<Pane>,
+        panes: Vec<Pane<A>>,
         root: Node,
         focused: usize,
         zoom: Option<usize>,
-    ) -> Layout {
+    ) -> Layout<A> {
         let next_id = panes.iter().map(|pane| pane.id + 1).max().unwrap_or(0);
         let mut layout = Layout {
             area,
@@ -315,11 +359,11 @@ impl Layout {
         }
     }
 
-    pub fn pane(&self, id: usize) -> Option<&Pane> {
+    pub fn pane(&self, id: usize) -> Option<&Pane<A>> {
         self.panes.iter().find(|pane| pane.id == id)
     }
 
-    pub fn pane_mut(&mut self, id: usize) -> Option<&mut Pane> {
+    pub fn pane_mut(&mut self, id: usize) -> Option<&mut Pane<A>> {
         self.panes.iter_mut().find(|pane| pane.id == id)
     }
 
@@ -330,7 +374,7 @@ impl Layout {
             .map(|pane| pane.id)
     }
 
-    pub fn visible(&self) -> impl Iterator<Item = &Pane> {
+    pub fn visible(&self) -> impl Iterator<Item = &Pane<A>> {
         self.panes.iter().filter(|pane| !pane.rect.is_empty())
     }
 
@@ -527,33 +571,45 @@ impl Layout {
         self.arrange();
     }
 
-    /// The pane and Ctrl bar button under the cell, were the bar shown.
     /// Where pane `id`'s name starts on its bar, as a column and row, and
     /// the cells the name may take.
     pub fn name_cell(&self, id: usize) -> Option<(u32, u32, u32)> {
-        let inner = self.pane(id)?.rect.inner();
+        let pane = self.pane(id)?;
+        let inner = pane.rect.inner();
         if inner.is_empty() {
             return None;
         }
-        let buttons = bar_buttons(inner.column, inner.columns);
+        let buttons = bar_buttons(pane, inner.column, inner.columns);
         let room = buttons[0].1.saturating_sub(inner.column + 2);
         Some((inner.column + 1, inner.row, room))
     }
 
-    pub fn bar_hit(&self, column: u32, row: u32) -> Option<(usize, BarButton)> {
+    /// The pane and Ctrl bar button under the cell, were the bar shown.
+    pub fn bar_hit(&self, column: u32, row: u32) -> Option<(usize, BarButton<A>)> {
         for pane in self.visible() {
             let inner = pane.rect.inner();
             let (start, width) = (inner.column, inner.columns);
             if inner.is_empty() || row != inner.row || column < start || column >= start + width {
                 continue;
             }
-            let button = bar_buttons(start, width)
+            let button = bar_buttons(pane, start, width)
                 .into_iter()
                 .find(|&(_, x)| column >= x && column < x + BUTTON_WIDTH)
                 .map_or(BarButton::Name, |(button, _)| button);
             return Some((pane.id, button));
         }
         None
+    }
+
+    /// The action of the button on pane `id`'s placeholder, which a press
+    /// anywhere on the pane runs while it has no tabs.
+    pub fn placeholder_action(&self, id: usize) -> Option<A> {
+        let pane = self.pane(id).filter(|pane| pane.tabs.is_empty())?;
+        pane.marks
+            .placeholder
+            .button
+            .as_ref()
+            .map(|&(_, action)| action)
     }
 
     /// The pane and tab index of the tab label under the cell.
@@ -570,9 +626,9 @@ impl Layout {
             })
     }
 
-    /// Draw every visible pane's outline and, for an empty pane, what it
-    /// waits for.
-    pub fn draw(&self, scene: &mut Scene, chrome: Chrome) {
+    /// Draw every visible pane's outline and, for an empty pane, its
+    /// placeholder.
+    pub fn draw(&self, scene: &mut Scene, chrome: Chrome<A>) {
         for pane in self.visible() {
             if chrome.dragging == Some(pane.id) {
                 continue;
@@ -582,14 +638,12 @@ impl Layout {
             } else {
                 OUTLINE
             };
-            let scratched = chrome.scratch == Some(pane.name.as_str());
-            let point = chrome.point.filter(|(point, _)| point.pane == pane.name);
+            let pulse = chrome.pulse.filter(|pulse| pulse.pane == pane.id);
             let flash = (chrome.flash)
-                .filter(|&(name, _)| name == pane.name)
+                .filter(|&(id, _)| id == pane.id)
                 .map_or(0.0, |(_, flash)| flash);
-            let marks = chrome.marks(pane.id);
-            self.draw_outline(scene, pane, marks, outline, (scratched, flash), point);
-            draw_waiting(scene, pane, pane.rect.inner(), scratched, marks);
+            self.draw_outline(scene, pane, outline, flash, pulse);
+            draw_placeholder(scene, pane, pane.rect.inner());
             let hover = (chrome.tab_hover)
                 .filter(|&(id, _)| id == pane.id)
                 .map(|(_, index)| index);
@@ -603,18 +657,15 @@ impl Layout {
         }
     }
 
-    /// The pane's outline, with a tag on the right of its top edge when it
-    /// is pinned, zoomed or the scratch pane, and one on the left that
-    /// brightens by `flash` when it accepts screenshots, pulsing with its
-    /// note when an agent points at it.
+    /// The pane's outline with its tags on its top edge, the left one
+    /// brightened by `flash`, pulsing with its note when `pulse` is at it.
     fn draw_outline(
         &self,
         scene: &mut Scene,
-        pane: &Pane,
-        marks: Marks,
+        pane: &Pane<A>,
         color: Rgba,
-        (scratched, flash): (bool, f32),
-        point: Option<(&Point, f32)>,
+        flash: f32,
+        pulse: Option<Pulse>,
     ) {
         let (cell_width, cell_height) = scene.cell();
         let line = scene.line_width();
@@ -632,13 +683,13 @@ impl Layout {
             cell_width,
         );
         let bottom = inset(rect.row + rect.rows == area.row + area.rows, cell_height);
-        let pulse = point.map_or(0.0, |(_, pulse)| pulse);
-        let color = palette::mix(color, POINTED, pulse);
+        let strength = pulse.map_or(0.0, |pulse| pulse.strength);
+        let color = palette::mix(color, PULSE, strength);
         scene.outline(rect, [left, top, right, bottom], color);
-        if point.is_some() {
-            let [r, g, b, _] = POINTED;
+        if pulse.is_some() {
+            let [r, g, b, _] = PULSE;
             let inner = [left + line, top + line, right + line, bottom + line];
-            scene.outline(rect, inner, [r, g, b, pulse]);
+            scene.outline(rect, inner, [r, g, b, strength]);
         }
 
         let (x, y) = scene.px(rect.column, rect.row);
@@ -649,32 +700,29 @@ impl Layout {
         let height = cell_height - 2 * scene.scaled(TAG_INSET);
         let pill_y = line_y + line / 2 - height / 2;
 
-        // the screenshot tag takes its room first, so the
+        // the left tag takes its room first, so the
         // tags on the right are dropped before it is
         let mut limit = x + left + cell_width;
-        let screenshot_tag = x + left + cell_width * 2;
-        let screenshot_end = screenshot_tag + cell_width;
-        let screenshot_fits = screenshot_end + padding < x + width - right - cell_width * 2;
-        if marks.screenshots && screenshot_fits {
+        let left_tag = x + left + cell_width * 2;
+        let left_end = left_tag + cell_width;
+        let left_fits = left_end + padding < x + width - right - cell_width * 2;
+        if let Some(icon) = pane.marks.left_tag
+            && left_fits
+        {
             let size = (cell_width + padding * 2, height);
             let fill = palette::mix(color, palette::FOREGROUND, flash);
-            scene.rounded(screenshot_tag - padding, pill_y, size, radius, fill, fill);
-            let icon = SCREENSHOTS_ICON.to_string();
-            scene.text_px(screenshot_tag, text_y, &icon, Face::Icon, TAG_TEXT);
-            limit = screenshot_end + padding + scene.scaled(TAG_GAP);
+            scene.rounded(left_tag - padding, pill_y, size, radius, fill, fill);
+            let icon = icon.to_string();
+            scene.text_px(left_tag, text_y, &icon, Face::Icon, TAG_TEXT);
+            limit = left_end + padding + scene.scaled(TAG_GAP);
         }
         let mut end = x + width - right - cell_width * 2;
-        let pinned = marks.pinned;
         let zoomed = self.zoom == Some(pane.id);
-        for (text, face) in [
-            (PIN_ICON.to_string(), Face::Icon),
-            ("zoom".to_string(), Face::Chrome),
-            ("scratch".to_string(), Face::Chrome),
-        ]
-        .into_iter()
-        .zip([pinned, zoomed, scratched])
-        .filter_map(|(tag, shown)| shown.then_some(tag))
-        {
+        for (text, face) in pane.marks.tags.iter().filter_map(|tag| match tag {
+            Tag::Icon(icon) => Some((icon.to_string(), Face::Icon)),
+            Tag::Text(text) => Some((text.clone(), Face::Chrome)),
+            Tag::Zoom => zoomed.then(|| ("zoom".to_string(), Face::Chrome)),
+        }) {
             let start = end - text.chars().count() as i32 * cell_width;
             if start - cell_width < limit {
                 break;
@@ -684,7 +732,7 @@ impl Layout {
             scene.text_px(start, text_y, &text, face, TAG_TEXT);
             end = start - padding * 2 - scene.scaled(TAG_GAP);
         }
-        let Some(note) = point.and_then(|(point, _)| point.note.as_deref()) else {
+        let Some(note) = pulse.and_then(|pulse| pulse.note) else {
             return;
         };
         let room = (end - limit - cell_width) / cell_width;
@@ -694,11 +742,11 @@ impl Layout {
         let note = fit(note, room as usize);
         let start = end - note.chars().count() as i32 * cell_width;
         let size = (end - start + padding * 2, height);
-        scene.rounded(start - padding, pill_y, size, radius, POINTED, POINTED);
+        scene.rounded(start - padding, pill_y, size, radius, PULSE, PULSE);
         scene.text_px(start, text_y, &note, Face::Chrome, TAG_TEXT);
     }
 
-    pub fn draw_bars(&self, scene: &mut Scene, chrome: Chrome) {
+    pub fn draw_bars(&self, scene: &mut Scene, chrome: Chrome<A>) {
         if !chrome.bar {
             return;
         }
@@ -709,7 +757,7 @@ impl Layout {
         }
     }
 
-    pub fn draw_ghost(&self, id: usize, scene: &mut Scene, chrome: Chrome) {
+    pub fn draw_ghost(&self, id: usize, scene: &mut Scene, chrome: Chrome<A>) {
         let Some(pane) = self.pane(id) else {
             return;
         };
@@ -718,19 +766,17 @@ impl Layout {
             row: 0,
             ..pane.rect.inner()
         };
-        let scratched = chrome.scratch == Some(pane.name.as_str());
-        draw_waiting(scene, pane, inner, scratched, chrome.marks(id));
+        draw_placeholder(scene, pane, inner);
         draw_strip(scene, pane, inner, pane.id == self.focused, None);
         if chrome.bar {
             self.draw_bar(scene, pane, inner, chrome);
         }
     }
 
-    fn draw_bar(&self, scene: &mut Scene, pane: &Pane, inner: CellRect, chrome: Chrome) {
+    fn draw_bar(&self, scene: &mut Scene, pane: &Pane<A>, inner: CellRect, chrome: Chrome<A>) {
         if inner.is_empty() {
             return;
         }
-        let scratched = chrome.scratch == Some(pane.name.as_str());
         let (start, row, width) = (inner.column, inner.row, inner.columns);
         let focused = pane.id == self.focused;
         let (fg, face) = if focused {
@@ -739,31 +785,17 @@ impl Layout {
             (DIM, Face::Chrome)
         };
         scene.fill(CellRect { rows: 1, ..inner }, BAR);
-        let buttons = bar_buttons(start, width);
+        let buttons = bar_buttons(pane, start, width);
         let room = buttons[0].1.saturating_sub(start + 2) as usize;
         let (name_x, y) = scene.px(start + 1, row);
         scene.text_px(name_x, y, &fit(&pane.name, room), face, fg);
-        let marks = chrome.marks(pane.id);
-        let pinned = marks.pinned;
         let zoomed = self.zoom == Some(pane.id);
-        for (button, x) in buttons {
+        for (index, (button, x)) in buttons.into_iter().enumerate() {
             let (icon, color) = match button {
-                BarButton::Scratch if focused => (
-                    if scratched {
-                        SCRATCH_ICON
-                    } else {
-                        UNSCRATCHED_ICON
-                    },
-                    fg,
-                ),
-                BarButton::Scratch if scratched => (SCRATCH_ICON, FOREGROUND),
-                BarButton::Scratch => (UNSCRATCHED_ICON, UNPINNED),
-                BarButton::Pin if focused => (if pinned { PIN_ICON } else { UNPINNED_ICON }, fg),
-                BarButton::Pin if pinned => (PIN_ICON, FOREGROUND),
-                BarButton::Pin => (UNPINNED_ICON, UNPINNED),
-                BarButton::Screenshots if marks.screenshots => (SCREENSHOTS_ICON, FOREGROUND),
-                BarButton::Screenshots if focused => (NO_SCREENSHOTS_ICON, fg),
-                BarButton::Screenshots => (NO_SCREENSHOTS_ICON, UNPINNED),
+                BarButton::Action(_) => {
+                    let Button { icon, on, .. } = pane.marks.buttons[index];
+                    (icon, if focused || on { FOREGROUND } else { MUTED })
+                }
                 BarButton::Zoom if zoomed => (UNZOOM_ICON, fg),
                 BarButton::Zoom => (ZOOM_ICON, fg),
                 BarButton::Close => (CLOSE_ICON, fg),
@@ -790,9 +822,9 @@ impl Layout {
 
 /// The row of tab pills at the top of a pane with more than one client,
 /// with the tab at `hover` under the pointer.
-fn draw_strip(
+fn draw_strip<A>(
     scene: &mut Scene,
-    pane: &Pane,
+    pane: &Pane<A>,
     inner: CellRect,
     focused: bool,
     hover: Option<usize>,
@@ -912,63 +944,58 @@ fn shown_after_removal(shown: usize, removed: usize, remaining: usize) -> usize 
     }
 }
 
-fn draw_waiting(scene: &mut Scene, pane: &Pane, inner: CellRect, scratched: bool, marks: Marks) {
+/// The placeholder of a pane with no tabs: its lines in the middle, or
+/// with a button, its lines above the button.
+fn draw_placeholder<A>(scene: &mut Scene, pane: &Pane<A>, inner: CellRect) {
     if inner.is_empty() || !pane.tabs.is_empty() {
         return;
     }
+    let Placeholder { lines, button } = &pane.marks.placeholder;
+    let count = lines.len() as u32;
     let centered = |text: &str| inner.column + inner.columns.saturating_sub(text.len() as u32) / 2;
-    if marks.restartable {
+    if let Some((label, _)) = button {
         scene.fill(inner, BACKGROUND);
 
-        // the message, a blank row, then a button three rows tall
-        let top = inner.row + inner.rows.saturating_sub(5) / 2;
-        let text = "shell exited";
-        scene.text(centered(text), top, text, FOREGROUND);
-        let button = "  restart  ";
-        let column = centered(button);
+        // the lines, a blank row, then a button three rows tall
+        let top = inner.row + inner.rows.saturating_sub(count + 4) / 2;
+        for (row, line) in (top..).zip(lines) {
+            scene.text(centered(line), row, line, FOREGROUND);
+        }
+        let button = format!("  {label}  ");
+        let column = centered(&button);
         let rect = CellRect {
             column,
-            row: top + 2,
+            row: top + count + 1,
             columns: button.len() as u32,
             rows: 3,
         };
-        scene.fill(rect, RESTART);
-        scene.text(column, top + 3, button, RESTART_TEXT);
+        scene.fill(rect, BUTTON);
+        scene.text(column, top + count + 2, &button, BUTTON_TEXT);
         return;
     }
     scene.fill(inner, PANE);
-    let middle = inner.row + inner.rows / 2;
-    if scratched {
-        let hint = "agents show things here";
-        scene.text(
-            centered("scratch"),
-            middle.saturating_sub(1),
-            "scratch",
-            DIM,
-        );
-        scene.text(centered(hint), middle, hint, UNPINNED);
-        return;
+    let top = (inner.row + inner.rows / 2).saturating_sub(count.saturating_sub(1));
+    for (index, line) in lines.iter().enumerate() {
+        let color = if index == 0 { DIM } else { MUTED };
+        scene.text(centered(line), top + index as u32, line, color);
     }
-    let text = match marks.app_id {
-        Some(app_id) if marks.pinned => format!("waiting for {app_id}"),
-        _ => "no client".to_string(),
-    };
-    scene.text(centered(&text), middle, &text, DIM);
 }
 
-fn bar_buttons(start: u32, width: u32) -> [(BarButton, u32); 5] {
+/// Each button on the pane's bar `width` wide from `start`, left to right,
+/// and its column: the program's buttons, then zoom and close.
+fn bar_buttons<A: Copy>(pane: &Pane<A>, start: u32, width: u32) -> Vec<(BarButton<A>, u32)> {
     let close = (start + width).saturating_sub(BUTTON_WIDTH);
     let zoom = close.saturating_sub(BUTTON_WIDTH);
-    let pin = zoom.saturating_sub(BUTTON_WIDTH);
-    let scratch = pin.saturating_sub(BUTTON_WIDTH);
-    let screenshots = scratch.saturating_sub(BUTTON_WIDTH);
-    [
-        (BarButton::Screenshots, screenshots),
-        (BarButton::Scratch, scratch),
-        (BarButton::Pin, pin),
-        (BarButton::Zoom, zoom),
-        (BarButton::Close, close),
-    ]
+    let mut column = zoom;
+    let mut buttons: Vec<_> = (pane.marks.buttons.iter().rev())
+        .map(|button| {
+            column = column.saturating_sub(BUTTON_WIDTH);
+            (BarButton::Action(button.action), column)
+        })
+        .collect();
+    buttons.reverse();
+    buttons.extend([(BarButton::Zoom, zoom), (BarButton::Close, close)]);
+    buttons
 }
 
 fn split_area(area: CellRect, axis: Axis, ratio: f32) -> (CellRect, CellRect) {
@@ -1345,32 +1372,30 @@ pub(super) mod tests {
         rows: 40,
     };
 
-    pub fn three_anchors() -> Layout {
-        let mut layout = Layout::new(AREA, "chat".to_string());
+    type Layout = super::Layout<u8>;
+
+    pub fn three_anchors<A: Copy + PartialEq>() -> super::Layout<A> {
+        let mut layout = super::Layout::new(AREA, "chat".to_string());
         layout.add_transient("terminal".to_string());
         layout.add_transient("code".to_string());
         layout.focused = 1;
         layout
     }
 
-    fn pinned(app_id: Option<&str>) -> Marks<'_> {
-        Marks {
-            pinned: true,
-            app_id,
-            ..Marks::default()
-        }
-    }
-
-    fn screenshots() -> Marks<'static> {
-        Marks {
-            screenshots: true,
-            ..Marks::default()
-        }
+    /// Three buttons, with actions 0, 1 and 2, the second one on.
+    fn three_buttons() -> Vec<Button<u8>> {
+        (0..3)
+            .map(|action| Button {
+                icon: char::from(b'a' + action),
+                on: action == 1,
+                action,
+            })
+            .collect()
     }
 
     #[test]
     fn the_three_anchors_fill_the_body_above_the_status_line() {
-        let layout = three_anchors();
+        let layout: Layout = three_anchors();
         let rects: Vec<CellRect> = layout.panes.iter().map(|pane| pane.rect).collect();
         assert_eq!(
             rects[0],
@@ -1403,7 +1428,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_transient_pane_splits_the_focused_pane_and_leaves_with_its_client() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         layout.focused = 0;
         let id = layout.add_transient("terminal2".into());
         assert_eq!(layout.focused, id);
@@ -1422,15 +1447,15 @@ pub(super) mod tests {
 
     #[test]
     fn removing_the_focused_pane_focuses_the_first_pane_of_its_sibling() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         layout.focused = 0;
         layout.remove(0);
         assert_eq!(layout.focused, 1);
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         layout.focused = 1;
         layout.remove(1);
         assert_eq!(layout.focused, 2);
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         layout.focused = 2;
         layout.remove(1);
         assert_eq!(layout.focused, 2);
@@ -1438,7 +1463,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_new_pane_beside_a_wide_pane_goes_right_and_beside_a_tall_one_below() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         layout.focused = 1;
         let wide = layout.pane(1).unwrap().rect;
         let right = layout.add_transient("right".to_string());
@@ -1459,7 +1484,7 @@ pub(super) mod tests {
 
     #[test]
     fn zoom_gives_one_pane_the_body_and_hides_the_rest() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         layout.toggle_zoom(2);
         assert_eq!(layout.pane(2).unwrap().rect.columns, 100);
         assert_eq!(layout.visible().count(), 1);
@@ -1469,7 +1494,7 @@ pub(super) mod tests {
 
     #[test]
     fn the_boundary_between_chat_and_the_right_column_can_be_dragged() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         let boundary = layout
             .boundary_at(50, 10)
             .expect("the outline cells are a boundary");
@@ -1482,29 +1507,46 @@ pub(super) mod tests {
 
     #[test]
     fn the_ctrl_bar_buttons_are_hit_on_the_top_row_of_the_client() {
-        let layout = three_anchors();
+        let mut layout: Layout = three_anchors();
+        layout.panes[0].marks.buttons = three_buttons();
         let pane = layout.pane(0).unwrap();
         let before = pane.client_rect();
         assert_eq!(layout.bar_hit(48, before.row), Some((0, BarButton::Close)));
-        assert_eq!(layout.bar_hit(38, before.row), Some((0, BarButton::Pin)));
+        assert_eq!(
+            layout.bar_hit(38, before.row),
+            Some((0, BarButton::Action(2)))
+        );
         assert_eq!(layout.bar_hit(48, 1), Some((0, BarButton::Close)));
         assert_eq!(layout.bar_hit(42, 1), Some((0, BarButton::Zoom)));
-        let inner = layout.pane(0).unwrap().rect.inner();
-        let (_, scratch) = bar_buttons(inner.column, inner.columns)[1];
-        assert_eq!(scratch, 33);
-        assert_eq!(layout.bar_hit(scratch, 1), Some((0, BarButton::Scratch)));
+        let inner = pane.rect.inner();
+        let (button, middle) = bar_buttons(pane, inner.column, inner.columns)[1];
+        assert_eq!((button, middle), (BarButton::Action(1), 33));
+        assert_eq!(layout.bar_hit(middle, 1), Some((0, BarButton::Action(1))));
         assert_eq!(
-            layout.bar_hit(scratch - 1, 1),
-            Some((0, BarButton::Screenshots))
+            layout.bar_hit(middle - 1, 1),
+            Some((0, BarButton::Action(0)))
         );
-        assert_eq!(layout.bar_hit(scratch - 5, 1), Some((0, BarButton::Name)));
+        assert_eq!(layout.bar_hit(middle - 5, 1), Some((0, BarButton::Name)));
         assert_eq!(layout.bar_hit(2, 1), Some((0, BarButton::Name)));
         assert_eq!(layout.bar_hit(2, 5), None);
     }
 
     #[test]
+    fn a_pane_without_buttons_of_its_own_has_its_name_up_to_zoom() {
+        let layout: Layout = three_anchors();
+        let inner = layout.pane(1).unwrap().rect.inner();
+        let zoom = inner.column + inner.columns - 2 * BUTTON_WIDTH;
+        assert_eq!(layout.bar_hit(zoom, inner.row), Some((1, BarButton::Zoom)));
+        assert_eq!(
+            layout.bar_hit(zoom - 1, inner.row),
+            Some((1, BarButton::Name))
+        );
+        assert_eq!(layout.name_cell(1).unwrap().2, zoom - inner.column - 2);
+    }
+
+    #[test]
     fn swapping_two_panes_exchanges_their_rects_and_nothing_else() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         let chat = layout.pane(0).unwrap().rect;
         let code = layout.pane(2).unwrap().rect;
         layout.apply_drop(0, Drop::Swap(2));
@@ -1516,7 +1558,7 @@ pub(super) mod tests {
 
     #[test]
     fn swapping_a_pane_with_itself_changes_nothing() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         let rects: Vec<CellRect> = layout.panes.iter().map(|pane| pane.rect).collect();
         layout.apply_drop(1, Drop::Swap(1));
         let after: Vec<CellRect> = layout.panes.iter().map(|pane| pane.rect).collect();
@@ -1525,20 +1567,20 @@ pub(super) mod tests {
 
     #[test]
     fn a_dragged_pane_leaves_its_slot_empty_and_its_ghost_is_the_inside_of_the_pane() {
-        let layout = three_anchors();
-        let marks = [(0, pinned(Some("decade.chat")))];
+        let mut layout: Layout = three_anchors();
+        layout.panes[0].marks.placeholder.lines = vec!["waiting".to_string()];
         let chrome = Chrome {
             dragging: Some(0),
             bar: true,
-            marks: &marks,
             ..Chrome::default()
         };
         let font = decade_ui::Font::load(14.0);
         let mut drawn = Scene::new(&font);
         layout.draw(&mut drawn, chrome);
-        let waiting = drawn.shapes.iter().any(|shape| {
-            matches!(shape, decade_ui::Shape::Text { text, .. } if text.contains("decade.chat"))
-        });
+        let waiting = drawn
+            .shapes
+            .iter()
+            .any(|shape| matches!(shape, decade_ui::Shape::Text { text, .. } if text == "waiting"));
         assert!(!waiting);
         let mut ghost = Scene::new(&font);
         layout.draw_ghost(0, &mut ghost, chrome);
@@ -1557,7 +1599,7 @@ pub(super) mod tests {
 
     #[test]
     fn the_middle_of_a_pane_swaps_and_its_edges_split() {
-        let layout = three_anchors();
+        let layout: Layout = three_anchors();
         let code = layout.pane(2).unwrap().rect;
         let middle = (code.column + code.columns / 2, code.row + code.rows / 2);
         assert_eq!(layout.drop_at(0, middle.0, middle.1), Some(Drop::Swap(2)));
@@ -1608,7 +1650,7 @@ pub(super) mod tests {
 
     #[test]
     fn splitting_a_pane_gives_the_dropped_pane_the_half_on_that_side() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         let code = layout.pane(2).unwrap().rect;
         let drop = Drop::Split {
             target: 2,
@@ -1624,7 +1666,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_drop_on_the_window_edge_spans_that_side() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         layout.apply_drop(2, Drop::Edge(Side::Left));
         let code = layout.pane(2).unwrap().rect;
         assert_eq!((code.column, code.row), (0, 0));
@@ -1634,7 +1676,7 @@ pub(super) mod tests {
 
     #[test]
     fn resizing_moves_the_nearest_divider_on_that_axis() {
-        let mut layout = three_anchors();
+        let mut layout: Layout = three_anchors();
         let chat = layout.pane(0).unwrap().rect.columns;
         layout.resize_toward(0, Direction::Right, 2);
         assert_eq!(layout.pane(0).unwrap().rect.columns, chat + 2);
@@ -1643,7 +1685,10 @@ pub(super) mod tests {
         assert_eq!(layout.pane(1).unwrap().rect.rows, terminal - 2);
     }
 
-    pub fn drawn_texts(layout: &Layout, chrome: Chrome) -> Vec<String> {
+    pub fn drawn_texts<A: Copy + PartialEq>(
+        layout: &super::Layout<A>,
+        chrome: Chrome<A>,
+    ) -> Vec<String> {
         let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
         layout.draw(&mut scene, chrome);
@@ -1665,6 +1710,7 @@ pub(super) mod tests {
     fn a_long_name_on_the_ctrl_bar_is_cut_before_the_icons() {
         let mut layout = Layout::new(AREA, "terminal".to_string());
         layout.panes[0].name = "x".repeat(200);
+        layout.panes[0].marks.buttons = three_buttons();
         let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
         let chrome = Chrome {
@@ -1673,25 +1719,13 @@ pub(super) mod tests {
         };
         layout.draw_bars(&mut scene, chrome);
         let inner = layout.panes[0].rect.inner();
-        let first = bar_buttons(inner.column, inner.columns)[0].1;
+        let first = bar_buttons(&layout.panes[0], inner.column, inner.columns)[0].1;
         let name = texts(&scene)
             .into_iter()
             .find(|text| text.starts_with('x'))
             .unwrap();
         assert!(name.ends_with('…'));
         assert!(inner.column + 1 + name.chars().count() as u32 <= first);
-    }
-
-    #[test]
-    fn an_empty_scratch_pane_says_it_is_the_scratch_pane() {
-        let layout = Layout::new(AREA, "terminal".to_string());
-        let chrome = Chrome {
-            scratch: Some("terminal"),
-            ..Chrome::default()
-        };
-        let texts = drawn_texts(&layout, chrome);
-        assert!(texts.iter().any(|text| text == "agents show things here"));
-        assert!(!texts.iter().any(|text| text == "no client"));
     }
 
     #[test]
@@ -1729,7 +1763,7 @@ pub(super) mod tests {
         assert_eq!(tab_at(&pills, 8), Some(1));
         assert_eq!(tab_at(&pills, 21), Some(2));
         assert_eq!(tab_at(&pills, 22), None);
-        let layout = three_anchors();
+        let layout: Layout = three_anchors();
         assert_eq!(layout.tab_hit(2, 1), None);
     }
 
@@ -1772,7 +1806,7 @@ pub(super) mod tests {
         layout.draw_bars(&mut scene, chrome);
         let (cell_width, cell_height) = scene.cell();
         let inner = layout.panes[0].rect.inner();
-        let close = bar_buttons(inner.column, inner.columns)[4].1;
+        let close = inner.column + inner.columns - BUTTON_WIDTH;
         let [(x, y, width, height, fill)] = rounded(&scene)[..] else {
             panic!("one hover square");
         };
@@ -1785,19 +1819,25 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_zoomed_pinned_pane_has_two_tags_on_its_top_line_in_its_outline_colour() {
+    fn a_zoomed_pane_with_a_tag_has_two_tags_on_its_top_line_in_its_outline_colour() {
         let mut layout = Layout::new(AREA, "terminal".to_string());
-        layout.toggle_zoom(0);
+        layout.panes[0].marks.tags = vec![Tag::Icon('p'), Tag::Zoom];
         let font = decade_ui::Font::load(14.0);
-        let mut scene = Scene::new(&font);
-        let marks = [(0, pinned(Some("decade.terminal")))];
-        let chrome = Chrome {
-            marks: &marks,
-            ..Chrome::default()
+        let drawn = |layout: &Layout| {
+            let mut scene = Scene::new(&font);
+            layout.draw(&mut scene, Chrome::default());
+            scene
         };
-        layout.draw(&mut scene, chrome);
+        assert_eq!(rounded(&drawn(&layout)).len(), 1);
+        layout.toggle_zoom(0);
+        let scene = drawn(&layout);
         let tags = rounded(&scene);
         assert_eq!(tags.len(), 2);
+        let [_, (zoom_x, ..)] = tags[..] else {
+            panic!("two tags");
+        };
+        assert!(zoom_x < tags[0].0);
+        assert!(texts(&scene).contains(&"zoom".to_string()));
         let (_, cell_height) = scene.cell();
         let line_y = cell_height / 2;
         for (_, y, _, height, fill) in tags {
@@ -1827,17 +1867,17 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_pane_accepting_screenshots_has_a_tag_at_the_left_of_its_top_line_that_flashes() {
-        let layout = Layout::new(AREA, "terminal".to_string());
-        let marks = [(0, screenshots())];
+    fn a_pane_with_a_left_tag_has_it_at_the_left_of_its_top_line_and_it_flashes() {
+        let mut layout: Layout = three_anchors();
+        layout.focused = 0;
+        layout.panes[0].marks.left_tag = Some('s');
         let font = decade_ui::Font::load(14.0);
-        let tags = |flash: Option<(&str, f32)>| {
+        let tags = |flash: Option<(usize, f32)>| {
             let mut scene = Scene::new(&font);
             layout.draw(
                 &mut scene,
                 Chrome {
                     flash,
-                    marks: &marks,
                     ..Chrome::default()
                 },
             );
@@ -1849,37 +1889,157 @@ pub(super) mod tests {
         let (cell_width, _) = Scene::new(&font).cell();
         assert!(x < 4 * cell_width);
         assert_eq!(fill, FOCUS);
-        let [(_, _, _, _, flashed)] = tags(Some(("terminal", 1.0)))[..] else {
+        let [(_, _, _, _, flashed)] = tags(Some((0, 1.0)))[..] else {
             panic!("one tag");
         };
         assert_eq!(flashed, FOREGROUND);
-        assert_eq!(tags(Some(("other", 1.0)))[0].4, FOCUS);
+        assert_eq!(tags(Some((1, 1.0)))[0].4, FOCUS);
     }
 
     #[test]
-    fn on_a_narrow_pane_the_tags_on_the_right_are_dropped_before_the_screenshot_tag() {
+    fn on_a_narrow_pane_the_tags_on_the_right_are_dropped_before_the_left_tag() {
         let narrow = CellRect {
             columns: 12,
             ..AREA
         };
         let mut layout = Layout::new(narrow, "terminal".to_string());
         layout.toggle_zoom(0);
-        let marks = [(
-            0,
-            Marks {
-                screenshots: true,
-                ..pinned(Some("decade.terminal"))
-            },
-        )];
+        layout.panes[0].marks.left_tag = Some('s');
+        layout.panes[0].marks.tags = vec![Tag::Icon('p'), Tag::Zoom];
+        let font = decade_ui::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, Chrome::default());
+        let texts = texts(&scene);
+        assert!(texts.contains(&"s".to_string()));
+        assert!(!texts.contains(&"zoom".to_string()));
+    }
+
+    #[test]
+    fn a_pulsing_pane_has_its_note_in_a_tag_inside_its_own_tags() {
+        let mut layout = Layout::new(AREA, "terminal".to_string());
+        layout.panes[0].marks.tags = vec![Tag::Text("mark".to_string())];
+        let font = decade_ui::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        let pulse = Pulse {
+            pane: 0,
+            strength: 1.0,
+            note: Some("look"),
+        };
         let chrome = Chrome {
-            marks: &marks,
+            pulse: Some(pulse),
             ..Chrome::default()
+        };
+        layout.draw(&mut scene, chrome);
+        let [(mark, ..), (note, _, _, _, fill)] = rounded(&scene)[..] else {
+            panic!("two tags");
+        };
+        assert_eq!(fill, PULSE);
+        assert!(note < mark);
+        assert!(texts(&scene).contains(&"look".to_string()));
+    }
+
+    #[test]
+    fn a_placeholder_with_a_button_shows_its_lines_above_the_button_on_the_background() {
+        let mut layout = Layout::new(AREA, "terminal".to_string());
+        layout.panes[0].marks.placeholder = Placeholder {
+            lines: vec!["stopped".to_string()],
+            button: Some(("again".to_string(), 7)),
         };
         let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw(&mut scene, chrome);
-        let texts = texts(&scene);
-        assert!(texts.contains(&SCREENSHOTS_ICON.to_string()));
-        assert!(!texts.contains(&"zoom".to_string()));
+        layout.draw(&mut scene, Chrome::default());
+        let inner = layout.panes[0].rect.inner();
+        let top = inner.row + (inner.rows - 5) / 2;
+        let text_rows: Vec<(String, i32, Rgba)> = (scene.shapes.iter())
+            .filter_map(|shape| match shape {
+                decade_ui::Shape::Text {
+                    text, at, color, ..
+                } => Some((text.clone(), at.y, *color)),
+                _ => None,
+            })
+            .collect();
+        let row = |row: u32| scene.px(0, row).1;
+        assert_eq!(
+            text_rows,
+            [
+                ("stopped".to_string(), row(top), FOREGROUND),
+                ("  again  ".to_string(), row(top + 3), BUTTON_TEXT),
+            ]
+        );
+        assert!(scene.shapes.iter().any(|shape| matches!(
+            shape,
+            decade_ui::Shape::Rect { color, .. } if *color == BUTTON
+        )));
+        assert_eq!(layout.placeholder_action(0), Some(7));
+        layout.panes[0].add_tab(
+            0,
+            Tab {
+                content: ContentId(0),
+                label: String::new(),
+            },
+        );
+        assert_eq!(layout.placeholder_action(0), None);
+    }
+
+    #[test]
+    fn a_placeholder_without_a_button_has_its_first_line_brighter_than_the_rest() {
+        let mut layout = Layout::new(AREA, "terminal".to_string());
+        layout.panes[0].marks.placeholder.lines = vec!["title".to_string(), "hint".to_string()];
+        let font = decade_ui::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        layout.draw(&mut scene, Chrome::default());
+        let inner = layout.panes[0].rect.inner();
+        let middle = inner.row + inner.rows / 2;
+        let row = |row: u32| scene.px(0, row).1;
+        let lines: Vec<(String, i32, Rgba)> = (scene.shapes.iter())
+            .filter_map(|shape| match shape {
+                decade_ui::Shape::Text {
+                    text, at, color, ..
+                } => Some((text.clone(), at.y, *color)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                ("title".to_string(), row(middle - 1), DIM),
+                ("hint".to_string(), row(middle), MUTED),
+            ]
+        );
+        assert_eq!(layout.placeholder_action(0), None);
+    }
+
+    #[test]
+    fn a_button_that_is_off_is_muted_on_an_unfocused_pane_and_bright_on_the_focused_one() {
+        let mut layout: Layout = three_anchors();
+        layout.panes[0].marks.buttons = three_buttons();
+        layout.panes[1].marks.buttons = three_buttons();
+        let font = decade_ui::Font::load(14.0);
+        let mut scene = Scene::new(&font);
+        let chrome = Chrome {
+            bar: true,
+            ..Chrome::default()
+        };
+        layout.draw_bars(&mut scene, chrome);
+        let colours = |id: usize| -> Vec<Rgba> {
+            let inner = layout.pane(id).unwrap().rect.inner();
+            let (left, row) = scene.px(inner.column, inner.row);
+            let right = scene.px(inner.column + inner.columns, 0).0;
+            (scene.shapes.iter())
+                .filter_map(|shape| match shape {
+                    decade_ui::Shape::Text {
+                        text,
+                        at,
+                        face: Face::Icon,
+                        color,
+                    } if text.len() == 1 && at.y == row && (left..right).contains(&at.x) => {
+                        Some(*color)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(colours(0), [MUTED, FOREGROUND, MUTED]);
+        assert_eq!(colours(1), [FOREGROUND; 3]);
     }
 }

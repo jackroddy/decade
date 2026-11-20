@@ -17,6 +17,7 @@ use crate::server::chrome::prompt::{self, Answer};
 use crate::server::chrome::rename::Named;
 use crate::server::clients;
 use crate::server::panes::{BarButton, Boundary, Direction, Drop};
+use crate::server::workspace::PaneAction;
 use crate::wire::{
     self, BTN_BACK, BTN_LEFT, BTN_RIGHT, BTN_SIDE, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
 };
@@ -631,16 +632,8 @@ impl State {
                 self.toggle_zoom(id);
                 return true;
             }
-            Some((id, BarButton::Pin)) => {
-                self.toggle_pin(id);
-                return true;
-            }
-            Some((id, BarButton::Scratch)) => {
-                self.toggle_scratch(id);
-                return true;
-            }
-            Some((id, BarButton::Screenshots)) => {
-                self.toggle_screenshots(id);
+            Some((id, BarButton::Action(action))) => {
+                self.pane_action(id, action);
                 return true;
             }
             Some(_) => {}
@@ -663,9 +656,8 @@ impl State {
             self.start_pane_drag(id);
             return true;
         }
-        if self.tab().restartable(id) {
-            self.focus(id);
-            self.restart_pane(self.current(), id);
+        if let Some(action) = self.layout().placeholder_action(id) {
+            self.pane_action(id, action);
             return true;
         }
         self.end_point_at(id);
@@ -673,6 +665,18 @@ impl State {
             self.focus(id);
         }
         false
+    }
+
+    fn pane_action(&mut self, id: usize, action: PaneAction) {
+        match action {
+            PaneAction::Screenshots => self.toggle_screenshots(id),
+            PaneAction::Scratch => self.toggle_scratch(id),
+            PaneAction::Pin => self.toggle_pin(id),
+            PaneAction::Restart => {
+                self.focus(id);
+                self.restart_pane(self.current(), id);
+            }
+        }
     }
 
     /// The workspace, tab or pane whose name is under the pointer: on a

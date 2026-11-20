@@ -10,10 +10,29 @@ use decade_ui::CellRect;
 
 use crate::server::channel::{Out, PaneNames, Router};
 use crate::server::clients::Client;
-use crate::server::panes::{self, ContentId, Layout, Marks, Pane};
+use crate::server::panes::{self, Button, ContentId, Marks, Placeholder, Tag};
 use crate::server::scratch::Scratch;
 use decade_channel::AgentState;
 use serde_json::Value;
+
+const PIN_ICON: char = '\u{f0403}';
+const UNPINNED_ICON: char = '\u{f0931}';
+const SCRATCH_ICON: char = '\u{f0093}';
+const UNSCRATCHED_ICON: char = '\u{f0096}';
+const SCREENSHOTS_ICON: char = '\u{f0100}';
+const NO_SCREENSHOTS_ICON: char = '\u{f05df}';
+
+pub type Layout = panes::Layout<PaneAction>;
+pub type Pane = panes::Pane<PaneAction>;
+
+/// What a button decade puts on a pane runs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PaneAction {
+    Screenshots,
+    Scratch,
+    Pin,
+    Restart,
+}
 
 pub struct Workspace {
     pub id: u32,
@@ -330,20 +349,69 @@ impl Tab {
         )
     }
 
-    /// The marks of each pane, for drawing the layout.
-    pub fn marks(&self) -> Vec<(usize, Marks<'_>)> {
-        (self.layout.panes.iter())
-            .map(|pane| {
-                let info = self.info(pane.id);
-                let marks = Marks {
-                    pinned: info.pinned,
-                    screenshots: info.screenshots,
-                    restartable: self.restartable(pane.id),
-                    app_id: info.app_id.as_deref(),
-                };
-                (pane.id, marks)
-            })
-            .collect()
+    /// Set the marks of every pane from what decade keeps about it, with
+    /// the pane named `scratch` as the scratch pane.
+    pub fn mark_panes(&mut self, scratch: Option<&str>) {
+        for pane in &mut self.layout.panes {
+            let scratched = scratch == Some(pane.name.as_str());
+            pane.marks = marks(&self.info[&pane.id], scratched);
+        }
+    }
+}
+
+/// The buttons, tags and placeholder of a pane with `info`.
+fn marks(info: &PaneInfo, scratched: bool) -> Marks<PaneAction> {
+    let button = |on: bool, icons: (char, char), action| Button {
+        icon: if on { icons.0 } else { icons.1 },
+        on,
+        action,
+    };
+    let buttons = vec![
+        button(
+            info.screenshots,
+            (SCREENSHOTS_ICON, NO_SCREENSHOTS_ICON),
+            PaneAction::Screenshots,
+        ),
+        button(
+            scratched,
+            (SCRATCH_ICON, UNSCRATCHED_ICON),
+            PaneAction::Scratch,
+        ),
+        button(info.pinned, (PIN_ICON, UNPINNED_ICON), PaneAction::Pin),
+    ];
+    let tags = [
+        info.pinned.then_some(Tag::Icon(PIN_ICON)),
+        Some(Tag::Zoom),
+        scratched.then(|| Tag::Text("scratch".to_string())),
+    ];
+
+    // `Tab::restartable` without its check for no tabs, since
+    // the layout draws a placeholder only on a pane with none
+    let placeholder = if info.cwd.is_some() && info.pinned {
+        Placeholder {
+            lines: vec!["shell exited".to_string()],
+            button: Some(("restart".to_string(), PaneAction::Restart)),
+        }
+    } else if scratched {
+        Placeholder {
+            lines: vec!["scratch".to_string(), "agents show things here".to_string()],
+            button: None,
+        }
+    } else {
+        let line = match &info.app_id {
+            Some(app_id) if info.pinned => format!("waiting for {app_id}"),
+            _ => "no client".to_string(),
+        };
+        Placeholder {
+            lines: vec![line],
+            button: None,
+        }
+    };
+    Marks {
+        buttons,
+        left_tag: info.screenshots.then_some(SCREENSHOTS_ICON),
+        tags: tags.into_iter().flatten().collect(),
+        placeholder,
     }
 }
 
@@ -500,7 +568,7 @@ impl Workspace {
         tabs: Vec<Tab>,
         active_tab: usize,
     ) -> Workspace {
-        Workspace {
+        let mut workspace = Workspace {
             id,
             name,
             cwd,
@@ -515,7 +583,9 @@ impl Workspace {
             group: None,
             flash: None,
             next_content: 0,
-        }
+        };
+        workspace.mark_panes();
+        workspace
     }
 
     /// Read the branch again if it was last read `BRANCH_EVERY` or more
@@ -571,6 +641,7 @@ impl Workspace {
         let content = ContentId(self.next_content);
         self.next_content += 1;
         self.tabs[tab].add_client(id, content, client);
+        self.mark_panes();
     }
 
     /// Answer one line from socket client `id`.
@@ -649,6 +720,7 @@ impl Workspace {
         let entry = &mut self.tabs[tab];
         let id = entry.add_pane(at, name);
         entry.info_mut(id).cwd = cwd;
+        self.mark_panes();
         id
     }
 
@@ -659,6 +731,7 @@ impl Workspace {
         let mut tab = Tab::new(Layout::new(area, name.clone()));
         tab.info_mut(0).cwd = Some(self.cwd.clone());
         self.tabs.push(tab);
+        self.mark_panes();
         (self.tabs.len() - 1, name)
     }
 
@@ -692,6 +765,7 @@ impl Workspace {
         {
             point.pane = name.to_string();
         }
+        self.mark_panes();
         Ok(())
     }
 
@@ -740,6 +814,7 @@ impl Workspace {
             self.scratch = None;
         }
         self.end_point_at(name);
+        self.mark_panes();
     }
 
     /// Point at pane `pane` from `now`, in place of any earlier point.
@@ -834,6 +909,15 @@ impl Workspace {
         self.router.agents.states().max()
     }
 
+    /// Set the marks of every pane in every tab from what decade keeps
+    /// about it.
+    pub fn mark_panes(&mut self) {
+        let scratch = self.scratch.as_ref().map(|scratch| scratch.pane.as_str());
+        for tab in &mut self.tabs {
+            tab.mark_panes(scratch);
+        }
+    }
+
     /// The name of the scratch pane, if the workspace has one.
     pub fn scratch_pane(&self) -> Option<&str> {
         self.scratch.as_ref().map(|scratch| scratch.pane.as_str())
@@ -846,12 +930,14 @@ impl Workspace {
         } else {
             Some(Scratch::new(name.to_string()))
         };
+        self.mark_panes();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::panes::BarButton;
 
     fn at_home() -> Workspace {
         Workspace::new(
@@ -1293,13 +1379,62 @@ mod tests {
         tab.add_pane(focused, name.to_string())
     }
 
-    fn drawn_texts(tab: &Tab) -> Vec<String> {
-        let marks = tab.marks();
+    fn drawn_texts(tab: &mut Tab) -> Vec<String> {
+        tab.mark_panes(None);
+        panes::tests::drawn_texts(&tab.layout, panes::Chrome::default())
+    }
+
+    /// The text of each tag on pane `id`'s outline, left to right.
+    fn tags(layout: &Layout, id: usize) -> Vec<String> {
+        let font = decade_ui::Font::load(14.0);
+        let mut scene = decade_ui::Scene::new(&font);
+        layout.draw(&mut scene, panes::Chrome::default());
+        let (cell_width, cell_height) = scene.cell();
+        let rect = layout.pane(id).unwrap().rect;
+        let (left, top) = scene.px(rect.column, rect.row);
+        let right = left + rect.columns as i32 * cell_width;
+        let mut tags: Vec<(i32, String)> = (scene.shapes.iter())
+            .filter_map(|shape| match shape {
+                decade_ui::Shape::Text { at, text, .. }
+                    if at.y < top + cell_height / 2 && (left..right).contains(&at.x) =>
+                {
+                    Some((at.x, text.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        tags.sort_by_key(|&(x, _)| x);
+        tags.into_iter().map(|(_, text)| text).collect()
+    }
+
+    /// The icon and colour of each of decade's buttons on pane `id`'s bar,
+    /// left to right.
+    fn bar_icons(layout: &Layout, id: usize) -> Vec<(char, decade_ui::palette::Rgba)> {
+        let font = decade_ui::Font::load(14.0);
+        let mut scene = decade_ui::Scene::new(&font);
         let chrome = panes::Chrome {
-            marks: &marks,
+            bar: true,
             ..panes::Chrome::default()
         };
-        panes::tests::drawn_texts(&tab.layout, chrome)
+        layout.draw_bars(&mut scene, chrome);
+        let row = scene.px(0, layout.pane(id).unwrap().rect.inner().row).1;
+        let rect = layout.pane(id).unwrap().rect;
+        let (left, _) = scene.px(rect.column, rect.row);
+        let right = left + scene.px(rect.columns, 0).0;
+        let icons: Vec<_> = (scene.shapes.iter())
+            .filter_map(|shape| match shape {
+                decade_ui::Shape::Text {
+                    at,
+                    text,
+                    face: decade_ui::Face::Icon,
+                    color,
+                } if at.y == row && (left..right).contains(&at.x) => {
+                    Some((text.chars().next().unwrap(), *color))
+                }
+                _ => None,
+            })
+            .collect();
+        icons[..icons.len() - 2].to_vec()
     }
 
     #[test]
@@ -1349,7 +1484,7 @@ mod tests {
     fn an_unpinned_pane_no_longer_waits_for_its_window() {
         let mut tab = three_anchors();
         tab.unpin(0);
-        let texts = drawn_texts(&tab);
+        let texts = drawn_texts(&mut tab);
         assert!(!texts.iter().any(|text| text == "waiting for decade.chat"));
         assert!(texts.iter().any(|text| text == "waiting for decade.code"));
     }
@@ -1369,7 +1504,7 @@ mod tests {
         tab.info_mut(0).cwd = Some(PathBuf::from("/home/jack"));
         tab.pin(0, "decade.w0.terminal".to_string());
         assert!(tab.restartable(0));
-        let texts = drawn_texts(&tab);
+        let texts = drawn_texts(&mut tab);
         assert!(texts.iter().any(|text| text == "shell exited"));
         assert!(texts.iter().any(|text| text == "restart"));
     }
@@ -1379,13 +1514,114 @@ mod tests {
         let mut tab = Tab::new(Layout::new(panes::tests::AREA, "terminal".to_string()));
         tab.pin(0, "org.gnome.Nautilus".to_string());
         assert!(!tab.restartable(0));
-        let texts = drawn_texts(&tab);
+        let texts = drawn_texts(&mut tab);
         assert!(
             texts
                 .iter()
                 .any(|text| text == "waiting for org.gnome.Nautilus")
         );
         assert!(!texts.iter().any(|text| text == "restart"));
+    }
+
+    #[test]
+    fn a_click_anywhere_on_a_restartable_pane_restarts_it_and_not_once_it_has_a_tab() {
+        let mut workspace = at_home();
+        workspace.tab_mut().pin(0, "decade.w0.terminal".to_string());
+        workspace.mark_panes();
+        assert_eq!(
+            workspace.layout().placeholder_action(0),
+            Some(PaneAction::Restart)
+        );
+        workspace.tab_mut().unpin(0);
+        workspace.mark_panes();
+        assert_eq!(workspace.layout().placeholder_action(0), None);
+    }
+
+    #[test]
+    fn an_empty_scratch_pane_says_it_is_the_scratch_pane() {
+        let mut workspace = Workspace::new(0, PathBuf::from("/"), panes::tests::AREA);
+        workspace.toggle_scratch("terminal");
+        let texts = panes::tests::drawn_texts(workspace.layout(), panes::Chrome::default());
+        assert!(texts.iter().any(|text| text == "scratch"));
+        assert!(texts.iter().any(|text| text == "agents show things here"));
+        assert!(!texts.iter().any(|text| text == "no client"));
+    }
+
+    #[test]
+    fn a_pinned_zoomed_scratch_pane_has_its_pin_in_the_corner_then_zoom_then_scratch() {
+        let mut workspace = at_home();
+        workspace.tab_mut().pin(0, "decade.w0.terminal".to_string());
+        workspace.layout_mut().toggle_zoom(0);
+        workspace.toggle_scratch("terminal");
+        assert_eq!(
+            tags(workspace.layout(), 0),
+            ["scratch", "zoom", &PIN_ICON.to_string()]
+        );
+        workspace.tab_mut().unpin(0);
+        workspace.toggle_scratch("terminal");
+        assert_eq!(tags(workspace.layout(), 0), ["zoom"]);
+    }
+
+    #[test]
+    fn a_pane_accepting_screenshots_has_the_screenshot_tag_at_the_left() {
+        let mut workspace = at_home();
+        workspace.tab_mut().info_mut(0).screenshots = true;
+        workspace.mark_panes();
+        assert_eq!(tags(workspace.layout(), 0), [SCREENSHOTS_ICON.to_string()]);
+    }
+
+    #[test]
+    fn the_bar_has_screenshots_scratch_and_pin_buttons_bright_when_on_or_focused() {
+        let mut workspace = at_home();
+        workspace.add_pane(0, 0, "code", None);
+        workspace.layout_mut().focused = 1;
+        let muted = decade_ui::palette::MUTED;
+        let bright = panes::FOREGROUND;
+        assert_eq!(
+            bar_icons(workspace.layout(), 0),
+            [
+                (NO_SCREENSHOTS_ICON, muted),
+                (UNSCRATCHED_ICON, muted),
+                (UNPINNED_ICON, muted),
+            ]
+        );
+        assert_eq!(
+            bar_icons(workspace.layout(), 1),
+            [
+                (NO_SCREENSHOTS_ICON, bright),
+                (UNSCRATCHED_ICON, bright),
+                (UNPINNED_ICON, bright),
+            ]
+        );
+        workspace.tab_mut().info_mut(0).screenshots = true;
+        workspace.tab_mut().pin(0, "decade.w0.terminal".to_string());
+        workspace.toggle_scratch("terminal");
+        assert_eq!(
+            bar_icons(workspace.layout(), 0),
+            [
+                (SCREENSHOTS_ICON, bright),
+                (SCRATCH_ICON, bright),
+                (PIN_ICON, bright),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_bar_buttons_hit_the_actions_where_they_are_drawn() {
+        let workspace = at_home();
+        let layout = workspace.layout();
+        let inner = layout.pane(0).unwrap().rect.inner();
+        let end = inner.column + inner.columns;
+        let hit = |column| layout.bar_hit(column, inner.row).map(|(_, button)| button);
+        assert_eq!(hit(end - 1), Some(BarButton::Close));
+        assert_eq!(hit(end - 5), Some(BarButton::Zoom));
+        assert_eq!(hit(end - 9), Some(BarButton::Action(PaneAction::Pin)));
+        assert_eq!(hit(end - 13), Some(BarButton::Action(PaneAction::Scratch)));
+        assert_eq!(
+            hit(end - 17),
+            Some(BarButton::Action(PaneAction::Screenshots))
+        );
+        assert_eq!(hit(end - 21), Some(BarButton::Name));
     }
 
     #[test]
