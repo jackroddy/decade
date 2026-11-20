@@ -1,0 +1,30 @@
+{
+  "id": "decade-5ddaac",
+  "title": "A pane removed during a drag of it may be put back into the split tree",
+  "body": "`Layout::release` in `decade/src/server/panes.rs` finishes a pane drag with the pane id recorded when the drag started. If the program in that pane exits during the drag and decade removes the pane, the id names no pane. `drop_at` can still find a drop for it, and `apply_drop` then calls `dropped`, which places a `Node::Leaf` with that id in the split tree. Nothing has been run to confirm what `arrange` and drawing do with a leaf that has no pane.\n\nThe behaviour predates the drags' move onto `Layout` in the commit after 3a6004a, and a `TODO` marks it in `release`.\n\n## Proposal\n\n`Layout::remove` clears the drag when it removes the dragged pane, so `release` finds no drag.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-20T00:33:34.134227784Z",
+  "updated_at": "2026-11-20T00:33:34.134227784Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "71f4737",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
