@@ -1,4 +1,5 @@
 use crate::palette::Rgba;
+use crate::panes::ContentId;
 use crate::text::Font;
 
 /// The row height, in pixels, that chrome sizes given to `scaled` are
@@ -105,6 +106,13 @@ pub enum Shape {
         fill: Rgba,
         border: Rgba,
         border_width: i32,
+    },
+
+    /// Where the program draws the content `id`.
+    Content {
+        id: ContentId,
+        at: Point,
+        size: Size,
     },
 }
 

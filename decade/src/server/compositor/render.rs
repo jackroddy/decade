@@ -11,15 +11,14 @@ use smithay::backend::renderer::utils::draw_render_elements;
 use smithay::backend::renderer::{Bind, Color32F, Frame, Renderer};
 use smithay::utils::{Physical, Point, Rectangle, Transform};
 
-use decade_ui::Scene;
-use decade_ui::palette::{ACCENT, Rgba};
+use decade_ui::palette::{ACCENT, BACKGROUND, Rgba};
+use decade_ui::{Chrome, Pulse, Scene, Shape};
 
 use crate::server::agents;
-use crate::server::chrome::draw::{Element, Paint, Shrink};
+use crate::server::chrome::draw::{Element, Paint, Shrink, px_point, px_size};
 use crate::server::chrome::frame;
 use crate::server::chrome::picker::{Grid, Picker};
 use crate::server::chrome::settings::Settings;
-use crate::server::panes::{BACKGROUND, Chrome, Pulse};
 use crate::server::workspace::{self, PaneAction, Tab, Workspace};
 
 use super::input::SidebarDrag;
@@ -199,10 +198,10 @@ impl State {
         }
 
         if let Some(frame) = frame {
-            paint_clients(&mut paint, &mut elements, tab);
             let mut below = Scene::new(&paint.text.fonts.chrome);
             layout.draw(&mut below, chrome);
             frame.draw(&mut below);
+            paint_clients(&mut paint, &mut elements, tab, &below);
             paint.scene(&mut elements, &below, Point::default(), None);
         }
 
@@ -376,7 +375,6 @@ fn paint_ghost(
     let origin = shrink.about - Point::from((grab.x, grab.y));
     let cell: Point<i32, Physical> = (font.cell_width as i32, font.cell_height as i32).into();
     let outer = paint.text.px_rect(pane.rect).size;
-    let offset = paint.text.px_rect(pane.client_rect()).loc - paint.text.px_rect(pane.rect).loc;
     let start = shrink.point(origin + cell.downscale(2));
     let end = shrink.point(origin + outer - cell.downscale(2));
     let mut outline = Scene::new(&paint.text.fonts.chrome);
@@ -392,43 +390,46 @@ fn paint_ghost(
     let mut ghost = Scene::new(&paint.text.fonts.chrome);
     layout.draw_ghost(pane.id, &mut ghost, chrome);
     paint.scene(elements, &ghost, origin + cell, Some(shrink));
-    let Some(toplevel) = tab.toplevel(pane.id) else {
-        return;
-    };
-    let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-        render_elements_from_surface_tree(
-            paint.renderer,
-            toplevel.wl_surface(),
-            origin + offset,
-            paint.scale,
-            shrink.alpha,
-            Kind::Unspecified,
-        );
-    elements.extend(surfaces.into_iter().map(|surface| {
-        Element::Ghost(RescaleRenderElement::from_element(
-            surface,
-            shrink.about,
-            shrink.scale,
-        ))
-    }));
+    for (id, at, _) in contents(&ghost) {
+        let toplevel = &tab.clients[&id].toplevel;
+        let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+            render_elements_from_surface_tree(
+                paint.renderer,
+                toplevel.wl_surface(),
+                origin + cell + px_point(at),
+                paint.scale,
+                shrink.alpha,
+                Kind::Unspecified,
+            );
+        elements.extend(surfaces.into_iter().map(|surface| {
+            Element::Ghost(RescaleRenderElement::from_element(
+                surface,
+                shrink.about,
+                shrink.scale,
+            ))
+        }));
+    }
 }
 
-/// Draw the client of every visible pane but the one being dragged, with
-/// its popups in front, cropped to the pane.
-fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, tab: &Tab) {
-    let dragged = tab.layout.dragged().map(|drag| drag.pane);
-    for pane in tab.layout.visible() {
-        let Some(toplevel) = tab.toplevel(pane.id) else {
-            continue;
-        };
-        if dragged == Some(pane.id) {
+/// The content shapes in `scene`, in the order it draws them.
+fn contents(
+    scene: &Scene,
+) -> impl Iterator<Item = (decade_ui::ContentId, decade_ui::Point, decade_ui::Size)> {
+    scene.shapes.iter().filter_map(|shape| match *shape {
+        Shape::Content { id, at, size } => Some((id, at, size)),
+        _ => None,
+    })
+}
+
+/// Draw the client at each content shape of `scene`, with its popups in
+/// front, cropped to the shape.
+fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, tab: &Tab, scene: &Scene) {
+    for (id, at, size) in contents(scene) {
+        if size.width == 0 || size.height == 0 {
             continue;
         }
-        let rect = pane.client_rect();
-        if rect.columns == 0 || rect.rows == 0 {
-            continue;
-        }
-        let crop = paint.text.px_rect(rect);
+        let toplevel = &tab.clients[&id].toplevel;
+        let crop = Rectangle::new(px_point(at), px_size(size));
         let mut surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = Vec::new();
         for (popup, at) in popups_over(toplevel.wl_surface()) {
             surfaces.extend(render_elements_from_surface_tree(

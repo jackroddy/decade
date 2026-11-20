@@ -17,11 +17,11 @@ use crate::server::chrome::menu::{MenuKey, Outcome};
 use crate::server::chrome::prompt::{self, Answer};
 use crate::server::chrome::rename::Named;
 use crate::server::clients;
-use crate::server::panes::{BarButton, Direction, Drop, Press, Update};
 use crate::server::workspace::PaneAction;
 use crate::wire::{
     self, BTN_BACK, BTN_LEFT, BTN_RIGHT, BTN_SIDE, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
 };
+use decade_ui::{BarButton, Direction, Drop, Press, Update};
 
 use super::viewers::hold;
 use super::{Overlay, State, popups_over, window_origin};

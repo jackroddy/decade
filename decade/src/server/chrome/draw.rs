@@ -134,15 +134,19 @@ impl Paint<'_> {
                     );
                     elements.push(Element::Text(texture));
                 }
+
+                // the compositor paints a pane's client at its content
+                // shape before it paints the scene
+                Shape::Content { .. } => {}
             }
         }
     }
 }
 
-fn px_point(at: decade_ui::Point) -> Point<i32, Physical> {
+pub fn px_point(at: decade_ui::Point) -> Point<i32, Physical> {
     (at.x, at.y).into()
 }
 
-fn px_size(size: decade_ui::Size) -> Size<i32, Physical> {
+pub fn px_size(size: decade_ui::Size) -> Size<i32, Physical> {
     (size.width, size.height).into()
 }

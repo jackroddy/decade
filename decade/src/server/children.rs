@@ -159,7 +159,7 @@ mod tests {
         let workspace = Workspace::new(
             3,
             PathBuf::from("/home/jack"),
-            crate::server::panes::tests::AREA,
+            crate::server::workspace::tests::AREA,
         );
         let ghostty = children.ghostty(&workspace, "logs", "logs.t2", Path::new("/tmp"));
         let pid = std::process::id();
@@ -230,7 +230,7 @@ mod tests {
         let workspace = Workspace::new(
             0,
             PathBuf::from("/home/jack"),
-            crate::server::panes::tests::AREA,
+            crate::server::workspace::tests::AREA,
         );
         let command = children.command(&workspace, "nautilus", None);
         assert_eq!(command.get_current_dir(), Some(Path::new("/home/jack")));

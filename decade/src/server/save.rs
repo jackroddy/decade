@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use decade_ui::CellRect;
 
 use crate::files;
-use crate::server::panes::{Axis, Node};
 use crate::server::proc;
 use crate::server::workspace::{Group, Layout, Pane, Tab, Workspace};
+use decade_ui::{Axis, Node};
 
 const VERSION: u32 = 4;
 
@@ -450,7 +450,7 @@ mod tests {
         let mut workspace = Workspace::new(
             2,
             PathBuf::from("/home/jack/projects/decade"),
-            crate::server::panes::tests::AREA,
+            crate::server::workspace::tests::AREA,
         );
         let tab = workspace.tab_mut();
         let code = tab.add_pane(tab.layout.focused, "code".to_string());
@@ -463,7 +463,7 @@ mod tests {
 
     fn first_tab(saved: &Saved) -> Tab {
         saved
-            .tabs(crate::server::panes::tests::AREA)
+            .tabs(crate::server::workspace::tests::AREA)
             .unwrap()
             .remove(0)
     }
@@ -529,13 +529,13 @@ mod tests {
     fn a_tree_naming_a_missing_pane_is_refused() {
         let mut saved = saved(&workspace(), &[]);
         saved.tabs[0].panes.pop();
-        assert!(saved.tabs(crate::server::panes::tests::AREA).is_err());
+        assert!(saved.tabs(crate::server::workspace::tests::AREA).is_err());
     }
 
     #[test]
     fn two_tabs_read_back_with_their_trees_and_the_active_tab() {
         let mut workspace = workspace();
-        let (second, _) = workspace.add_tab(crate::server::panes::tests::AREA);
+        let (second, _) = workspace.add_tab(crate::server::workspace::tests::AREA);
         let tab = &mut workspace.tabs[second];
         tab.add_pane(tab.layout.focused, "logs".to_string());
         workspace.active_tab = second;
@@ -545,7 +545,7 @@ mod tests {
         let back = &file.workspaces[0];
         assert_eq!(back, &saved(&workspace, &[]));
         assert_eq!(back.active_tab, 1);
-        let tabs = back.tabs(crate::server::panes::tests::AREA).unwrap();
+        let tabs = back.tabs(crate::server::workspace::tests::AREA).unwrap();
         let layouts: Vec<&Layout> = tabs.iter().map(|tab| &tab.layout).collect();
         let names: Vec<Vec<&str>> = layouts
             .iter()
@@ -609,7 +609,7 @@ cwd = "/tmp"
         let back = &file.workspaces[0];
         assert_eq!(back.active_tab, 0);
         assert_eq!(back.tabs[0].name, None);
-        let tabs = back.tabs(crate::server::panes::tests::AREA).unwrap();
+        let tabs = back.tabs(crate::server::workspace::tests::AREA).unwrap();
         let layouts: Vec<&Layout> = tabs.iter().map(|tab| &tab.layout).collect();
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].panes.len(), 2);
@@ -619,11 +619,11 @@ cwd = "/tmp"
     #[test]
     fn a_pane_name_repeated_in_another_tab_is_refused() {
         let mut workspace = workspace();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(crate::server::workspace::tests::AREA);
         workspace.tabs[1].layout.panes[0].name = "code".to_string();
         assert!(
             saved(&workspace, &[])
-                .tabs(crate::server::panes::tests::AREA)
+                .tabs(crate::server::workspace::tests::AREA)
                 .is_err()
         );
     }
@@ -646,7 +646,7 @@ cwd = "/tmp"
         let text = to_text(vec![saved], &[], true).unwrap();
         let back = &read(&text).unwrap().workspaces[0];
         let (_, restored) = back
-            .workspace(0, crate::server::panes::tests::AREA, &[])
+            .workspace(0, crate::server::workspace::tests::AREA, &[])
             .unwrap();
         let expected: Vec<TerminalTab> = tabs
             .into_iter()
@@ -663,13 +663,13 @@ cwd = "/tmp"
     #[test]
     fn a_tab_name_reads_back_and_a_version_2_file_reads_with_unnamed_tabs() {
         let mut workspace = workspace();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(crate::server::workspace::tests::AREA);
         workspace.rename_tab(1, "logs").unwrap();
         let text = to_text(vec![saved(&workspace, &[])], &[], true).unwrap();
         assert!(text.starts_with("version = 4"));
         let file = read(&text).unwrap();
         let (back, _) = (file.workspaces[0])
-            .workspace(2, crate::server::panes::tests::AREA, &[])
+            .workspace(2, crate::server::workspace::tests::AREA, &[])
             .unwrap();
         let names: Vec<_> = back.tabs.iter().map(|tab| tab.name.as_deref()).collect();
         assert_eq!(names, [None, Some("logs")]);
@@ -704,7 +704,7 @@ cwd = "/tmp"
         assert_eq!(names, ["work", "home"]);
         let folds: Vec<_> = back.iter().map(|group| group.folded).collect();
         assert_eq!(folds, [true, false]);
-        let area = crate::server::panes::tests::AREA;
+        let area = crate::server::workspace::tests::AREA;
         let (first, _) = file.workspaces[0].workspace(0, area, &back).unwrap();
         let (second, _) = file.workspaces[1].workspace(1, area, &back).unwrap();
         assert_eq!(first.group, Some(back[1].id));
@@ -718,7 +718,7 @@ cwd = "/tmp"
         let old = text.replacen("version = 4", "version = 3", 1);
         let file = read(&old).unwrap();
         assert!(file.groups().is_empty());
-        let area = crate::server::panes::tests::AREA;
+        let area = crate::server::workspace::tests::AREA;
         let (back, _) = file.workspaces[0].workspace(0, area, &[]).unwrap();
         assert_eq!(back.group, None);
     }

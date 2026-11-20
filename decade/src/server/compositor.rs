@@ -86,12 +86,12 @@ use crate::server::chrome::settings::{self, Settings};
 use crate::server::chrome::text::Text;
 use crate::server::clients::{self, Client as PaneClient};
 use crate::server::mcp;
-use crate::server::panes::BarButton;
 use crate::server::proc;
 use crate::server::save::{self, TerminalTab};
 use crate::server::workspace::{self, Group, Layout, Pane, PaneAction, Workspace};
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
 use decade_channel::AgentState;
+use decade_ui::BarButton;
 
 use input::{Repeat, SidebarDrag};
 use selection::Offered;

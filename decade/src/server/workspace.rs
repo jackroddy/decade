@@ -6,11 +6,10 @@ use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
-use decade_ui::CellRect;
+use decade_ui::{Button, CellRect, ContentId, Marks, Placeholder, Tag};
 
 use crate::server::channel::{Out, PaneNames, Router};
 use crate::server::clients::Client;
-use crate::server::panes::{self, Button, ContentId, Marks, Placeholder, Tag};
 use crate::server::scratch::Scratch;
 use decade_channel::AgentState;
 use serde_json::Value;
@@ -22,8 +21,8 @@ const UNSCRATCHED_ICON: char = '\u{f0096}';
 const SCREENSHOTS_ICON: char = '\u{f0100}';
 const NO_SCREENSHOTS_ICON: char = '\u{f05df}';
 
-pub type Layout = panes::Layout<PaneAction>;
-pub type Pane = panes::Pane<PaneAction>;
+pub type Layout = decade_ui::Layout<PaneAction>;
+pub type Pane = decade_ui::Pane<PaneAction>;
 
 /// What a button decade puts on a pane runs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -211,7 +210,7 @@ impl Tab {
         let Some(pane) = self.layout.pane_mut(id) else {
             return;
         };
-        let tab = panes::Tab {
+        let tab = decade_ui::Tab {
             content,
             label: String::new(),
         };
@@ -935,16 +934,19 @@ impl Workspace {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
-    use crate::server::panes::BarButton;
+    use decade_ui::{BarButton, Chrome, Shape};
+
+    pub const AREA: CellRect = CellRect {
+        column: 0,
+        row: 0,
+        columns: 100,
+        rows: 40,
+    };
 
     fn at_home() -> Workspace {
-        Workspace::new(
-            0,
-            PathBuf::from("/home/jack"),
-            crate::server::panes::tests::AREA,
-        )
+        Workspace::new(0, PathBuf::from("/home/jack"), AREA)
     }
 
     #[test]
@@ -1034,27 +1036,19 @@ mod tests {
 
     #[test]
     fn a_workspace_is_named_after_its_directory() {
-        let workspace = Workspace::new(
-            0,
-            PathBuf::from("/home/jack/projects/decade"),
-            crate::server::panes::tests::AREA,
-        );
+        let workspace = Workspace::new(0, PathBuf::from("/home/jack/projects/decade"), AREA);
         assert_eq!(workspace.name, "decade");
     }
 
     #[test]
     fn a_workspace_at_the_root_is_named_after_the_path() {
-        let workspace = Workspace::new(0, PathBuf::from("/"), crate::server::panes::tests::AREA);
+        let workspace = Workspace::new(0, PathBuf::from("/"), AREA);
         assert_eq!(workspace.name, "/");
     }
 
     #[test]
     fn a_new_workspace_holds_one_terminal_pane() {
-        let workspace = Workspace::new(
-            0,
-            PathBuf::from("/home/jack"),
-            crate::server::panes::tests::AREA,
-        );
+        let workspace = Workspace::new(0, PathBuf::from("/home/jack"), AREA);
         let names: Vec<&str> = workspace
             .layout()
             .panes
@@ -1067,9 +1061,9 @@ mod tests {
     #[test]
     fn pane_names_stay_unique_across_tabs() {
         let mut workspace = at_home();
-        let (second, name) = workspace.add_tab(crate::server::panes::tests::AREA);
+        let (second, name) = workspace.add_tab(AREA);
         assert_eq!((second, name.as_str()), (1, "terminal2"));
-        let (_, name) = workspace.add_tab(crate::server::panes::tests::AREA);
+        let (_, name) = workspace.add_tab(AREA);
         assert_eq!(name, "terminal3");
         assert_eq!(workspace.unique_pane_name("terminal"), "terminal4");
         assert_eq!(workspace.unique_pane_name("nautilus"), "nautilus");
@@ -1081,7 +1075,7 @@ mod tests {
     #[test]
     fn an_added_pane_takes_a_free_name() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         let id = workspace.add_pane(
             0,
             workspace.tabs[0].layout.focused,
@@ -1110,7 +1104,7 @@ mod tests {
     fn a_tab_with_no_client_running_program_or_kept_pane_is_spent_unless_it_is_the_only_tab() {
         let mut workspace = at_home();
         assert!(!workspace.tab_is_spent(0, |_| false));
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         assert!(workspace.tab_is_spent(1, |_| false));
         workspace.tabs[1].info_mut(0).pid = Some(7);
         assert!(!workspace.tab_is_spent(1, |pid| pid == 7));
@@ -1127,7 +1121,7 @@ mod tests {
     #[test]
     fn a_closing_tab_with_no_client_is_closed_and_the_workspace_closes_with_its_last_tab() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         assert_eq!(workspace.closed_tabs().count(), 0);
         workspace.tabs[1].closing = true;
         assert_eq!(workspace.closed_tabs().collect::<Vec<_>>(), [1]);
@@ -1139,8 +1133,8 @@ mod tests {
     #[test]
     fn removing_the_active_last_tab_makes_the_one_before_it_active() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
+        workspace.add_tab(AREA);
         workspace.active_tab = 2;
         assert!(workspace.remove_tab(2));
         assert_eq!(workspace.active_tab, 1);
@@ -1153,7 +1147,7 @@ mod tests {
     #[test]
     fn removing_the_tab_that_holds_the_scratch_pane_leaves_no_scratch_pane() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         workspace.toggle_scratch("terminal2");
         workspace.remove_tab(1);
         assert_eq!(workspace.scratch_pane(), None);
@@ -1162,7 +1156,7 @@ mod tests {
     #[test]
     fn marking_a_pane_scratch_unmarks_the_one_before_it() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         workspace.toggle_scratch("terminal");
         assert_eq!(workspace.scratch_pane(), Some("terminal"));
         workspace.toggle_scratch("terminal2");
@@ -1174,7 +1168,7 @@ mod tests {
     #[test]
     fn a_pane_that_goes_takes_its_clients_claim_and_leaves_its_agent_without_a_pane() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         workspace.channel_line(
             1,
             r#"{"hello": {"name": "coax", "pane": "terminal2", "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#,
@@ -1190,7 +1184,7 @@ mod tests {
     #[test]
     fn a_pane_takes_the_name_of_its_live_agent_and_loses_it_when_the_agent_disconnects() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         workspace.channel_line(
             1,
             r#"{"hello": {"name": "coax", "pane": "terminal2", "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#,
@@ -1207,7 +1201,7 @@ mod tests {
     #[test]
     fn a_verb_from_the_agent_reaches_the_pane_occupant_from_agent() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         workspace.channel_line(
             4,
             r#"{"hello": {"name": "code-pane", "pane": "terminal2", "shows": [{"kind": "file"}]}}"#,
@@ -1259,7 +1253,7 @@ mod tests {
     #[test]
     fn a_new_point_replaces_the_one_before_and_an_unknown_pane_is_refused() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         let now = Instant::now();
         workspace.point_at("terminal", None, now).unwrap();
         let note = Some("this one".to_string());
@@ -1274,7 +1268,7 @@ mod tests {
     #[test]
     fn a_point_ends_when_its_pane_is_focused_or_goes_and_not_for_another_pane() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         workspace
             .point_at("terminal2", None, Instant::now())
             .unwrap();
@@ -1292,7 +1286,7 @@ mod tests {
     #[test]
     fn a_renamed_pane_keeps_its_claims_and_its_old_name_still_reaches_it() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         workspace.channel_line(
             1,
             r#"{"hello": {"name": "coax", "pane": "terminal2", "accepts": ["ping"], "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#,
@@ -1331,7 +1325,7 @@ mod tests {
     #[test]
     fn a_pane_name_must_be_new_to_the_workspace_and_hold_no_address_characters() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         workspace.rename_pane(1, 0, "build").unwrap();
         for name in ["", "a b", "a&b", "a=b", "build"] {
             assert!(workspace.rename_pane(0, 0, name).is_err(), "{name:?}");
@@ -1357,7 +1351,7 @@ mod tests {
     #[test]
     fn a_tab_name_must_be_new_among_the_tabs_and_not_empty() {
         let mut workspace = at_home();
-        workspace.add_tab(crate::server::panes::tests::AREA);
+        workspace.add_tab(AREA);
         workspace.rename_tab(0, "work").unwrap();
         assert!(workspace.rename_tab(1, "work").is_err());
         assert!(workspace.rename_tab(1, "").is_err());
@@ -1367,7 +1361,11 @@ mod tests {
     }
 
     fn three_anchors() -> Tab {
-        let mut tab = Tab::new(panes::tests::three_anchors());
+        let mut layout = Layout::new(AREA, "chat".to_string());
+        layout.add_beside(0, "terminal".to_string());
+        layout.add_beside(1, "code".to_string());
+        layout.focused = 1;
+        let mut tab = Tab::new(layout);
         for (id, name) in [(0, "chat"), (1, "terminal"), (2, "code")] {
             tab.pin(id, format!("decade.{name}"));
         }
@@ -1381,21 +1379,34 @@ mod tests {
 
     fn drawn_texts(tab: &mut Tab) -> Vec<String> {
         tab.mark_panes(None);
-        panes::tests::drawn_texts(&tab.layout, panes::Chrome::default())
+        layout_texts(&tab.layout)
+    }
+
+    /// The text of every shape the layout draws, trimmed.
+    fn layout_texts(layout: &Layout) -> Vec<String> {
+        let font = decade_ui::Font::load(14.0);
+        let mut scene = decade_ui::Scene::new(&font);
+        layout.draw(&mut scene, Chrome::default());
+        (scene.shapes.iter())
+            .filter_map(|shape| match shape {
+                Shape::Text { text, .. } => Some(text.trim().to_string()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The text of each tag on pane `id`'s outline, left to right.
     fn tags(layout: &Layout, id: usize) -> Vec<String> {
         let font = decade_ui::Font::load(14.0);
         let mut scene = decade_ui::Scene::new(&font);
-        layout.draw(&mut scene, panes::Chrome::default());
+        layout.draw(&mut scene, Chrome::default());
         let (cell_width, cell_height) = scene.cell();
         let rect = layout.pane(id).unwrap().rect;
         let (left, top) = scene.px(rect.column, rect.row);
         let right = left + rect.columns as i32 * cell_width;
         let mut tags: Vec<(i32, String)> = (scene.shapes.iter())
             .filter_map(|shape| match shape {
-                decade_ui::Shape::Text { at, text, .. }
+                Shape::Text { at, text, .. }
                     if at.y < top + cell_height / 2 && (left..right).contains(&at.x) =>
                 {
                     Some((at.x, text.clone()))
@@ -1412,9 +1423,9 @@ mod tests {
     fn bar_icons(layout: &Layout, id: usize) -> Vec<(char, decade_ui::palette::Rgba)> {
         let font = decade_ui::Font::load(14.0);
         let mut scene = decade_ui::Scene::new(&font);
-        let chrome = panes::Chrome {
+        let chrome = Chrome {
             bar: true,
-            ..panes::Chrome::default()
+            ..Chrome::default()
         };
         layout.draw_bars(&mut scene, chrome);
         let row = scene.px(0, layout.pane(id).unwrap().rect.inner().row).1;
@@ -1423,7 +1434,7 @@ mod tests {
         let right = left + scene.px(rect.columns, 0).0;
         let icons: Vec<_> = (scene.shapes.iter())
             .filter_map(|shape| match shape {
-                decade_ui::Shape::Text {
+                Shape::Text {
                     at,
                     text,
                     face: decade_ui::Face::Icon,
@@ -1492,7 +1503,7 @@ mod tests {
     #[test]
     fn a_swapped_pane_keeps_its_pin_and_app_id() {
         let mut tab = three_anchors();
-        tab.layout.apply_drop(0, panes::Drop::Swap(2));
+        tab.layout.apply_drop(0, decade_ui::Drop::Swap(2));
         let code = tab.info(2);
         assert!(code.pinned);
         assert_eq!(code.app_id.as_deref(), Some("decade.code"));
@@ -1500,7 +1511,7 @@ mod tests {
 
     #[test]
     fn a_pinned_terminal_whose_shell_exited_shows_a_restart_button() {
-        let mut tab = Tab::new(Layout::new(panes::tests::AREA, "terminal".to_string()));
+        let mut tab = Tab::new(Layout::new(AREA, "terminal".to_string()));
         tab.info_mut(0).cwd = Some(PathBuf::from("/home/jack"));
         tab.pin(0, "decade.w0.terminal".to_string());
         assert!(tab.restartable(0));
@@ -1511,7 +1522,7 @@ mod tests {
 
     #[test]
     fn a_pinned_gui_pane_without_its_window_waits_and_offers_no_restart() {
-        let mut tab = Tab::new(Layout::new(panes::tests::AREA, "terminal".to_string()));
+        let mut tab = Tab::new(Layout::new(AREA, "terminal".to_string()));
         tab.pin(0, "org.gnome.Nautilus".to_string());
         assert!(!tab.restartable(0));
         let texts = drawn_texts(&mut tab);
@@ -1539,9 +1550,9 @@ mod tests {
 
     #[test]
     fn an_empty_scratch_pane_says_it_is_the_scratch_pane() {
-        let mut workspace = Workspace::new(0, PathBuf::from("/"), panes::tests::AREA);
+        let mut workspace = Workspace::new(0, PathBuf::from("/"), AREA);
         workspace.toggle_scratch("terminal");
-        let texts = panes::tests::drawn_texts(workspace.layout(), panes::Chrome::default());
+        let texts = layout_texts(workspace.layout());
         assert!(texts.iter().any(|text| text == "scratch"));
         assert!(texts.iter().any(|text| text == "agents show things here"));
         assert!(!texts.iter().any(|text| text == "no client"));
@@ -1576,7 +1587,7 @@ mod tests {
         workspace.add_pane(0, 0, "code", None);
         workspace.layout_mut().focused = 1;
         let muted = decade_ui::palette::MUTED;
-        let bright = panes::FOREGROUND;
+        let bright = decade_ui::palette::FOREGROUND;
         assert_eq!(
             bar_icons(workspace.layout(), 0),
             [

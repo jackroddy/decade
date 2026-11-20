@@ -6,7 +6,6 @@ pub(super) mod chrome;
 mod clients;
 pub(super) mod compositor;
 mod mcp;
-mod panes;
 mod proc;
 mod save;
 mod scratch;
