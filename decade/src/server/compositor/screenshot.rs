@@ -325,7 +325,8 @@ impl State {
     /// Ctrl bar or hover, as RGBA rows, top first.
     fn render_plain(&mut self, workspace: usize) -> Result<Vec<u8>, String> {
         let overlay = self.overlay.take();
-        let drag = self.drag.take();
+        let sidebar_drag = self.sidebar_drag.take();
+        let drag = self.workspaces[workspace].layout_mut().drag.take();
         let bar = std::mem::replace(&mut self.bar, false);
         let flash = self.workspaces[workspace].flash.take();
         let hovers = (
@@ -336,7 +337,8 @@ impl State {
         let rendered = self.render_offscreen(workspace);
         self.workspaces[workspace].flash = flash;
         self.overlay = overlay;
-        self.drag = drag;
+        self.sidebar_drag = sidebar_drag;
+        self.workspaces[workspace].layout_mut().drag = drag;
         self.bar = bar;
         (self.frame_hover, self.hover, self.tab_hover) = hovers;
         rendered

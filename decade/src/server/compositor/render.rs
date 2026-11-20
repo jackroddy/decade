@@ -22,7 +22,7 @@ use crate::server::chrome::settings::Settings;
 use crate::server::panes::{BACKGROUND, Chrome, Pulse};
 use crate::server::workspace::{self, PaneAction, Tab, Workspace};
 
-use super::input::Drag;
+use super::input::SidebarDrag;
 use super::{Overlay, State, popups_over, send_frames_surface_tree, window_origin};
 
 const SCRIM: Rgba = [0.0, 0.0, 0.0, 0.35];
@@ -60,7 +60,6 @@ impl State {
             text,
             start,
             scale,
-            drag,
             bar,
             hover,
             tab_hover,
@@ -86,17 +85,13 @@ impl State {
         let shutter = (workspaces[workspace].shutter_at(now))
             .and_then(|(name, alpha)| Some((layout.pane(layout.by_name(name)?)?, alpha)))
             .map(|(pane, alpha)| (text.px_rect(pane.client_rect()), alpha));
-        let (overlay, drag) = if workspace == current {
-            (overlay.as_ref(), drag.as_ref())
+        let overlay = if workspace == current {
+            overlay.as_ref()
         } else {
-            (None, None)
+            None
         };
         let chrome = if workspace == current {
             Chrome {
-                dragging: match drag {
-                    Some(Drag::Pane { id, .. }) => Some(*id),
-                    _ => None,
-                },
                 bar: *bar,
                 hover: *hover,
                 tab_hover: *tab_hover,
@@ -175,14 +170,12 @@ impl State {
         }
 
         let mut animating = false;
-        if let Some(Drag::Pane {
-            id, grab, start, ..
-        }) = drag
-            && layout.pane(*id).is_some()
+        if let Some(drag) = layout.dragged()
+            && layout.pane(drag.pane).is_some()
         {
             let shrink;
-            (shrink, animating) = ghost_shrink(settings, *start, pointer);
-            paint_ghost(&mut paint, &mut elements, tab, chrome, shrink, *grab);
+            (shrink, animating) = ghost_shrink(settings, drag.start, pointer);
+            paint_ghost(&mut paint, &mut elements, tab, chrome, shrink, drag.grab);
         }
 
         let mut above = Scene::new(&paint.text.fonts.chrome);
@@ -190,14 +183,7 @@ impl State {
         if let Some(frame) = &frame {
             frame.draw_above(&mut above);
         }
-        if let Some(Drag::Pane {
-            id,
-            cell: Some(cell),
-            ..
-        }) = drag
-        {
-            layout.draw_drop(&mut above, *id, *cell);
-        }
+        layout.draw_drop(&mut above);
         paint.scene(&mut elements, &above, Point::default(), None);
 
         if let Some((rect, alpha)) = shutter {
@@ -213,7 +199,7 @@ impl State {
         }
 
         if let Some(frame) = frame {
-            paint_clients(&mut paint, &mut elements, tab, chrome);
+            paint_clients(&mut paint, &mut elements, tab);
             let mut below = Scene::new(&paint.text.fonts.chrome);
             layout.draw(&mut below, chrome);
             frame.draw(&mut below);
@@ -314,9 +300,9 @@ impl State {
         );
         frame.hover = hover;
         frame.breath = frame::breath(self.start.elapsed());
-        if let Some(Drag::Sidebar {
+        if let Some(SidebarDrag {
             hit, moved: true, ..
-        }) = self.drag.as_ref().filter(|_| on_screen)
+        }) = self.sidebar_drag.as_ref().filter(|_| on_screen)
         {
             let pointer = self.pointer.to_physical(self.scale);
             frame.drag = Some((*hit, (pointer.x as i32, pointer.y as i32)));
@@ -380,14 +366,14 @@ fn paint_ghost(
     tab: &Tab,
     chrome: Chrome<PaneAction>,
     shrink: Shrink,
-    grab: Point<i32, Physical>,
+    grab: decade_ui::Point,
 ) {
     let layout = &tab.layout;
-    let Some(pane) = chrome.dragging.and_then(|id| layout.pane(id)) else {
+    let Some(pane) = layout.dragged().and_then(|drag| layout.pane(drag.pane)) else {
         return;
     };
     let font = &paint.text.fonts.chrome;
-    let origin = shrink.about - grab;
+    let origin = shrink.about - Point::from((grab.x, grab.y));
     let cell: Point<i32, Physical> = (font.cell_width as i32, font.cell_height as i32).into();
     let outer = paint.text.px_rect(pane.rect).size;
     let offset = paint.text.px_rect(pane.client_rect()).loc - paint.text.px_rect(pane.rect).loc;
@@ -429,17 +415,13 @@ fn paint_ghost(
 
 /// Draw the client of every visible pane but the one being dragged, with
 /// its popups in front, cropped to the pane.
-fn paint_clients(
-    paint: &mut Paint,
-    elements: &mut Vec<Element>,
-    tab: &Tab,
-    chrome: Chrome<PaneAction>,
-) {
+fn paint_clients(paint: &mut Paint, elements: &mut Vec<Element>, tab: &Tab) {
+    let dragged = tab.layout.dragged().map(|drag| drag.pane);
     for pane in tab.layout.visible() {
         let Some(toplevel) = tab.toplevel(pane.id) else {
             continue;
         };
-        if chrome.dragging == Some(pane.id) {
+        if dragged == Some(pane.id) {
             continue;
         }
         let rect = pane.client_rect();

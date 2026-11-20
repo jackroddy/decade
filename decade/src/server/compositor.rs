@@ -93,7 +93,7 @@ use crate::server::workspace::{self, Group, Layout, Pane, PaneAction, Workspace}
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
 use decade_channel::AgentState;
 
-use input::{Drag, Repeat};
+use input::{Repeat, SidebarDrag};
 use selection::Offered;
 use viewers::Viewer;
 
@@ -179,7 +179,7 @@ pub struct State {
 
     /// The buttons sent to clients as pressed and not yet released.
     forwarded: Vec<u32>,
-    drag: Option<Drag>,
+    sidebar_drag: Option<SidebarDrag>,
 
     /// Whether the Ctrl bar is shown on the workspace on screen.
     bar: bool,
@@ -285,7 +285,7 @@ pub fn run() {
         save_due: None,
         pointer: (0.0, 0.0).into(),
         forwarded: Vec::new(),
-        drag: None,
+        sidebar_drag: None,
         bar: false,
         hover: None,
         tab_hover: None,
@@ -1020,7 +1020,10 @@ impl State {
         if matches!(self.overlay, Some(Overlay::Context(_) | Overlay::Rename(_))) {
             self.close_overlay();
         }
-        self.drag = None;
+        self.sidebar_drag = None;
+        for tab in self.workspaces.iter_mut().flat_map(|shown| &mut shown.tabs) {
+            tab.layout.drag = None;
+        }
         self.bar = false;
         self.hover = None;
         self.tab_hover = None;

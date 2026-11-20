@@ -1,5 +1,7 @@
+use std::time::Instant;
+
 use decade_ui::palette::{self, Rgba};
-use decade_ui::{CellRect, Face, Scene, fit};
+use decade_ui::{CellRect, Face, Point, Scene, Size, fit};
 
 pub const BACKGROUND: Rgba = palette::BACKGROUND;
 pub const FOREGROUND: Rgba = palette::FOREGROUND;
@@ -247,12 +249,61 @@ pub struct Boundary {
     axis: Axis,
 }
 
+/// A drag the layout follows from a press until the release.
+pub enum Drag {
+    Boundary(Boundary),
+    Pane(PaneDrag),
+}
+
+/// A pane being dragged to a new place.
+pub struct PaneDrag {
+    pub pane: usize,
+
+    /// Where the pane was grabbed, in pixels from its top left corner.
+    pub grab: Point,
+    pub start: Instant,
+
+    /// The cell under the pointer since the drag began.
+    cell: Option<(u32, u32)>,
+}
+
+/// What a left press on the layout asks of the program.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Press<A> {
+    /// The press is on none of the layout's panes.
+    Miss,
+    Close(usize),
+    Zoom(usize),
+
+    /// A program's button on the bar or on an empty pane's placeholder.
+    Action(usize, A),
+
+    /// The pane and index of the tab pressed.
+    Tab(usize, usize),
+
+    /// A boundary drag began.
+    Boundary,
+
+    /// A drag of the pane began, and the pane is to take focus.
+    Drag(usize),
+
+    /// The body of the pane, where the press goes on to its content.
+    Body(usize),
+}
+
+/// What the program does after the layout followed the pointer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Update {
+    Nothing,
+    Redraw,
+
+    /// The panes' rects changed.
+    Relayout,
+}
+
 /// What is drawn over the layout on screen besides its panes.
 #[derive(Clone, Copy)]
 pub struct Chrome<'a, A> {
-    /// The pane being dragged, drawn as a ghost rather than in its slot.
-    pub dragging: Option<usize>,
-
     /// Whether the Ctrl bar is shown.
     pub bar: bool,
 
@@ -272,7 +323,6 @@ pub struct Chrome<'a, A> {
 impl<A> Default for Chrome<'_, A> {
     fn default() -> Self {
         Chrome {
-            dragging: None,
             bar: false,
             hover: None,
             tab_hover: None,
@@ -300,6 +350,7 @@ pub struct Layout<A> {
     pub panes: Vec<Pane<A>>,
     pub focused: usize,
     pub zoom: Option<usize>,
+    pub drag: Option<Drag>,
     root: Node,
     next_id: usize,
 }
@@ -323,6 +374,7 @@ impl<A: Copy + PartialEq> Layout<A> {
             panes,
             focused,
             zoom,
+            drag: None,
             root,
             next_id,
         };
@@ -506,7 +558,7 @@ impl<A: Copy + PartialEq> Layout<A> {
         self.arrange();
     }
 
-    pub fn boundary_at(&self, column: u32, row: u32) -> Option<Boundary> {
+    fn boundary_at(&self, column: u32, row: u32) -> Option<Boundary> {
         if self.zoom.is_some() {
             return None;
         }
@@ -514,7 +566,7 @@ impl<A: Copy + PartialEq> Layout<A> {
         find_boundary(&self.root, self.area, column, row, &mut path)
     }
 
-    pub fn drop_at(&self, dragged: usize, column: u32, row: u32) -> Option<Drop> {
+    fn drop_at(&self, dragged: usize, column: u32, row: u32) -> Option<Drop> {
         if self.panes.len() < 2 || self.area.columns <= EDGE_BAND * 2 {
             return None;
         }
@@ -538,8 +590,102 @@ impl<A: Copy + PartialEq> Layout<A> {
         self.arrange();
     }
 
-    /// Draw the places a pane dragged to the cell could drop.
-    pub fn draw_drop(&self, scene: &mut Scene, dragged: usize, (column, row): (u32, u32)) {
+    /// Start what a left press at `at`, in pixels, begins on cells `cell` in
+    /// size, with the Ctrl bar shown when `bar` is set.
+    pub fn press(&mut self, at: (f64, f64), cell: Size, bar: bool, ctrl: bool) -> Press<A> {
+        let (column, row) = cell_at(at, cell);
+        let bar = bar.then(|| self.bar_hit(column, row)).flatten();
+        match bar {
+            Some((id, BarButton::Close)) => return Press::Close(id),
+            Some((id, BarButton::Zoom)) => return Press::Zoom(id),
+            Some((id, BarButton::Action(action))) => return Press::Action(id, action),
+            Some((_, BarButton::Name)) => {}
+            None => {
+                if let Some((id, index)) = self.tab_hit(column, row) {
+                    return Press::Tab(id, index);
+                }
+            }
+        }
+        if let Some(boundary) = self.boundary_at(column, row) {
+            self.drag = Some(Drag::Boundary(boundary));
+            return Press::Boundary;
+        }
+        let Some(pane) = self.visible().find(|pane| pane.rect.contains(column, row)) else {
+            return Press::Miss;
+        };
+        let id = pane.id;
+        if ctrl || bar.is_some() {
+            let grab = Point {
+                x: at.0.round() as i32 - pane.rect.column as i32 * cell.width,
+                y: at.1.round() as i32 - pane.rect.row as i32 * cell.height,
+            };
+            self.drag = Some(Drag::Pane(PaneDrag {
+                pane: id,
+                grab,
+                start: Instant::now(),
+                cell: None,
+            }));
+            return Press::Drag(id);
+        }
+        if let Some(action) = self.placeholder_action(id) {
+            return Press::Action(id, action);
+        }
+        Press::Body(id)
+    }
+
+    /// Follow the drag to the pointer at `at`, or return `None` when there
+    /// is no drag.
+    pub fn motion(&mut self, at: (f64, f64), cell: Size) -> Option<Update> {
+        let (column, row) = cell_at(at, cell);
+        match self.drag.take()? {
+            Drag::Boundary(boundary) => {
+                self.drag_boundary(&boundary, column, row);
+                self.drag = Some(Drag::Boundary(boundary));
+                Some(Update::Relayout)
+            }
+            Drag::Pane(mut drag) => {
+                drag.cell = Some((column, row));
+                self.drag = Some(Drag::Pane(drag));
+                Some(Update::Redraw)
+            }
+        }
+    }
+
+    /// End the drag, dropping a dragged pane where it was last moved to, or
+    /// return `None` when there is no drag.
+    pub fn release(&mut self) -> Option<Update> {
+        let Drag::Pane(PaneDrag { pane, cell, .. }) = self.drag.take()? else {
+            return Some(Update::Nothing);
+        };
+        // TODO: a pane closed during the drag is still `pane` here, and
+        // `apply_drop` puts its id back into the tree
+        match cell.and_then(|(column, row)| self.drop_at(pane, column, row)) {
+            Some(drop) => {
+                self.apply_drop(pane, drop);
+                Some(Update::Relayout)
+            }
+            None => Some(Update::Redraw),
+        }
+    }
+
+    /// The pane being dragged, drawn as a ghost rather than in its slot.
+    pub fn dragged(&self) -> Option<&PaneDrag> {
+        match &self.drag {
+            Some(Drag::Pane(drag)) => Some(drag),
+            _ => None,
+        }
+    }
+
+    /// Draw the places the pane being dragged could drop.
+    pub fn draw_drop(&self, scene: &mut Scene) {
+        let Some(&PaneDrag {
+            pane: dragged,
+            cell: Some((column, row)),
+            ..
+        }) = self.dragged()
+        else {
+            return;
+        };
         let active = self.drop_at(dragged, column, row);
         if let Some(target) = self.pane_at(column, row).filter(|&id| id != dragged)
             && let Some(pane) = self.pane(target)
@@ -553,7 +699,7 @@ impl<A: Copy + PartialEq> Layout<A> {
         }
     }
 
-    pub fn drag_boundary(&mut self, boundary: &Boundary, column: u32, row: u32) {
+    fn drag_boundary(&mut self, boundary: &Boundary, column: u32, row: u32) {
         let Some((ratio, area)) = split_at(&mut self.root, self.area, &boundary.path) else {
             return;
         };
@@ -629,8 +775,9 @@ impl<A: Copy + PartialEq> Layout<A> {
     /// Draw every visible pane's outline and, for an empty pane, its
     /// placeholder.
     pub fn draw(&self, scene: &mut Scene, chrome: Chrome<A>) {
+        let dragged = self.dragged().map(|drag| drag.pane);
         for pane in self.visible() {
-            if chrome.dragging == Some(pane.id) {
+            if dragged == Some(pane.id) {
                 continue;
             }
             let outline = if pane.id == self.focused {
@@ -750,8 +897,9 @@ impl<A: Copy + PartialEq> Layout<A> {
         if !chrome.bar {
             return;
         }
+        let dragged = self.dragged().map(|drag| drag.pane);
         for pane in self.visible() {
-            if chrome.dragging != Some(pane.id) {
+            if dragged != Some(pane.id) {
                 self.draw_bar(scene, pane, pane.rect.inner(), chrome);
             }
         }
@@ -818,6 +966,15 @@ impl<A: Copy + PartialEq> Layout<A> {
             scene.icon(x + 1, row, icon, color);
         }
     }
+}
+
+/// The column and row of the cell under `at`, in pixels, on cells `cell` in
+/// size.
+fn cell_at(at: (f64, f64), cell: Size) -> (u32, u32) {
+    (
+        (at.0.max(0.0) / cell.width as f64) as u32,
+        (at.1.max(0.0) / cell.height as f64) as u32,
+    )
 }
 
 /// The row of tab pills at the top of a pane with more than one client,
@@ -1382,6 +1539,28 @@ pub(super) mod tests {
         layout
     }
 
+    const CELL: Size = Size {
+        width: 10,
+        height: 20,
+    };
+
+    /// The middle of the cell, in pixels.
+    fn px(column: u32, row: u32) -> (f64, f64) {
+        (
+            (column as i32 * CELL.width + CELL.width / 2) as f64,
+            (row as i32 * CELL.height + CELL.height / 2) as f64,
+        )
+    }
+
+    fn pane_drag(pane: usize, cell: Option<(u32, u32)>) -> Drag {
+        Drag::Pane(PaneDrag {
+            pane,
+            grab: Point { x: 0, y: 0 },
+            start: Instant::now(),
+            cell,
+        })
+    }
+
     /// Three buttons, with actions 0, 1 and 2, the second one on.
     fn three_buttons() -> Vec<Button<u8>> {
         (0..3)
@@ -1506,6 +1685,106 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_press_on_a_boundary_drags_it_and_each_motion_changes_the_layout() {
+        let mut layout: Layout = three_anchors();
+        assert_eq!(
+            layout.press(px(50, 10), CELL, false, false),
+            Press::Boundary
+        );
+        assert_eq!(layout.motion(px(30, 10), CELL), Some(Update::Relayout));
+        assert_eq!(layout.pane(0).unwrap().rect.columns, 30);
+        assert_eq!(layout.pane(1).unwrap().rect.column, 30);
+        assert_eq!(layout.release(), Some(Update::Nothing));
+        assert_eq!(layout.motion(px(40, 10), CELL), None);
+        assert_eq!(layout.release(), None);
+    }
+
+    #[test]
+    fn a_ctrl_press_on_a_pane_body_drags_the_pane_from_where_it_was_grabbed() {
+        let mut layout: Layout = three_anchors();
+        let code = layout.pane(2).unwrap().rect;
+        let at = px(code.column + 5, code.row + 5);
+        assert_eq!(
+            layout.press(at, CELL, false, false),
+            Press::Body(2),
+            "without Ctrl the press reaches the pane's body"
+        );
+        assert!(layout.dragged().is_none());
+        assert_eq!(layout.press(at, CELL, false, true), Press::Drag(2));
+        let drag = layout.dragged().unwrap();
+        assert_eq!(drag.pane, 2);
+        assert_eq!(drag.grab, Point { x: 55, y: 110 });
+        assert_eq!(layout.focused, 1, "the program focuses the dragged pane");
+    }
+
+    #[test]
+    fn a_press_on_a_pane_name_in_the_ctrl_bar_drags_the_pane() {
+        let mut layout: Layout = three_anchors();
+        assert_eq!(layout.press(px(2, 1), CELL, true, false), Press::Drag(0));
+    }
+
+    #[test]
+    fn a_release_drops_the_dragged_pane_where_drop_at_says() {
+        let mut layout: Layout = three_anchors();
+        let chat = layout.pane(0).unwrap().rect;
+        let code = layout.pane(2).unwrap().rect;
+        let middle = (code.column + code.columns / 2, code.row + code.rows / 2);
+        assert_eq!(layout.press(px(5, 5), CELL, false, true), Press::Drag(0));
+        assert_eq!(
+            layout.release(),
+            Some(Update::Redraw),
+            "a pane never moved drops nowhere"
+        );
+
+        layout.press(px(5, 5), CELL, false, true);
+        assert_eq!(
+            layout.motion(px(middle.0, middle.1), CELL),
+            Some(Update::Redraw)
+        );
+        assert_eq!(layout.release(), Some(Update::Relayout));
+        assert_eq!(layout.pane(0).unwrap().rect, code);
+        assert_eq!(layout.pane(2).unwrap().rect, chat);
+        assert!(layout.drag.is_none());
+
+        let chat = layout.pane(0).unwrap().rect;
+        assert_eq!(layout.press(px(5, 5), CELL, false, true), Press::Drag(2));
+        layout.motion(px(chat.column + 3, chat.row + chat.rows / 2), CELL);
+        assert_eq!(layout.release(), Some(Update::Relayout));
+        let code = layout.pane(2).unwrap().rect;
+        let chat = layout.pane(0).unwrap().rect;
+        assert_eq!(code.row, chat.row);
+        assert_eq!(code.column + code.columns, chat.column);
+    }
+
+    #[test]
+    fn a_press_on_a_bar_button_returns_what_the_button_does() {
+        let mut layout: Layout = three_anchors();
+        layout.panes[0].marks.buttons = three_buttons();
+        assert_eq!(layout.press(px(48, 1), CELL, true, false), Press::Close(0));
+        assert_eq!(layout.press(px(42, 1), CELL, true, false), Press::Zoom(0));
+        assert_eq!(
+            layout.press(px(33, 1), CELL, true, false),
+            Press::Action(0, 1)
+        );
+        assert_eq!(
+            layout.press(px(48, 1), CELL, false, false),
+            Press::Body(0),
+            "without the bar the cell is the pane's"
+        );
+        assert!(layout.drag.is_none());
+    }
+
+    #[test]
+    fn a_press_on_an_empty_pane_runs_its_placeholder_button() {
+        let mut layout: Layout = three_anchors();
+        layout.panes[1].marks.placeholder.button = Some(("restart".to_string(), 7));
+        let terminal = layout.pane(1).unwrap().rect;
+        let at = px(terminal.column + 10, terminal.row + 10);
+        assert_eq!(layout.press(at, CELL, false, false), Press::Action(1, 7));
+        assert_eq!(layout.press(at, CELL, false, true), Press::Drag(1));
+    }
+
+    #[test]
     fn the_ctrl_bar_buttons_are_hit_on_the_top_row_of_the_client() {
         let mut layout: Layout = three_anchors();
         layout.panes[0].marks.buttons = three_buttons();
@@ -1569,8 +1848,8 @@ pub(super) mod tests {
     fn a_dragged_pane_leaves_its_slot_empty_and_its_ghost_is_the_inside_of_the_pane() {
         let mut layout: Layout = three_anchors();
         layout.panes[0].marks.placeholder.lines = vec!["waiting".to_string()];
+        layout.drag = Some(pane_drag(0, None));
         let chrome = Chrome {
-            dragging: Some(0),
             bar: true,
             ..Chrome::default()
         };
@@ -1634,7 +1913,8 @@ pub(super) mod tests {
 
         let font = decade_ui::Font::load(14.0);
         let mut scene = Scene::new(&font);
-        layout.draw_drop(&mut scene, 1, (24, 20));
+        layout.drag = Some(pane_drag(1, Some((24, 20))));
+        layout.draw_drop(&mut scene);
         let active = scene.shapes.iter().find_map(|shape| match shape {
             decade_ui::Shape::Rect { at, color, .. } if color[3] < 1.0 => Some(*at),
             _ => None,

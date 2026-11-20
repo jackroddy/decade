@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use decade_ui::Size;
 use smithay::backend::input::{
     Axis as InputAxis, AxisRelativeDirection, AxisSource, ButtonState, KeyState,
 };
@@ -8,7 +9,7 @@ use smithay::desktop::utils::under_from_surface_tree;
 use smithay::input::keyboard::{FilterResult, Keycode, Keysym, ModifiersState, keysyms};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay::utils::{Logical, Physical, Point, SERIAL_COUNTER};
+use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 
 use crate::server::chrome::context_menu::Place;
 use crate::server::chrome::frame::Hit;
@@ -16,7 +17,7 @@ use crate::server::chrome::menu::{MenuKey, Outcome};
 use crate::server::chrome::prompt::{self, Answer};
 use crate::server::chrome::rename::Named;
 use crate::server::clients;
-use crate::server::panes::{BarButton, Boundary, Direction, Drop};
+use crate::server::panes::{BarButton, Direction, Drop, Press, Update};
 use crate::server::workspace::PaneAction;
 use crate::wire::{
     self, BTN_BACK, BTN_LEFT, BTN_RIGHT, BTN_SIDE, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
@@ -74,7 +75,8 @@ impl State {
         self.stop_repeat();
         self.cancel_ctrl_timer();
         self.show_bar(false);
-        self.drag = None;
+        self.sidebar_drag = None;
+        self.layout_mut().drag = None;
         self.frame_hover = None;
         self.hover = None;
         self.tab_hover = None;
@@ -140,31 +142,22 @@ impl State {
             }
             return;
         }
-        let (column, row) = self.pointer_cell();
         let (x, y) = self.pointer_px();
         let threshold = self.text.fonts.chrome.cell_height as i32 / 2;
-        let current = self.current();
-        match &mut self.drag {
-            Some(Drag::Boundary(boundary)) => {
-                let layout = self.workspaces[current].layout_mut();
-                layout.drag_boundary(boundary, column, row);
-                self.relayout();
-                return;
-            }
-            Some(Drag::Pane { cell, .. }) => {
-                *cell = Some((column, row));
+        if let Some(SidebarDrag { from, moved, .. }) = &mut self.sidebar_drag {
+            *moved |= (x - from.0).abs() >= threshold || (y - from.1).abs() >= threshold;
+            if *moved {
                 self.request_redraw();
-                return;
             }
-            Some(Drag::Sidebar { from, moved, .. }) => {
-                *moved |= (x - from.0).abs() >= threshold || (y - from.1).abs() >= threshold;
-                if *moved {
-                    self.request_redraw();
-                }
-                return;
-            }
-            None => {}
+            return;
         }
+        let (at, cell) = (self.pointer_physical(), self.chrome_cell());
+        if let Some(update) = self.layout_mut().motion(at, cell) {
+            self.layout_update(update);
+            return;
+        }
+        let (column, row) = self.pointer_cell();
+        let current = self.current();
         let area = self.pane_area();
         let in_panes = column >= area.column && row >= area.row;
 
@@ -335,7 +328,7 @@ impl State {
                 if self.sidebar_open && matches!(hit, Hit::Show(_) | Hit::Group(_)) {
                     let from = (x, y);
                     let moved = false;
-                    self.drag = Some(Drag::Sidebar { hit, from, moved });
+                    self.sidebar_drag = Some(SidebarDrag { hit, from, moved });
                     return;
                 }
                 self.frame_hit(hit);
@@ -346,8 +339,16 @@ impl State {
             if pressed && self.press_on_chrome() {
                 return;
             }
-            if !pressed && let Some(drag) = self.drag.take() {
-                self.drop(drag);
+            if !pressed && let Some(drag) = self.sidebar_drag.take() {
+                if drag.moved {
+                    self.drop_in_sidebar(drag.hit);
+                } else {
+                    self.frame_hit(drag.hit);
+                }
+                return;
+            }
+            if !pressed && let Some(update) = self.layout_mut().release() {
+                self.layout_update(update);
                 return;
             }
         }
@@ -618,53 +619,38 @@ impl State {
     }
 
     fn press_on_chrome(&mut self) -> bool {
-        let (column, row) = self.pointer_cell();
-        let bar = self
-            .bar
-            .then(|| self.layout().bar_hit(column, row))
-            .flatten();
-        match bar {
-            Some((id, BarButton::Close)) => {
-                self.close_pane(id);
-                return true;
-            }
-            Some((id, BarButton::Zoom)) => {
-                self.toggle_zoom(id);
-                return true;
-            }
-            Some((id, BarButton::Action(action))) => {
-                self.pane_action(id, action);
-                return true;
-            }
-            Some(_) => {}
-            None => {
-                if let Some((id, index)) = self.layout().tab_hit(column, row) {
-                    self.show_pane_tab(id, index);
-                    return true;
-                }
-            }
-        }
-        if let Some(boundary) = self.layout().boundary_at(column, row) {
-            self.drag = Some(Drag::Boundary(boundary));
-            return true;
-        }
-        let Some(id) = self.pane_under_pointer() else {
-            return false;
-        };
+        let (at, cell, bar) = (self.pointer_physical(), self.chrome_cell(), self.bar);
         let ctrl = self.seat.get_keyboard().unwrap().modifier_state().ctrl;
-        if ctrl || bar.is_some() {
-            self.start_pane_drag(id);
-            return true;
+        match self.layout_mut().press(at, cell, bar, ctrl) {
+            Press::Close(id) => self.close_pane(id),
+            Press::Zoom(id) => self.toggle_zoom(id),
+            Press::Action(id, action) => self.pane_action(id, action),
+            Press::Tab(id, index) => self.show_pane_tab(id, index),
+            Press::Boundary => {}
+            Press::Drag(id) => {
+                self.hover = None;
+                self.tab_hover = None;
+                self.focus(id);
+                self.request_redraw();
+            }
+            Press::Body(id) => {
+                self.end_point_at(id);
+                if id != self.layout().focused {
+                    self.focus(id);
+                }
+                return false;
+            }
+            Press::Miss => return false,
         }
-        if let Some(action) = self.layout().placeholder_action(id) {
-            self.pane_action(id, action);
-            return true;
+        true
+    }
+
+    fn layout_update(&mut self, update: Update) {
+        match update {
+            Update::Nothing => {}
+            Update::Redraw => self.request_redraw(),
+            Update::Relayout => self.relayout(),
         }
-        self.end_point_at(id);
-        if id != self.layout().focused {
-            self.focus(id);
-        }
-        false
     }
 
     fn pane_action(&mut self, id: usize, action: PaneAction) {
@@ -794,39 +780,6 @@ impl State {
         })
     }
 
-    fn start_pane_drag(&mut self, id: usize) {
-        self.hover = None;
-        self.tab_hover = None;
-        self.focus(id);
-        let pointer = self.pointer.to_physical(self.scale).to_i32_round();
-        let grab = pointer - self.pane_origin(id);
-        self.drag = Some(Drag::Pane {
-            id,
-            grab,
-            start: Instant::now(),
-            cell: None,
-        });
-        self.request_redraw();
-    }
-
-    fn drop(&mut self, drag: Drag) {
-        let (id, cell) = match drag {
-            Drag::Pane { id, cell, .. } => (id, cell),
-            Drag::Sidebar {
-                hit, moved: false, ..
-            } => return self.frame_hit(hit),
-            Drag::Sidebar { hit, .. } => return self.drop_in_sidebar(hit),
-            Drag::Boundary(_) => return,
-        };
-        let drop = cell.and_then(|(column, row)| self.layout().drop_at(id, column, row));
-        if let Some(drop) = drop {
-            self.layout_mut().apply_drop(id, drop);
-            self.relayout();
-        } else {
-            self.request_redraw();
-        }
-    }
-
     /// Move the card or header `hit` to where it was dragged in the open
     /// sidebar, or leave it where it was when it was dropped elsewhere.
     fn drop_in_sidebar(&mut self, hit: Hit) {
@@ -844,13 +797,6 @@ impl State {
         self.request_redraw();
     }
 
-    fn pane_origin(&self, id: usize) -> Point<i32, Physical> {
-        let Some(pane) = self.layout().pane(id) else {
-            return Point::default();
-        };
-        self.text.px_rect(pane.rect).loc
-    }
-
     /// The palette font's cell.
     pub(super) fn menu_cell(&self) -> (i32, i32) {
         let font = &self.text.fonts.menu;
@@ -859,6 +805,21 @@ impl State {
 
     pub(super) fn window(&self) -> (i32, i32) {
         (self.size.w, self.size.h)
+    }
+
+    /// The pointer in physical pixels.
+    fn pointer_physical(&self) -> (f64, f64) {
+        let physical = self.pointer.to_physical(self.scale);
+        (physical.x, physical.y)
+    }
+
+    /// The chrome font's cell.
+    fn chrome_cell(&self) -> Size {
+        let font = &self.text.fonts.chrome;
+        Size {
+            width: font.cell_width as i32,
+            height: font.cell_height as i32,
+        }
     }
 
     fn pointer_px(&self) -> (i32, i32) {
@@ -880,28 +841,16 @@ impl State {
     }
 }
 
-pub(super) enum Drag {
-    Boundary(Boundary),
+/// A press on a card or a group's header in the open sidebar.
+pub(super) struct SidebarDrag {
+    pub(super) hit: Hit,
 
-    /// A press on a card or a group's header in the open sidebar.
-    Sidebar {
-        hit: Hit,
+    /// Where the press was, in pixels.
+    from: (i32, i32),
 
-        /// Where the press was, in pixels.
-        from: (i32, i32),
-
-        /// Whether the pointer has gone far enough from `from` to make the
-        /// press a drag rather than a click.
-        moved: bool,
-    },
-    Pane {
-        id: usize,
-        grab: Point<i32, Physical>,
-        start: Instant,
-
-        /// The cell under the pointer since the drag began.
-        cell: Option<(u32, u32)>,
-    },
+    /// Whether the pointer has gone far enough from `from` to make the
+    /// press a drag rather than a click.
+    pub(super) moved: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
