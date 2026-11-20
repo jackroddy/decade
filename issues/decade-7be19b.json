@@ -3,7 +3,7 @@
   "title": "The overlay widgets move into the kit and return the program's actions",
   "body": "`overlay.rs` in `decade/src/server/chrome/` holds the parts every overlay is drawn from: `Layout`, `Row`, `List`, `Cursor`, `Step`, `draw_box`, `draw_key` and `draw_hint`. The palette (`Menu`), the settings panel (`Panel`), `ContextMenu`, `Prompt` and `NameField` are built from them. Each takes `MenuKey` and returns `Outcome`, whose `Run` and `Apply` carry `Action`, decade's verb enum in `menu.rs`. `overlay.rs` imports `MenuKey` from `menu.rs`.\n\n## Proposal\n\n`overlay.rs`, `MenuKey` and `Outcome` move into `decade-ui`, with the text field from `rename.rs`, the dialog from `prompt.rs` and the menu widget from `context_menu.rs`. `Outcome` takes the program's action type as a parameter. What decade puts in them stays in decade: `Action`, the palette's rows, `Named`, `Place` with its entries, and the dialog's wording.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [
     "decade"
@@ -14,19 +14,22 @@
   ],
   "related": [],
   "assignee": "Jack Roddy/8a3a6cd2",
-  "lease_expires": "2026-11-20T02:08:09.024580769Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T21:03:21.043431528Z",
-  "updated_at": "2026-11-20T01:53:09.024580769Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-20T02:01:17.542093425Z",
+  "closed_at": "2026-11-20T02:01:17.542093425Z",
+  "close_reason": "Landed in e480cbb: the kit's public overlay module holds the box parts, MenuKey, Outcome<A>, ContextMenu<A>, Dialog<A> and NameField<A>. decade keeps Action, the palette rows, the context menu entries and the dialog wording.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "bf36ffa",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e480cbb",
+      "branch": "dev"
+    }
   }
 }
