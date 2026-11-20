@@ -3,13 +3,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::chrome::menu::App;
 use crate::files;
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct App {
-    pub name: String,
-    pub argv: Vec<String>,
-}
 
 pub fn installed() -> Vec<App> {
     let mut found: HashMap<String, App> = HashMap::new();

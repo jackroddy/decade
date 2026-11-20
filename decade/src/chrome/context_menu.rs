@@ -1,7 +1,7 @@
 use decade_ui::overlay::Entry;
 
-use crate::server::chrome::rename::Named;
-use crate::server::workspace::Group;
+use crate::chrome::frame::Group;
+use crate::chrome::rename::Named;
 
 /// What a right click on decade's chrome landed on, with what its entries
 /// depend on.

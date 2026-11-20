@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use decade_ui::CellRect;
 
+use crate::chrome::frame::Group;
 use crate::files;
 use crate::server::proc;
-use crate::server::workspace::{Group, Layout, Pane, Tab, Workspace};
+use crate::server::workspace::{Layout, Pane, Tab, Workspace};
 use decade_ui::{Axis, Node};
 
 const VERSION: u32 = 4;

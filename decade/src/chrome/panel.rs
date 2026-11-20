@@ -2,8 +2,8 @@ use decade_ui::overlay::{Cursor, LARGE, LARGE_COLUMNS, Layout, MenuKey, Row, Ste
 use decade_ui::palette;
 use decade_ui::{Scene, fit};
 
-use crate::server::chrome::menu::{Action, Outcome};
-use crate::server::chrome::settings::{KNOBS, Settings};
+use crate::chrome::menu::{Action, Outcome};
+use crate::chrome::settings::{KNOBS, Settings};
 
 /// The width in cells of the pill a value sits in.
 const VALUE_WIDTH: i32 = 9;

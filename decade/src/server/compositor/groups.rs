@@ -1,4 +1,5 @@
-use crate::server::workspace::{self, Group};
+use crate::chrome::frame::Group;
+use crate::server::workspace;
 
 use super::State;
 

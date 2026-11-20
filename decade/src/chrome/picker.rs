@@ -1,13 +1,10 @@
-use smithay::utils::{Physical, Point, Rectangle, Size};
-
+use decade_channel::AgentState;
 use decade_ui::overlay::{LARGE, MenuKey, draw_hint, hint_width};
 use decade_ui::palette::{self, ACCENT};
-use decade_ui::{Face, Scene, fit};
+use decade_ui::{Face, Fonts, Point, Scene, Size, fit};
 
-use crate::server::chrome::frame::mark;
-use crate::server::chrome::menu::{Action, Outcome};
-use crate::server::chrome::text::Text;
-use crate::server::workspace::Workspace;
+use crate::chrome::frame::mark;
+use crate::chrome::menu::{Action, Outcome};
 
 const DRAG_THRESHOLD: i32 = 8;
 
@@ -23,6 +20,30 @@ const FRAME_RADIUS: i32 = 10;
 /// The gap between a cell's thumbnail and the inside of its frame.
 const FRAME_GAP: i32 = 4;
 
+/// A workspace, as its cell shows it.
+pub struct Entry<'a> {
+    pub id: u32,
+    pub name: &'a str,
+    pub state: Option<AgentState>,
+    pub closing: bool,
+}
+
+/// A rectangle in pixels.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Rect {
+    pub at: Point,
+    pub size: Size,
+}
+
+impl Rect {
+    fn contains(&self, point: Point) -> bool {
+        point.x >= self.at.x
+            && point.x < self.at.x + self.size.width
+            && point.y >= self.at.y
+            && point.y < self.at.y + self.size.height
+    }
+}
+
 pub struct Picker {
     /// The selected cell: a workspace, or past the last one the new-workspace cell.
     selected: usize,
@@ -31,7 +52,7 @@ pub struct Picker {
     confirming: Option<u32>,
 
     /// The cell a press landed on, and where.
-    press: Option<(usize, Point<i32, Physical>)>,
+    press: Option<(usize, Point)>,
 
     /// The workspace cell being dragged to a new place.
     dragging: Option<usize>,
@@ -39,7 +60,7 @@ pub struct Picker {
 
 pub struct Grid {
     /// The thumbnail of each cell, workspaces first, then the new-workspace cell.
-    pub cells: Vec<Rectangle<i32, Physical>>,
+    pub cells: Vec<Rect>,
 
     pub columns: usize,
 
@@ -49,32 +70,35 @@ pub struct Grid {
     /// The side of each cell's close button.
     button: i32,
 
-    size: Size<i32, Physical>,
+    size: Size,
 }
 
 impl Grid {
-    pub fn new(count: usize, size: Size<i32, Physical>, cell_height: i32) -> Grid {
+    pub fn new(count: usize, size: Size, cell_height: i32) -> Grid {
         let pad = cell_height * 2;
         let label = cell_height * 2;
         let columns = (count as f64).sqrt().ceil().max(1.0) as usize;
         let rows = count.div_ceil(columns).max(1);
-        let free_w = size.w - pad * (columns as i32 + 1);
-        let free_h = size.h - pad * (rows as i32 + 1) - label * rows as i32;
-        let scale = (free_w as f64 / columns as f64 / size.w as f64)
-            .min(free_h as f64 / rows as f64 / size.h as f64)
+        let free_w = size.width - pad * (columns as i32 + 1);
+        let free_h = size.height - pad * (rows as i32 + 1) - label * rows as i32;
+        let scale = (free_w as f64 / columns as f64 / size.width as f64)
+            .min(free_h as f64 / rows as f64 / size.height as f64)
             .max(0.01);
-        let width = (size.w as f64 * scale) as i32;
-        let height = (size.h as f64 * scale) as i32;
+        let width = (size.width as f64 * scale) as i32;
+        let height = (size.height as f64 * scale) as i32;
         let grid_w = columns as i32 * width + (columns as i32 - 1) * pad;
         let grid_h = rows as i32 * (height + label) + (rows as i32 - 1) * pad;
-        let left = (size.w - grid_w) / 2;
-        let top = (size.h - grid_h) / 2;
+        let left = (size.width - grid_w) / 2;
+        let top = (size.height - grid_h) / 2;
         let cells = (0..count)
             .map(|i| {
                 let (column, row) = ((i % columns) as i32, (i / columns) as i32);
                 let x = left + column * (width + pad);
                 let y = top + row * (height + label + pad);
-                Rectangle::new((x, y).into(), (width, height).into())
+                Rect {
+                    at: Point { x, y },
+                    size: Size { width, height },
+                }
             })
             .collect();
         Grid {
@@ -86,15 +110,23 @@ impl Grid {
         }
     }
 
-    fn cell_at(&self, point: Point<i32, Physical>) -> Option<usize> {
+    fn cell_at(&self, point: Point) -> Option<usize> {
         self.cells.iter().position(|cell| cell.contains(point))
     }
 
-    fn close_button(&self, cell: usize) -> Rectangle<i32, Physical> {
+    fn close_button(&self, cell: usize) -> Rect {
         let thumbnail = self.cells[cell];
         let side = self.button;
-        let at = thumbnail.loc + Point::from((thumbnail.size.w - side, 0));
-        Rectangle::new(at, (side, side).into())
+        Rect {
+            at: Point {
+                x: thumbnail.at.x + thumbnail.size.width - side,
+                y: thumbnail.at.y,
+            },
+            size: Size {
+                width: side,
+                height: side,
+            },
+        }
     }
 }
 
@@ -139,7 +171,7 @@ impl Picker {
         Outcome::Open
     }
 
-    pub fn press(&mut self, point: Point<i32, Physical>, ids: &[u32], grid: &Grid) -> Outcome {
+    pub fn press(&mut self, point: Point, ids: &[u32], grid: &Grid) -> Outcome {
         let Some(cell) = grid.cell_at(point) else {
             self.confirming = None;
             return Outcome::Open;
@@ -161,7 +193,7 @@ impl Picker {
     }
 
     /// Whether the motion started or continued a drag.
-    pub fn motion(&mut self, point: Point<i32, Physical>, ids: &[u32]) -> bool {
+    pub fn motion(&mut self, point: Point, ids: &[u32]) -> bool {
         let Some((cell, at)) = self.press else {
             return false;
         };
@@ -172,7 +204,7 @@ impl Picker {
         self.dragging.is_some()
     }
 
-    pub fn release(&mut self, point: Point<i32, Physical>, ids: &[u32], grid: &Grid) -> Outcome {
+    pub fn release(&mut self, point: Point, ids: &[u32], grid: &Grid) -> Outcome {
         let pressed = self.press.take();
         let target = grid.cell_at(point);
         if let Some(from) = self.dragging.take() {
@@ -204,17 +236,15 @@ impl Picker {
     pub fn draw(
         &self,
         grid: &Grid,
-        workspaces: &[Workspace],
+        workspaces: &[Entry],
         current: usize,
-        pointer: Point<i32, Physical>,
-        text: &Text,
+        pointer: Point,
+        fonts: &Fonts,
     ) -> (Scene, Scene) {
-        let (menu_width, menu_height) = (
-            text.fonts.menu.cell_width as i32,
-            text.fonts.menu.cell_height as i32,
-        );
-        let mut over = Scene::new(&text.fonts.chrome);
-        let mut under = Scene::new(&text.fonts.chrome);
+        let (menu_width, menu_height) =
+            (fonts.menu.cell_width as i32, fonts.menu.cell_height as i32);
+        let mut over = Scene::new(&fonts.chrome);
+        let mut under = Scene::new(&fonts.chrome);
         let line = over.line_width();
         let label_width = |text: &str| text.chars().count() as i32 * menu_width;
         let drop_target = self.dragging.and_then(|_| grid.cell_at(pointer));
@@ -222,7 +252,7 @@ impl Picker {
         for (i, cell) in grid.cells.iter().enumerate() {
             let workspace = workspaces.get(i);
             let confirming = workspace.is_some_and(|w| self.confirming == Some(w.id));
-            let red = confirming || workspace.is_some_and(Workspace::closing);
+            let red = confirming || workspace.is_some_and(|w| w.closing);
             let thick = if self.selected == i { line * 2 } else { line };
             let (ring, stroke) = if drop_target == Some(i) {
                 (palette::CYAN, line)
@@ -234,8 +264,8 @@ impl Picker {
                 (palette::MUTED, line)
             };
             let gap = LARGE.px(FRAME_GAP, menu_height) + stroke;
-            let (x, y) = (cell.loc.x - gap, cell.loc.y - gap);
-            let (w, h) = (cell.size.w + gap * 2, cell.size.h + gap * 2);
+            let (x, y) = (cell.at.x - gap, cell.at.y - gap);
+            let (w, h) = (cell.size.width + gap * 2, cell.size.height + gap * 2);
             let inside = palette::DARK_BACKGROUND;
             under.rounded(x, y, (w, h), radius, ring, ring);
             let inner = (w - stroke * 2, h - stroke * 2);
@@ -248,16 +278,16 @@ impl Picker {
                 inside,
             );
 
-            let room = (cell.size.w / menu_width).max(1) as usize;
-            let label_y = cell.loc.y + cell.size.h + gap + (grid.label - gap - menu_height) / 2;
+            let room = (cell.size.width / menu_width).max(1) as usize;
+            let label_y = cell.at.y + cell.size.height + gap + (grid.label - gap - menu_height) / 2;
             let Some(workspace) = workspace else {
                 let text = fit("+ New workspace", room);
-                let x = cell.loc.x + (cell.size.w - label_width(&text)) / 2;
-                let y = cell.loc.y + (cell.size.h - menu_height) / 2;
+                let x = cell.at.x + (cell.size.width - label_width(&text)) / 2;
+                let y = cell.at.y + (cell.size.height - menu_height) / 2;
                 over.text_px(x, y, &text, Face::Menu, palette::FOREGROUND);
                 continue;
             };
-            let (glyph, glyph_color) = mark(workspace.agent_state());
+            let (glyph, glyph_color) = mark(workspace.state);
             let (label, color, face) = if confirming {
                 let label = format!("{} — enter to close", workspace.name);
                 (label, palette::LIGHT_RED, Face::Menu)
@@ -265,14 +295,18 @@ impl Picker {
                 let label = format!("{} closing", workspace.name);
                 (label, palette::LIGHT_RED, Face::Menu)
             } else if i == current {
-                (workspace.name.clone(), palette::FOREGROUND, Face::MenuBold)
+                (
+                    workspace.name.to_string(),
+                    palette::FOREGROUND,
+                    Face::MenuBold,
+                )
             } else {
-                let label = workspace.name.clone();
+                let label = workspace.name.to_string();
                 (label, palette::FADED_FOREGROUND, Face::Menu)
             };
             let glyph_color = if red { palette::LIGHT_RED } else { glyph_color };
             let label = fit(&label, room.saturating_sub(2).max(1));
-            let x = cell.loc.x + (cell.size.w - label_width(&label) - 2 * menu_width) / 2;
+            let x = cell.at.x + (cell.size.width - label_width(&label) - 2 * menu_width) / 2;
             over.text_px(x, label_y, &glyph.to_string(), Face::Menu, glyph_color);
             over.text_px(x + 2 * menu_width, label_y, &label, face, color);
             let button = grid.close_button(i);
@@ -281,8 +315,8 @@ impl Picker {
             } else {
                 palette::LIGHT_FOREGROUND
             };
-            let icon_x = button.loc.x + (button.size.w - menu_width) / 2;
-            let icon_y = button.loc.y + (button.size.h - menu_height) / 2;
+            let icon_x = button.at.x + (button.size.width - menu_width) / 2;
+            let icon_y = button.at.y + (button.size.height - menu_height) / 2;
             over.text_px(
                 icon_x,
                 icon_y,
@@ -293,8 +327,8 @@ impl Picker {
         }
         let size = grid.size;
         let cell = (menu_width, menu_height);
-        let hint_y = size.h - (grid.label + menu_height) / 2;
-        let hint_x = (size.w - hint_width(&LARGE, self.hint(), cell)) / 2;
+        let hint_y = size.height - (grid.label + menu_height) / 2;
+        let hint_x = (size.width - hint_width(&LARGE, self.hint(), cell)) / 2;
         draw_hint(&mut over, &LARGE, (hint_x, hint_y), self.hint(), cell);
         (over, under)
     }
@@ -316,25 +350,34 @@ mod tests {
     const CELL: i32 = 18;
 
     fn grid(count: usize) -> Grid {
-        Grid::new(count, SIZE.into(), CELL)
+        Grid::new(count, size(), CELL)
     }
 
-    fn center(grid: &Grid, cell: usize) -> Point<i32, Physical> {
-        let rect = grid.cells[cell];
-        rect.loc + Point::from((rect.size.w / 2, rect.size.h / 2))
+    fn size() -> Size {
+        Size {
+            width: SIZE.0,
+            height: SIZE.1,
+        }
+    }
+
+    fn center(rect: Rect) -> Point {
+        Point {
+            x: rect.at.x + rect.size.width / 2,
+            y: rect.at.y + rect.size.height / 2,
+        }
     }
 
     #[test]
     fn the_grid_is_as_wide_as_the_square_root_of_the_cells_and_fits_the_output() {
         let grid = grid(5);
         assert_eq!(grid.columns, 3);
-        assert_eq!(grid.cells[3].loc.y, grid.cells[4].loc.y);
-        assert!(grid.cells[3].loc.y > grid.cells[0].loc.y);
+        assert_eq!(grid.cells[3].at.y, grid.cells[4].at.y);
+        assert!(grid.cells[3].at.y > grid.cells[0].at.y);
         for cell in &grid.cells {
-            assert!(cell.loc.x >= 0 && cell.loc.x + cell.size.w <= SIZE.0);
-            assert!(cell.loc.y >= 0 && cell.loc.y + cell.size.h + grid.label <= SIZE.1);
+            assert!(cell.at.x >= 0 && cell.at.x + cell.size.width <= SIZE.0);
+            assert!(cell.at.y >= 0 && cell.at.y + cell.size.height + grid.label <= SIZE.1);
         }
-        let ratio = grid.cells[0].size.w as f64 / grid.cells[0].size.h as f64;
+        let ratio = grid.cells[0].size.width as f64 / grid.cells[0].size.height as f64;
         assert!((ratio - 16.0 / 9.0).abs() < 0.02);
     }
 
@@ -367,7 +410,7 @@ mod tests {
         let ids = [3, 5];
         let grid = grid(3);
         let button = grid.close_button(1);
-        let on_x = button.loc + Point::from((button.size.w / 2, button.size.h / 2));
+        let on_x = center(button);
         let mut picker = Picker::new(0);
         assert_eq!(picker.press(on_x, &ids, &grid), Outcome::Open);
         assert_eq!(picker.confirming, Some(5));
@@ -377,8 +420,8 @@ mod tests {
 
     #[test]
     fn the_close_button_is_at_least_the_least_button_size_with_a_small_font() {
-        let button = Grid::new(3, SIZE.into(), 8).close_button(0);
-        assert!(button.size.w >= MIN_BUTTON && button.size.h >= MIN_BUTTON);
+        let button = Grid::new(3, size(), 8).close_button(0);
+        assert!(button.size.width >= MIN_BUTTON && button.size.height >= MIN_BUTTON);
     }
 
     #[test]
@@ -396,15 +439,15 @@ mod tests {
         let ids = [3, 5, 8];
         let grid = grid(4);
         let mut picker = Picker::new(0);
-        picker.press(center(&grid, 1), &ids, &grid);
+        picker.press(center(grid.cells[1]), &ids, &grid);
         assert_eq!(
-            picker.release(center(&grid, 1), &ids, &grid),
+            picker.release(center(grid.cells[1]), &ids, &grid),
             Outcome::Run(Action::ShowWorkspace(5))
         );
-        picker.press(center(&grid, 0), &ids, &grid);
-        assert!(picker.motion(center(&grid, 2), &ids));
+        picker.press(center(grid.cells[0]), &ids, &grid);
+        assert!(picker.motion(center(grid.cells[2]), &ids));
         assert_eq!(
-            picker.release(center(&grid, 2), &ids, &grid),
+            picker.release(center(grid.cells[2]), &ids, &grid),
             Outcome::Apply(Action::MoveWorkspace { from: 0, to: 2 })
         );
     }
@@ -414,10 +457,10 @@ mod tests {
         let ids = [3, 5];
         let grid = grid(3);
         let mut picker = Picker::new(0);
-        picker.press(center(&grid, 0), &ids, &grid);
-        picker.motion(center(&grid, 2), &ids);
+        picker.press(center(grid.cells[0]), &ids, &grid);
+        picker.motion(center(grid.cells[2]), &ids);
         assert_eq!(
-            picker.release(center(&grid, 2), &ids, &grid),
+            picker.release(center(grid.cells[2]), &ids, &grid),
             Outcome::Apply(Action::MoveWorkspace { from: 0, to: 1 })
         );
     }

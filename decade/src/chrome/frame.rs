@@ -7,7 +7,6 @@ use decade_ui::overlay::{SMALL, draw_box};
 use decade_ui::palette::{self, Rgba};
 use decade_ui::{CellRect, Face, Scene, fit, scaled, tail};
 
-use crate::server::workspace::Group;
 use decade_channel::{AgentState, Context, Tokens};
 
 /// The rows above the panes that the top bar takes.
@@ -99,6 +98,16 @@ pub fn pane_area(columns: u32, rows: u32, open: bool) -> CellRect {
         columns: columns - left,
         rows: rows.saturating_sub(TOP),
     }
+}
+
+/// A named set of workspaces, which only the sidebar shows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Group {
+    pub id: u32,
+    pub name: String,
+
+    /// Whether the open sidebar shows only the group's header.
+    pub folded: bool,
 }
 
 /// A tab of the current workspace, as its pill shows it.

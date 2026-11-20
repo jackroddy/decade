@@ -14,11 +14,11 @@ use smithay::utils::{Physical, Point, Rectangle, Transform};
 use decade_ui::palette::{ACCENT, BACKGROUND, Rgba};
 use decade_ui::{Chrome, Pulse, Scene, Shape};
 
+use crate::chrome::frame;
+use crate::chrome::picker::{self, Grid, Picker};
+use crate::chrome::settings::Settings;
 use crate::server::agents;
 use crate::server::chrome::draw::{Element, Paint, Shrink, px_point, px_size};
-use crate::server::chrome::frame;
-use crate::server::chrome::picker::{Grid, Picker};
-use crate::server::chrome::settings::Settings;
 use crate::server::workspace::{self, PaneAction, Tab, Workspace};
 
 use super::input::SidebarDrag;
@@ -472,9 +472,26 @@ fn paint_picker(
     (workspaces, current): (&[Workspace], usize),
     pointer: Point<i32, Physical>,
 ) {
-    let (over, under) = picker.draw(grid, workspaces, current, pointer, paint.text);
+    let entries: Vec<picker::Entry> = workspaces
+        .iter()
+        .map(|workspace| picker::Entry {
+            id: workspace.id,
+            name: &workspace.name,
+            state: workspace.agent_state(),
+            closing: workspace.closing(),
+        })
+        .collect();
+    let pointer = decade_ui::Point {
+        x: pointer.x,
+        y: pointer.y,
+    };
+    let (over, under) = picker.draw(grid, &entries, current, pointer, &paint.text.fonts);
     let mut surfaces = Vec::new();
     for (cell, workspace) in grid.cells.iter().zip(workspaces) {
+        let cell = Rectangle::<i32, Physical>::new(
+            (cell.at.x, cell.at.y).into(),
+            (cell.size.width, cell.size.height).into(),
+        );
         let tab = workspace.tab();
         let layout = &tab.layout;
 
@@ -506,7 +523,7 @@ fn paint_picker(
                 );
             surfaces.extend(tree.into_iter().filter_map(|surface| {
                 let scaled = RescaleRenderElement::from_element(surface, anchor, scale);
-                CropRenderElement::from_element(scaled, paint.scale, *cell).map(Element::Thumbnail)
+                CropRenderElement::from_element(scaled, paint.scale, cell).map(Element::Thumbnail)
             }));
         }
     }

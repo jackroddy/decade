@@ -12,11 +12,11 @@ use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 
-use crate::server::chrome::context_menu::Place;
-use crate::server::chrome::frame::Hit;
-use crate::server::chrome::menu::{Action, Outcome};
-use crate::server::chrome::prompt::{self, Answer};
-use crate::server::chrome::rename::Named;
+use crate::chrome::context_menu::Place;
+use crate::chrome::frame::Hit;
+use crate::chrome::menu::{Action, Outcome};
+use crate::chrome::prompt::{self, Answer};
+use crate::chrome::rename::Named;
 use crate::server::clients;
 use crate::server::workspace::PaneAction;
 use crate::wire::{
@@ -116,7 +116,7 @@ impl State {
             return;
         }
         if matches!(self.overlay, Some(Overlay::Picker { .. })) {
-            let point = self.pointer.to_physical(self.scale).to_i32_round();
+            let point = self.picker_point();
             let ids = self.workspace_ids();
             if let Some(Overlay::Picker { picker, .. }) = &mut self.overlay
                 && picker.motion(point, &ids)
@@ -259,7 +259,7 @@ impl State {
         }
         if matches!(self.overlay, Some(Overlay::Picker { .. })) {
             if button == BTN_LEFT {
-                let point = self.pointer.to_physical(self.scale).to_i32_round();
+                let point = self.picker_point();
                 let (ids, grid) = (self.workspace_ids(), self.picker_grid());
                 let Some(Overlay::Picker { picker, .. }) = &mut self.overlay else {
                     return;
@@ -820,6 +820,14 @@ impl State {
         Size {
             width: font.cell_width as i32,
             height: font.cell_height as i32,
+        }
+    }
+
+    fn picker_point(&self) -> decade_ui::Point {
+        let physical = self.pointer.to_physical(self.scale).to_i32_round();
+        decade_ui::Point {
+            x: physical.x,
+            y: physical.y,
         }
     }
 

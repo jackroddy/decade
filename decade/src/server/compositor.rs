@@ -71,24 +71,24 @@ use smithay::{
 
 use decade_ui::CellRect;
 
+use crate::chrome::context_menu::{self, Command, Place};
+use crate::chrome::frame::{self, Group, Hit};
+use crate::chrome::menu::{Action, Menu, Outcome};
+use crate::chrome::panel::Panel;
+use crate::chrome::picker::{Grid, Picker};
+use crate::chrome::rename::Named;
+use crate::chrome::settings::{self, Settings};
 use crate::control::{self, viewer_socket_path};
 use crate::files;
 use crate::gpu::Gpu;
 use crate::server::apps;
 use crate::server::children::Children;
-use crate::server::chrome::context_menu::{self, Command, Place};
-use crate::server::chrome::frame::{self, Hit};
-use crate::server::chrome::menu::{Action, Menu, Outcome};
-use crate::server::chrome::panel::Panel;
-use crate::server::chrome::picker::{Grid, Picker};
-use crate::server::chrome::rename::Named;
-use crate::server::chrome::settings::{self, Settings};
 use crate::server::chrome::text::Text;
 use crate::server::clients::{self, Client as PaneClient};
 use crate::server::mcp;
 use crate::server::proc;
 use crate::server::save::{self, TerminalTab};
-use crate::server::workspace::{self, Group, Layout, Pane, PaneAction, Workspace};
+use crate::server::workspace::{self, Layout, Pane, PaneAction, Workspace};
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
 use decade_channel::AgentState;
 use decade_ui::BarButton;
@@ -811,9 +811,13 @@ impl State {
     }
 
     fn picker_grid(&self) -> Grid {
+        let size = decade_ui::Size {
+            width: self.size.w,
+            height: self.size.h,
+        };
         Grid::new(
             self.workspaces.len() + 1,
-            self.size,
+            size,
             self.text.fonts.chrome.cell_height as i32,
         )
     }

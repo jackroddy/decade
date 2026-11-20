@@ -63,16 +63,6 @@ pub struct Workspace {
     next_content: u64,
 }
 
-/// A named set of workspaces, which only the sidebar shows.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Group {
-    pub id: u32,
-    pub name: String,
-
-    /// Whether the open sidebar shows only the group's header.
-    pub folded: bool,
-}
-
 /// An agent pointing at a pane, from the MCP tool `point`.
 pub struct Point {
     pub pane: String,

@@ -10,8 +10,8 @@ use smithay::utils::{Buffer, Physical, Rectangle, Size};
 
 use decade_ui::overlay::{Cursor, Dialog, MenuKey};
 
+use crate::chrome::prompt::{self, Answer};
 use crate::png;
-use crate::server::chrome::prompt::{self, Answer};
 use crate::server::mcp::{self, Reply};
 
 use super::{State, popups_over, send_frames_surface_tree, waits_for_frame};

@@ -4,9 +4,8 @@ use decade_ui::overlay::{self, Cursor, LARGE, LARGE_COLUMNS, Layout, MenuKey, St
 use decade_ui::palette;
 use decade_ui::{Scene, fit, tail};
 
-use crate::server::apps::App;
-use crate::server::chrome::context_menu::Command;
-use crate::server::chrome::settings::Settings;
+use crate::chrome::context_menu::Command;
+use crate::chrome::settings::Settings;
 
 const APP_ICON: char = '\u{f08c6}';
 const FOLDER_ICON: char = '\u{f024b}';
@@ -16,6 +15,12 @@ const MAX_ROWS: usize = 10;
 
 /// The cells a row's label may take, after its icon and before its chevron.
 const LABEL_ROOM: usize = LARGE_COLUMNS as usize - 5;
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct App {
+    pub name: String,
+    pub argv: Vec<String>,
+}
 
 /// What the palette, the settings panel, the workspace picker and the
 /// context menu ask the compositor to do.

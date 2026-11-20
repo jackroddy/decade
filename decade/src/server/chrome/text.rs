@@ -7,7 +7,7 @@ use smithay::backend::renderer::ImportMem;
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
 use smithay::utils::{Physical, Point, Rectangle, Size};
 
-use crate::server::chrome::settings::Settings;
+use crate::chrome::settings::Settings;
 
 /// The chrome and palette fonts at one scale, and the textures of the
 /// text drawn with them.
