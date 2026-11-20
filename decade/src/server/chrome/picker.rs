@@ -1,11 +1,11 @@
 use smithay::utils::{Physical, Point, Rectangle, Size};
 
+use decade_ui::overlay::{LARGE, MenuKey, draw_hint, hint_width};
 use decade_ui::palette::{self, ACCENT};
 use decade_ui::{Face, Scene, fit};
 
 use crate::server::chrome::frame::mark;
-use crate::server::chrome::menu::{Action, MenuKey, Outcome};
-use crate::server::chrome::overlay::{LARGE, draw_hint, hint_width};
+use crate::server::chrome::menu::{Action, Outcome};
 use crate::server::chrome::text::Text;
 use crate::server::workspace::Workspace;
 

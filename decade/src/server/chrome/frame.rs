@@ -3,10 +3,10 @@ use std::f32::consts::TAU;
 use std::path::Path;
 use std::time::Duration;
 
+use decade_ui::overlay::{SMALL, draw_box};
 use decade_ui::palette::{self, Rgba};
 use decade_ui::{CellRect, Face, Scene, fit, scaled, tail};
 
-use crate::server::chrome::overlay::{SMALL, draw_box};
 use crate::server::workspace::Group;
 use decade_channel::{AgentState, Context, Tokens};
 

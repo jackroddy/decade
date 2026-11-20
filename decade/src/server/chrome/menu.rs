@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
+use decade_ui::overlay::{self, Cursor, LARGE, LARGE_COLUMNS, Layout, MenuKey, Step};
 use decade_ui::palette;
 use decade_ui::{Scene, fit, tail};
 
 use crate::server::apps::App;
 use crate::server::chrome::context_menu::Command;
-use crate::server::chrome::overlay::{self, Cursor, LARGE, LARGE_COLUMNS, Layout, Step};
 use crate::server::chrome::settings::Settings;
 
 const APP_ICON: char = '\u{f08c6}';
@@ -16,19 +16,6 @@ const MAX_ROWS: usize = 10;
 
 /// The cells a row's label may take, after its icon and before its chevron.
 const LABEL_ROOM: usize = LARGE_COLUMNS as usize - 5;
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum MenuKey {
-    Up,
-    Down,
-    Left,
-    Right,
-    Enter,
-    Escape,
-    Backspace,
-    Tab,
-    Char(char),
-}
 
 /// What the palette, the settings panel, the workspace picker and the
 /// context menu ask the compositor to do.
@@ -57,18 +44,8 @@ pub enum Action {
     Rename,
 }
 
-/// The result of a key or a click in an overlay.
-#[derive(Clone, PartialEq, Debug)]
-pub enum Outcome {
-    Open,
-    Close,
-
-    /// Close the overlay, then run the action.
-    Run(Action),
-
-    /// Run the action and leave the overlay open.
-    Apply(Action),
-}
+/// The result of a key or a click in one of decade's overlays.
+pub type Outcome = overlay::Outcome<Action>;
 
 struct Row {
     icon: char,

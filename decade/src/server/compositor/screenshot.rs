@@ -8,10 +8,10 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Buffer, Physical, Rectangle, Size};
 
+use decade_ui::overlay::{Cursor, Dialog, MenuKey};
+
 use crate::png;
-use crate::server::chrome::menu::MenuKey;
-use crate::server::chrome::overlay::Cursor;
-use crate::server::chrome::prompt::{Answer, Prompt};
+use crate::server::chrome::prompt::{self, Answer};
 use crate::server::mcp::{self, Reply};
 
 use super::{State, popups_over, send_frames_surface_tree, waits_for_frame};
@@ -261,19 +261,17 @@ impl State {
 
     /// The dialog every viewer shows while a screenshot waits on the
     /// person's answer.
-    pub(super) fn prompt(&self) -> Option<Prompt> {
+    pub(super) fn prompt(&self) -> Option<Dialog<'static, Answer>> {
         let asking = self.asking.as_ref()?;
         let workspace = (self.workspace_index(asking.workspace))
             .map(|index| self.workspaces[index].name.clone())
             .unwrap_or_default();
-        Some(Prompt {
-            agent: asking.agent.clone(),
-            workspace,
-            pane: asking.pane.clone(),
+        Some(Dialog {
             armed: asking.armed(Instant::now()),
             selected: asking.cursor.selected,
             window: self.window(),
             cell: self.menu_cell(),
+            ..prompt::dialog(&asking.agent, &workspace, &asking.pane)
         })
     }
 

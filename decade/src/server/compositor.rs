@@ -76,12 +76,12 @@ use crate::files;
 use crate::gpu::Gpu;
 use crate::server::apps;
 use crate::server::children::Children;
-use crate::server::chrome::context_menu::{self, Command, ContextMenu, Place};
+use crate::server::chrome::context_menu::{self, Command, Place};
 use crate::server::chrome::frame::{self, Hit};
 use crate::server::chrome::menu::{Action, Menu, Outcome};
 use crate::server::chrome::panel::Panel;
 use crate::server::chrome::picker::{Grid, Picker};
-use crate::server::chrome::rename::{NameField, Named};
+use crate::server::chrome::rename::Named;
 use crate::server::chrome::settings::{self, Settings};
 use crate::server::chrome::text::Text;
 use crate::server::clients::{self, Client as PaneClient};
@@ -92,6 +92,7 @@ use crate::server::workspace::{self, Group, Layout, Pane, PaneAction, Workspace}
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
 use decade_channel::AgentState;
 use decade_ui::BarButton;
+use decade_ui::overlay::{ContextMenu, NameField};
 
 use input::{Repeat, SidebarDrag};
 use selection::Offered;
@@ -109,8 +110,14 @@ const PULSE_EVERY: Duration = Duration::from_millis(33);
 /// The box or grid drawn over the workspace that takes the keys while it is open.
 enum Overlay {
     Menu(Menu),
-    Context(ContextMenu),
-    Rename(NameField),
+    Context(ContextMenu<Command>),
+    Rename {
+        field: NameField<Action>,
+        named: Named,
+
+        /// The tab that was on screen when the field opened.
+        tab: usize,
+    },
     Panel(Panel),
     Picker {
         picker: Picker,
@@ -954,19 +961,21 @@ impl State {
             return;
         };
         let window = (self.size.w, self.size.h);
-        let field = NameField::open(named, shown.active_tab, name, at, room, cell, window);
+        let title = named.title().to_string();
+        let field = NameField::open(title, name, Action::Rename, at, room, cell, window);
+        let tab = shown.active_tab;
         self.close_overlay();
-        self.overlay = Some(Overlay::Rename(field));
+        self.overlay = Some(Overlay::Rename { field, named, tab });
         self.request_redraw();
     }
 
     /// Give what the open name field names the name typed in it, or keep
     /// the field open with the reason the name was refused.
     fn apply_rename(&mut self) {
-        let Some(Overlay::Rename(field)) = &self.overlay else {
+        let Some(Overlay::Rename { field, named, tab }) = &self.overlay else {
             return;
         };
-        let (named, tab, name) = (field.named, field.tab, field.text.clone());
+        let (named, tab, name) = (*named, *tab, field.text.clone());
         let current = self.current();
         let renamed = match named {
             Named::Workspace(id) => self.rename_workspace(id, &name),
@@ -981,7 +990,7 @@ impl State {
                 self.schedule_save();
             }
             Err(reason) => {
-                if let Some(Overlay::Rename(field)) = &mut self.overlay {
+                if let Some(Overlay::Rename { field, .. }) = &mut self.overlay {
                     field.error = Some(reason);
                 }
             }
@@ -1017,7 +1026,10 @@ impl State {
     fn workspace_shown(&mut self) {
         // the menu's entries name panes and state of the
         // workspace and tab it was opened on
-        if matches!(self.overlay, Some(Overlay::Context(_) | Overlay::Rename(_))) {
+        if matches!(
+            self.overlay,
+            Some(Overlay::Context(_) | Overlay::Rename { .. })
+        ) {
             self.close_overlay();
         }
         self.sidebar_drag = None;

@@ -137,7 +137,7 @@ impl State {
                 menu.draw(&mut scene);
                 paint.scene(&mut elements, &scene, Point::default(), None);
             }
-            Some(Overlay::Rename(field)) => {
+            Some(Overlay::Rename { field, .. }) => {
                 let mut scene = Scene::new(&paint.text.fonts.chrome);
                 field.draw(&mut scene);
                 paint.scene(&mut elements, &scene, Point::default(), None);
@@ -161,7 +161,7 @@ impl State {
             None => {}
         }
         let scrimmed =
-            |overlay: &Overlay| !matches!(overlay, Overlay::Context(_) | Overlay::Rename(_));
+            |overlay: &Overlay| !matches!(overlay, Overlay::Context(_) | Overlay::Rename { .. });
         if prompt.is_some() || overlay.is_some_and(scrimmed) {
             let mut scrim = Scene::new(&paint.text.fonts.chrome);
             scrim.rect(0, 0, size.w, size.h, SCRIM);

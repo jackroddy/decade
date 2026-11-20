@@ -1,7 +1,53 @@
-use decade_ui::palette::{self, Rgba};
-use decade_ui::{Face, Scene};
+use crate::palette::{self, Rgba};
+use crate::{Face, Scene};
 
-use crate::server::chrome::menu::MenuKey;
+mod context_menu;
+mod dialog;
+mod name_field;
+
+pub use context_menu::{ContextMenu, Entry};
+pub use dialog::{Choice, Dialog};
+pub use name_field::NameField;
+
+/// A key as the overlays take it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MenuKey {
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+    Escape,
+    Backspace,
+    Tab,
+    Char(char),
+}
+
+/// The result of a key or a click in an overlay, with `A` the program's
+/// actions.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Outcome<A> {
+    Open,
+    Close,
+
+    /// Close the overlay, then run the action.
+    Run(A),
+
+    /// Run the action and leave the overlay open.
+    Apply(A),
+}
+
+impl<A> Outcome<A> {
+    /// The same outcome with its action turned into a `B` by `f`.
+    pub fn map<B>(self, f: impl FnOnce(A) -> B) -> Outcome<B> {
+        match self {
+            Outcome::Open => Outcome::Open,
+            Outcome::Close => Outcome::Close,
+            Outcome::Run(action) => Outcome::Run(f(action)),
+            Outcome::Apply(action) => Outcome::Apply(f(action)),
+        }
+    }
+}
 
 /// The text columns of a large box.
 pub const LARGE_COLUMNS: i32 = 40;
@@ -43,7 +89,7 @@ pub struct Size {
     error_above: i32,
 }
 
-/// The palette, the settings panel and the screenshot dialog.
+/// The size of the boxes in the middle of the window.
 pub const LARGE: Size = Size {
     face: Face::Menu,
     bold: Face::MenuBold,
@@ -68,7 +114,7 @@ pub const LARGE: Size = Size {
     error_above: 13,
 };
 
-/// The context menu, the name field and the sidebar popover.
+/// The size of the boxes at the pointer or over a name.
 pub const SMALL: Size = Size {
     face: Face::Chrome,
     bold: Face::ChromeBold,

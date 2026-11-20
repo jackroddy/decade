@@ -1,3 +1,4 @@
+pub mod overlay;
 pub mod palette;
 mod panes;
 mod scene;

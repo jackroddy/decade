@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use decade_ui::Size;
+use decade_ui::overlay::MenuKey;
 use smithay::backend::input::{
     Axis as InputAxis, AxisRelativeDirection, AxisSource, ButtonState, KeyState,
 };
@@ -13,7 +14,7 @@ use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 
 use crate::server::chrome::context_menu::Place;
 use crate::server::chrome::frame::Hit;
-use crate::server::chrome::menu::{MenuKey, Outcome};
+use crate::server::chrome::menu::{Action, Outcome};
 use crate::server::chrome::prompt::{self, Answer};
 use crate::server::chrome::rename::Named;
 use crate::server::clients;
@@ -288,7 +289,7 @@ impl State {
         if let Some(Overlay::Context(menu)) = &mut self.overlay {
             if pressed {
                 let outcome = match button {
-                    BTN_LEFT => menu.click(x, y),
+                    BTN_LEFT => menu.click(x, y).map(Action::Command),
                     _ if menu.contains(x, y) => Outcome::Open,
                     _ => Outcome::Close,
                 };
@@ -296,7 +297,7 @@ impl State {
             }
             return;
         }
-        if let Some(Overlay::Rename(field)) = &self.overlay
+        if let Some(Overlay::Rename { field, .. }) = &self.overlay
             && pressed
         {
             let (x, y) = self.pointer_px();
@@ -607,8 +608,8 @@ impl State {
                 let (ids, grid) = (self.workspace_ids(), self.picker_grid());
                 let outcome = match &mut self.overlay {
                     Some(Overlay::Menu(menu)) => menu.key(key),
-                    Some(Overlay::Context(menu)) => menu.key(key),
-                    Some(Overlay::Rename(field)) => field.key(key),
+                    Some(Overlay::Context(menu)) => menu.key(key).map(Action::Command),
+                    Some(Overlay::Rename { field, .. }) => field.key(key),
                     Some(Overlay::Panel(panel)) => panel.key(key, &self.settings),
                     Some(Overlay::Picker { picker, .. }) => picker.key(key, &ids, &grid),
                     None => Outcome::Open,

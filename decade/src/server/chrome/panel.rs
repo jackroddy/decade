@@ -1,8 +1,8 @@
+use decade_ui::overlay::{Cursor, LARGE, LARGE_COLUMNS, Layout, MenuKey, Row, Step};
 use decade_ui::palette;
 use decade_ui::{Scene, fit};
 
-use crate::server::chrome::menu::{Action, MenuKey, Outcome};
-use crate::server::chrome::overlay::{Cursor, LARGE, LARGE_COLUMNS, Layout, Row, Step};
+use crate::server::chrome::menu::{Action, Outcome};
 use crate::server::chrome::settings::{KNOBS, Settings};
 
 /// The width in cells of the pill a value sits in.
