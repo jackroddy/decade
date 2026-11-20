@@ -3,7 +3,7 @@
   "title": "decade's own chrome builds without smithay",
   "body": "The remote viewer in decade-e3a784 draws decade's chrome itself, and on macOS it has no smithay. The chrome it needs is decade's own, all in `decade/src/server/chrome/`: `Frame` in `frame.rs` (top bar, sidebar, agent cards), the palette `Menu`, `Picker`, the settings `Panel` and `Settings`. Only `picker.rs` imports smithay, for `Point`, `Rectangle` and `Size` as plain geometry. smithay is a Linux-only dependency in `decade/Cargo.toml`. The widgets sit under `server`, and some import from it: `menu.rs` takes `apps::App`, and `picker.rs` takes `workspace::Workspace`.\n\n## Proposal\n\nThese widgets move to a module outside `server` that imports nothing from smithay or `crate::server`, and they use `decade-ui`'s types. The data they draw from comes in as plain values, in the shape the remote viewer will receive from the server. A macOS build of the viewer compiles the module and leaves out the server.\n\n## Open\n\n- What `Picker` shows for workspace thumbnails when the compositor that renders them runs on another machine.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "labels": [
     "decade"
@@ -18,10 +18,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-19T21:03:21.055444439Z",
-  "updated_at": "2026-11-20T02:21:37.644387226Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-20T02:21:37.656111454Z",
+  "closed_at": "2026-11-20T02:21:37.656111454Z",
+  "close_reason": "Landed in fdf507f: decade's own widgets live in decade/src/chrome, outside server, and take plain values. The note of 2026-11-19 lists what a non-Linux build still needs.",
+  "resolution": "done",
   "notes": [
     {
       "id": "ae32cdef",
@@ -37,6 +37,9 @@
       "commit": "bf36ffa",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "fdf507f",
+      "branch": "dev"
+    }
   }
 }
