@@ -1,7 +1,7 @@
 {
   "id": "decade-b7c683",
-  "title": "A right click on a workspace in the sidebar offers to close it",
-  "body": "A right click on a workspace's card or tile in the sidebar opens the context menu built in `entries` in `decade/src/server/chrome/context_menu.rs`. For `Place::Workspace` it offers Clear when the workspace's agent is done or needs attention, Rename, and a Move entry for each group. It has no way to close the workspace.\n\nThe palette can close one today. `Menu::new` in `decade/src/server/chrome/menu.rs` builds a \"Close workspace\" row whose submenu holds one confirming row, \"Close {name} and its panes\". That row runs `Action::CloseWorkspace(id)`, which `close_workspace` in `decade/src/server/compositor.rs` carries out. It asks every client in every tab to close, and `finish_closing` removes the workspace once no client is left.\n\n## Proposal\n\nThe workspace entries in the context menu gain \"Close workspace\", which runs the same close as the palette's row. It closes the workspace it was opened on, which need not be the one on screen.\n\n## Open\n\n- The palette makes the person confirm in a submenu, and the context menu has no submenus. The choices are a second confirming entry in place of the first, a confirming prompt, or no confirmation. I lean to the confirming entry, since it matches the palette and needs no new widget.",
+  "title": "A right click on a workspace in the sidebar offers to close it or change its directory",
+  "body": "A right click on a workspace's card or tile in the sidebar opens the context menu built by `entries` in `decade/src/chrome/context_menu.rs`. For `Place::Workspace` it offers Clear when the workspace's agent is done or needs attention, Rename, and a Move entry for each group. It has no way to close the workspace or change its directory.\n\nThe palette can close one. `Menu::new` in `decade/src/chrome/menu.rs` builds a \"Close workspace\" row whose submenu holds one confirming row, \"Close {name} and its panes\", which runs `Action::CloseWorkspace(id)`. `close_workspace` in `decade/src/server/compositor.rs` asks every client in every tab to close, and `finish_closing` removes the workspace once no client is left.\n\n`Workspace.cwd` is where terminals of new tabs start (`compositor.rs`) and where apps launched from the palette start (`Children` in `decade/src/server/children.rs`). The sidebar shows it as a short path with its git branch. The palette's \"New workspace\" row opens a directory browser that starts at `~/` and completes paths as they are typed.\n\n## Proposal\n\nThe workspace entries gain two more:\n\n- \"Close…\". A click turns the entry, in place, into a red \"Close {name} and its panes\", and a second click runs the same close as the palette. The kit's `ContextMenu` learns an entry that asks for a second click.\n- \"Change directory…\". It opens the palette's directory browser, and picking a directory sets that workspace's `cwd`. The sidebar's path and branch follow, and so do new tabs and launched apps. Running shells stay where they are, and the workspace keeps its name. The save file already holds `cwd`, so its format does not change.\n\nEach entry acts on the workspace it was opened on, which need not be the one on screen.\n\n## Decided\n\nJack signed off on 2026-11-21, with the name left alone when the directory changes.",
   "type": "feature",
   "status": "in_progress",
   "priority": 2,
@@ -15,7 +15,7 @@
   "lease_expires": "2026-11-21T20:55:36.359206653Z",
   "defer_until": null,
   "created_at": "2026-11-19T20:40:52.441950181Z",
-  "updated_at": "2026-11-21T20:40:36.359206653Z",
+  "updated_at": "2026-11-21T20:40:36.371535995Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
