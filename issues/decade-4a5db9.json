@@ -15,11 +15,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-21T20:46:49.630125886Z",
-  "updated_at": "2026-11-21T20:46:49.630125886Z",
+  "updated_at": "2026-11-21T20:54:17.06211264Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "b130515d",
+      "at": "2026-11-21T20:54:17.06211182Z",
+      "author": "Jack Roddy/8a3a6cd2",
+      "text": "Jack decided on 2026-11-21:\n\n- A sleeping workspace's card shows a Zzz button, and a click on it wakes the workspace.\n- The right-click menu of a workspace offers Wake while it sleeps, and a group's menu offers Wake for its workspaces.\n- A workspace never sleeps by itself. Auto-sleep is dropped.",
+      "commit": "0c3e7e2",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "0c3e7e2",
