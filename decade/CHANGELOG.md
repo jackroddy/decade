@@ -16,6 +16,11 @@ command line and what the tool writes.
   false, decade sends no side mouse button to a pane. ghostty never clears
   a side button after one press and release, and from then on takes every
   motion as a drag.
+- A right click on a workspace in the sidebar offers "Change directory…"
+  and "Close…". Change directory opens the palette's directory browser
+  and sets the workspace's directory, which new tabs and launched apps
+  start in. Running shells stay where they are, and the name stays.
+  Close asks for a second click, then closes the workspace and its panes.
 
 ### Changed
 

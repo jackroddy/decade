@@ -734,11 +734,14 @@ impl State {
         let (x, y) = self.pointer_px();
         let frame = self.frame(self.current());
         let place = match frame.hit(x, y) {
-            Some(Hit::Show(id) | Hit::Clear(id)) => Some(Place::Workspace {
-                id,
-                clearable: frame.clearable(id),
-                group: (self.workspace_index(id)).and_then(|index| self.workspaces[index].group),
-            }),
+            Some(Hit::Show(id) | Hit::Clear(id)) => {
+                (self.workspace_index(id)).map(|index| Place::Workspace {
+                    id,
+                    name: self.workspaces[index].name.clone(),
+                    clearable: frame.clearable(id),
+                    group: self.workspaces[index].group,
+                })
+            }
             Some(Hit::Group(id)) => Some(Place::Group(id)),
             Some(Hit::Tab(index)) => Some(Place::Tab(index)),
             Some(Hit::New) => self.sidebar_open.then_some(Place::Sidebar),

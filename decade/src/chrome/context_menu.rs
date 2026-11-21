@@ -5,7 +5,7 @@ use crate::chrome::rename::Named;
 
 /// What a right click on decade's chrome landed on, with what its entries
 /// depend on.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Place {
     /// A pane's bar or outline.
     Pane {
@@ -19,6 +19,7 @@ pub enum Place {
     /// A workspace's card or tile in the sidebar, with the id of its group.
     Workspace {
         id: u32,
+        name: String,
         clearable: bool,
         group: Option<u32>,
     },
@@ -59,6 +60,11 @@ pub enum Command {
         workspace: u32,
         group: Option<u32>,
     },
+
+    /// Open the palette's directory browser to pick the workspace's
+    /// directory.
+    ChangeDirectory(u32),
+    CloseWorkspace(u32),
 }
 
 fn entry(label: &str, command: Command) -> Entry<Command> {
@@ -66,6 +72,7 @@ fn entry(label: &str, command: Command) -> Entry<Command> {
         label: label.to_string(),
         action: command,
         destructive: matches!(command, Command::DeleteGroup(_)),
+        confirm: None,
     }
 }
 
@@ -102,6 +109,7 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry<Command>> {
         ],
         Place::Workspace {
             id,
+            name,
             clearable,
             group,
         } => {
@@ -124,6 +132,11 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry<Command>> {
                 };
                 entries.push(entry(&format!("Move out of {}", own.name), command));
             }
+            entries.push(entry("Change directory…", Command::ChangeDirectory(id)));
+            entries.push(Entry {
+                confirm: Some(format!("Close {name} and its panes")),
+                ..entry("Close…", Command::CloseWorkspace(id))
+            });
             entries
         }
         Place::Group(id) => vec![
@@ -139,8 +152,8 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry<Command>> {
 mod tests {
     use super::*;
 
-    fn labels(place: Place) -> Vec<String> {
-        (entries(place, &groups()).into_iter())
+    fn labels(place: &Place) -> Vec<String> {
+        (entries(place.clone(), &groups()).into_iter())
             .map(|entry| entry.label)
             .collect()
     }
@@ -164,7 +177,7 @@ mod tests {
             screenshots: false,
         };
         assert_eq!(
-            labels(plain),
+            labels(&plain),
             [
                 "Pin",
                 "Zoom",
@@ -192,7 +205,7 @@ mod tests {
             screenshots: true,
         };
         assert_eq!(
-            labels(set),
+            labels(&set),
             [
                 "Unpin",
                 "Unzoom",
@@ -203,49 +216,69 @@ mod tests {
         );
     }
 
+    fn workspace(clearable: bool, group: Option<u32>) -> Place {
+        Place::Workspace {
+            id: 2,
+            name: "decade".to_string(),
+            clearable,
+            group,
+        }
+    }
+
     #[test]
     fn a_workspace_offers_rename_and_clear_only_when_its_agent_is_done_or_needs_attention() {
-        let done = Place::Workspace {
-            id: 2,
-            clearable: true,
-            group: None,
-        };
         let rename = entry("Rename", Command::Rename(Named::Workspace(2)));
         let clear = entry("Clear", Command::Clear(2));
-        assert_eq!(entries(done, &[]), [clear, rename.clone()]);
-        let working = Place::Workspace {
-            id: 2,
-            clearable: false,
-            group: None,
+        assert_eq!(
+            entries(workspace(true, None), &[])[..2],
+            [clear, rename.clone()]
+        );
+        assert_eq!(entries(workspace(false, None), &[])[..1], [rename]);
+    }
+
+    #[test]
+    fn a_workspace_ends_with_change_directory_then_a_close_that_asks_for_a_second_click() {
+        let entries = entries(workspace(true, Some(7)), &groups());
+        let [.., change, close] = entries.as_slice() else {
+            panic!("fewer than two entries");
         };
-        assert_eq!(entries(working, &[]), [rename]);
+        assert_eq!(
+            *change,
+            entry("Change directory…", Command::ChangeDirectory(2))
+        );
+        assert_eq!(close.label, "Close…");
+        assert_eq!(close.action, Command::CloseWorkspace(2));
+        assert_eq!(close.confirm.as_deref(), Some("Close decade and its panes"));
     }
 
     #[test]
     fn a_workspace_offers_a_move_to_every_other_group_and_out_of_its_own() {
-        let ungrouped = Place::Workspace {
-            id: 2,
-            clearable: false,
-            group: None,
-        };
         assert_eq!(
-            labels(ungrouped),
-            ["Rename", "Move to work", "Move to home"]
+            labels(&workspace(false, None)),
+            [
+                "Rename",
+                "Move to work",
+                "Move to home",
+                "Change directory…",
+                "Close…"
+            ]
         );
-        let at_work = Place::Workspace {
-            id: 2,
-            clearable: false,
-            group: Some(7),
-        };
+        let at_work = workspace(false, Some(7));
         assert_eq!(
-            labels(at_work),
-            ["Rename", "Move to home", "Move out of work"]
+            labels(&at_work),
+            [
+                "Rename",
+                "Move to home",
+                "Move out of work",
+                "Change directory…",
+                "Close…"
+            ]
         );
         let commands: Vec<Command> = (entries(at_work, &groups()).into_iter())
             .map(|entry| entry.action)
             .collect();
         assert_eq!(
-            commands[1..],
+            commands[1..3],
             [
                 Command::MoveToGroup {
                     workspace: 2,

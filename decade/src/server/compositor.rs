@@ -730,6 +730,15 @@ impl State {
         self.show_on_active(id);
     }
 
+    fn change_directory(&mut self, id: u32, cwd: PathBuf) {
+        let Some(index) = self.workspace_index(id) else {
+            return;
+        };
+        self.workspaces[index].change_directory(cwd, Instant::now());
+        self.schedule_save();
+        self.request_redraw();
+    }
+
     fn close_workspace(&mut self, id: u32) {
         let Some(index) = self.workspace_index(id) else {
             return;
@@ -894,6 +903,7 @@ impl State {
             Action::Launch(argv) => self.launch(&argv),
             Action::Settings => self.overlay = Some(Overlay::Panel(Panel::new())),
             Action::NewWorkspace(cwd) => self.new_workspace(cwd),
+            Action::ChangeDirectory { workspace, cwd } => self.change_directory(workspace, cwd),
             Action::CloseWorkspace(id) => self.close_workspace(id),
             Action::CloseTab { workspace, tab } => self.close_tab(workspace, tab),
             Action::ShowWorkspace(id) => self.show_on_active(id),
@@ -927,6 +937,16 @@ impl State {
             Command::NewGroup => self.open_rename(Named::NewGroup),
             Command::DeleteGroup(id) => self.delete_group(id),
             Command::MoveToGroup { workspace, group } => self.move_to_group(workspace, group),
+            Command::ChangeDirectory(id) => {
+                if let Some(index) = self.workspace_index(id) {
+                    let name = self.workspaces[index].name.clone();
+                    self.open_palette();
+                    if let Some(Overlay::Menu(menu)) = &mut self.overlay {
+                        menu.start_change_directory(id, &name);
+                    }
+                }
+            }
+            Command::CloseWorkspace(id) => self.close_workspace(id),
         }
     }
 

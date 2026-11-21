@@ -29,6 +29,10 @@ pub enum Action {
     Launch(Vec<String>),
     Settings,
     NewWorkspace(PathBuf),
+    ChangeDirectory {
+        workspace: u32,
+        cwd: PathBuf,
+    },
     CloseWorkspace(u32),
     CloseTab {
         workspace: u32,
@@ -78,6 +82,10 @@ pub struct Menu {
 
     /// The rows listed for the query while a `Directory` row is open.
     found: Vec<Row>,
+
+    /// The id and name of the workspace whose directory the browser
+    /// picks, or `None` when it picks one for a new workspace.
+    changing: Option<(u32, String)>,
 }
 
 impl Row {
@@ -135,6 +143,7 @@ impl Menu {
             cursor: Cursor::default(),
             home,
             found: Vec::new(),
+            changing: None,
         }
     }
 
@@ -181,7 +190,8 @@ impl Menu {
     fn query_changed(&mut self) {
         self.cursor = Cursor::default();
         if self.browsing() {
-            self.found = browse(&self.query, &self.home);
+            let changing = self.changing.as_ref().map(|(id, _)| *id);
+            self.found = browse(&self.query, &self.home, changing);
         }
     }
 
@@ -253,6 +263,13 @@ impl Menu {
         }
     }
 
+    /// Open the directory browser to pick the directory of workspace
+    /// `id`, named `name`.
+    pub fn start_change_directory(&mut self, id: u32, name: &str) {
+        self.changing = Some((id, name.to_string()));
+        self.start_new_workspace();
+    }
+
     fn complete(&mut self) {
         if let Some((_, row)) = self.matching().get(self.cursor.selected)
             && let Target::Complete(query) = &row.target
@@ -263,7 +280,7 @@ impl Menu {
     }
 
     fn up(&mut self) -> Outcome {
-        if self.path.pop().is_none() {
+        if self.changing.is_some() || self.path.pop().is_none() {
             return Outcome::Close;
         }
         self.query.clear();
@@ -273,7 +290,9 @@ impl Menu {
     }
 
     fn hint(&self) -> &'static [(&'static str, &'static str)] {
-        if self.browsing() {
+        if self.changing.is_some() {
+            &[("tab", "complete"), ("enter", "open"), ("esc", "close")]
+        } else if self.browsing() {
             &[("tab", "complete"), ("enter", "open"), ("esc", "back")]
         } else if self.path.is_empty() {
             &[("enter", "open"), ("esc", "close")]
@@ -289,11 +308,11 @@ impl Menu {
     fn layout(&self, cell: (i32, i32), (width, height): (i32, i32)) -> Layout {
         let shown = self.matching().len().clamp(1, MAX_ROWS);
         let box_width = LARGE.width(cell, LARGE_COLUMNS).min(width);
-        let layout = (Layout::new(&LARGE, cell, box_width))
-            .field()
-            .list(shown)
-            .hint()
-            .end();
+        let mut layout = Layout::new(&LARGE, cell, box_width);
+        if self.changing.is_some() {
+            layout = layout.header(false);
+        }
+        let layout = layout.field().list(shown).hint().end();
         let top = (height / 7).min((height - layout.height).max(0));
         layout.at(((width - box_width).max(0) / 2, top))
     }
@@ -335,6 +354,13 @@ impl Menu {
     pub fn draw(&self, scene: &mut Scene, window: (i32, i32)) {
         let layout = self.layout(scene.cell(), window);
         layout.draw_box(scene);
+        if let Some((_, name)) = &self.changing {
+            let title = fit(
+                &format!("Change directory of {name}"),
+                LARGE_COLUMNS as usize - 3,
+            );
+            layout.draw_header(scene, &title, None);
+        }
         let trail: Vec<&str> = self.trail().map(|row| row.label.as_str()).collect();
         let placeholder = if trail.is_empty() {
             "type to search".to_string()
@@ -386,9 +412,11 @@ fn expand(path: &str, home: &Path) -> PathBuf {
     }
 }
 
-/// The rows for a path typed into New workspace: an Open row when the path is
-/// a directory, then the directories that complete its last component.
-fn browse(query: &str, home: &Path) -> Vec<Row> {
+/// The rows for a path typed into the directory browser: an Open row when
+/// the path is a directory, then the directories that complete its last
+/// component. Open sets the directory of workspace `changing`, or makes a
+/// new workspace for `None`.
+fn browse(query: &str, home: &Path, changing: Option<u32>) -> Vec<Row> {
     let Some(slash) = query.rfind('/') else {
         return Vec::new();
     };
@@ -397,11 +425,14 @@ fn browse(query: &str, home: &Path) -> Vec<Row> {
     let target = expand(query, home);
     if target.is_dir() && partial != "." && partial != ".." {
         let label = tail(&format!("Open {query}"), LABEL_ROOM);
-        rows.push(Row::new(
-            OPEN_ICON,
-            &label,
-            Target::Run(Action::NewWorkspace(target)),
-        ));
+        let open = match changing {
+            Some(workspace) => Action::ChangeDirectory {
+                workspace,
+                cwd: target,
+            },
+            None => Action::NewWorkspace(target),
+        };
+        rows.push(Row::new(OPEN_ICON, &label, Target::Run(open)));
     }
     let Ok(entries) = std::fs::read_dir(expand(parent, home)) else {
         return rows;
@@ -619,6 +650,37 @@ mod tests {
                 "Settings"
             ]
         );
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn changing_a_directory_opens_the_browser_under_a_title_naming_the_workspace() {
+        let home = tree("change");
+        let mut menu = Menu::new(Vec::new(), home.clone(), 0, "decade", 0);
+        menu.start_change_directory(3, "notes");
+        assert_eq!(menu.query, "~/");
+        let (cell, window) = ((10, 25), (1200, 800));
+        let mut plain = Menu::new(Vec::new(), home.clone(), 0, "decade", 0);
+        plain.start_new_workspace();
+        let grown = menu.layout(cell, window).height - plain.layout(cell, window).height;
+        assert!(grown > 0);
+        for ch in "projects/".chars() {
+            menu.key(MenuKey::Char(ch));
+        }
+        let change = Action::ChangeDirectory {
+            workspace: 3,
+            cwd: home.join("projects/"),
+        };
+        assert_eq!(menu.key(MenuKey::Enter), Outcome::Run(change));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn escape_closes_the_palette_while_changing_a_directory() {
+        let home = tree("change-escape");
+        let mut menu = Menu::new(Vec::new(), home.clone(), 0, "decade", 0);
+        menu.start_change_directory(3, "notes");
+        assert_eq!(menu.key(MenuKey::Escape), Outcome::Close);
         std::fs::remove_dir_all(home).unwrap();
     }
 }

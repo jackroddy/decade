@@ -590,6 +590,13 @@ impl Workspace {
         self.branch_read = Some(now);
     }
 
+    /// Make `cwd` the workspace's directory, and read its branch at `now`.
+    pub fn change_directory(&mut self, cwd: PathBuf, now: Instant) {
+        self.branch = branch(&cwd);
+        self.branch_read = Some(now);
+        self.cwd = cwd;
+    }
+
     /// Read again what runs in each pane of the active tab and in each
     /// other tab's focused pane, where it was last read long enough
     /// before `now`.
@@ -1003,6 +1010,20 @@ pub(super) mod tests {
         let commit = "b142ad7c0ffee0000000000000000000000000000\n";
         std::fs::write(repo.join(".git/HEAD"), commit).unwrap();
         assert_eq!(branch(&repo).as_deref(), Some("b142ad7"));
+        std::fs::remove_dir_all(&repo).unwrap();
+    }
+
+    #[test]
+    fn changing_the_directory_sets_the_cwd_and_reads_the_branch_there() {
+        let repo = fresh_dir("change");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/dev\n").unwrap();
+        let mut workspace = Workspace::new(0, PathBuf::from("/"), AREA);
+        let name = workspace.name.clone();
+        workspace.change_directory(repo.clone(), Instant::now());
+        assert_eq!(workspace.cwd, repo);
+        assert_eq!(workspace.branch.as_deref(), Some("dev"));
+        assert_eq!(workspace.name, name);
         std::fs::remove_dir_all(&repo).unwrap();
     }
 

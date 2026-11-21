@@ -10,13 +10,24 @@ pub struct Entry<A> {
     pub label: String,
     pub action: A,
     pub destructive: bool,
+
+    /// The label a first click turns the entry into, drawn destructive,
+    /// with a second click running the action, or `None` to run on the
+    /// first click.
+    pub confirm: Option<String>,
 }
 
-fn rows<A>(entries: &[Entry<A>]) -> Vec<Row<'_>> {
-    (entries.iter())
-        .map(|entry| Row {
-            destructive: entry.destructive,
-            ..Row::new(&entry.label)
+fn rows<A>(entries: &[Entry<A>], armed: Option<usize>) -> Vec<Row<'_>> {
+    (entries.iter().enumerate())
+        .map(|(index, entry)| match &entry.confirm {
+            Some(confirm) if armed == Some(index) => Row {
+                destructive: true,
+                ..Row::new(confirm)
+            },
+            _ => Row {
+                destructive: entry.destructive,
+                ..Row::new(&entry.label)
+            },
         })
         .collect()
 }
@@ -28,6 +39,9 @@ pub struct ContextMenu<A> {
     /// The box, in window pixels.
     layout: Layout,
     cursor: Cursor,
+
+    /// The entry a first click turned into its confirm label.
+    armed: Option<usize>,
 }
 
 impl<A: Clone> ContextMenu<A> {
@@ -44,7 +58,9 @@ impl<A: Clone> ContextMenu<A> {
             return None;
         }
         let longest = (entries.iter())
-            .map(|entry| entry.label.chars().count())
+            .flat_map(|entry| [Some(&entry.label), entry.confirm.as_ref()])
+            .flatten()
+            .map(|label| label.chars().count())
             .max()
             .unwrap_or(0) as i32;
         let width = SMALL.width(cell, longest.max(MIN_COLUMNS));
@@ -56,6 +72,7 @@ impl<A: Clone> ContextMenu<A> {
             entries,
             layout,
             cursor: Cursor::default(),
+            armed: None,
         })
     }
 
@@ -69,13 +86,17 @@ impl<A: Clone> ContextMenu<A> {
         let Some(list) = self.layout.list_area() else {
             return false;
         };
-        self.cursor.hover(&list, &rows(&self.entries), x, y)
+        self.cursor
+            .hover(&list, &rows(&self.entries, self.armed), x, y)
     }
 
     /// What a left click at pixel `x`, `y` does.
     pub fn click(&mut self, x: i32, y: i32) -> Outcome<A> {
         let list = self.layout.list_area();
-        let clicked = list.and_then(|list| self.cursor.click(&list, &rows(&self.entries), x, y));
+        let clicked = list.and_then(|list| {
+            self.cursor
+                .click(&list, &rows(&self.entries, self.armed), x, y)
+        });
         match clicked {
             Some(index) => self.run(index),
             None if self.contains(x, y) => Outcome::Open,
@@ -84,15 +105,20 @@ impl<A: Clone> ContextMenu<A> {
     }
 
     pub fn key(&mut self, key: MenuKey) -> Outcome<A> {
-        match self.cursor.key(key, &rows(&self.entries)) {
+        match self.cursor.key(key, &rows(&self.entries, self.armed)) {
             Step::Run(index) => self.run(index),
             Step::Close => Outcome::Close,
             Step::Stay | Step::Pass(_) => Outcome::Open,
         }
     }
 
-    fn run(&self, index: usize) -> Outcome<A> {
-        Outcome::Run(self.entries[index].action.clone())
+    fn run(&mut self, index: usize) -> Outcome<A> {
+        let entry = &self.entries[index];
+        if entry.confirm.is_some() && self.armed != Some(index) {
+            self.armed = Some(index);
+            return Outcome::Open;
+        }
+        Outcome::Run(entry.action.clone())
     }
 
     /// Draw the menu in window pixels, with the small font.
@@ -101,7 +127,7 @@ impl<A: Clone> ContextMenu<A> {
         let Some(list) = self.layout.list_area() else {
             return;
         };
-        for (index, row) in rows(&self.entries).iter().enumerate() {
+        for (index, row) in rows(&self.entries, self.armed).iter().enumerate() {
             list.draw_row(scene, index, row, index == self.cursor.selected);
         }
     }
@@ -119,6 +145,7 @@ mod tests {
             label: label.to_string(),
             action,
             destructive: false,
+            confirm: None,
         };
         vec![
             entry("Cut", 'x'),
@@ -182,5 +209,37 @@ mod tests {
         assert_eq!(menu.click(x, y), Outcome::Run('c'));
         assert_eq!(menu.click(102, 102), Outcome::Open);
         assert_eq!(menu.click(99, 102), Outcome::Close);
+    }
+
+    #[test]
+    fn an_entry_with_a_confirm_label_turns_into_it_on_a_first_click_and_runs_on_a_second() {
+        let mut entries = entries();
+        entries[1].confirm = Some("Copy everything".to_string());
+        let mut menu = ContextMenu::open(entries, (100, 100), WINDOW, CELL).unwrap();
+        let (x, y) = (100 + 6 + 8, 100 + 6 + 22 + 10);
+        assert_eq!(menu.click(x, y), Outcome::Open);
+        let shown = rows(&menu.entries, menu.armed);
+        assert_eq!(shown[1].label, "Copy everything");
+        assert!(shown[1].destructive);
+        assert_eq!(shown[0].label, "Cut");
+        assert_eq!(menu.click(x, y), Outcome::Run('c'));
+    }
+
+    #[test]
+    fn enter_on_an_entry_with_a_confirm_label_arms_it_first_and_runs_it_second() {
+        let mut entries = entries();
+        entries[0].confirm = Some("Cut everything".to_string());
+        let mut menu = ContextMenu::open(entries, (100, 100), WINDOW, CELL).unwrap();
+        assert_eq!(menu.key(MenuKey::Enter), Outcome::Open);
+        assert_eq!(rows(&menu.entries, menu.armed)[0].label, "Cut everything");
+        assert_eq!(menu.key(MenuKey::Enter), Outcome::Run('x'));
+    }
+
+    #[test]
+    fn the_menu_is_wide_enough_for_a_confirm_label_longer_than_every_label() {
+        let mut entries = entries();
+        entries[0].confirm = Some("Cut every one of the lines".to_string());
+        let menu = ContextMenu::open(entries, (100, 100), WINDOW, CELL).unwrap();
+        assert_eq!(menu.layout.width, 26 * 8 + 2 * (6 + 6));
     }
 }
