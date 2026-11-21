@@ -3,7 +3,7 @@
   "title": "A right click on a workspace in the sidebar offers to close it",
   "body": "A right click on a workspace's card or tile in the sidebar opens the context menu built in `entries` in `decade/src/server/chrome/context_menu.rs`. For `Place::Workspace` it offers Clear when the workspace's agent is done or needs attention, Rename, and a Move entry for each group. It has no way to close the workspace.\n\nThe palette can close one today. `Menu::new` in `decade/src/server/chrome/menu.rs` builds a \"Close workspace\" row whose submenu holds one confirming row, \"Close {name} and its panes\". That row runs `Action::CloseWorkspace(id)`, which `close_workspace` in `decade/src/server/compositor.rs` carries out. It asks every client in every tab to close, and `finish_closing` removes the workspace once no client is left.\n\n## Proposal\n\nThe workspace entries in the context menu gain \"Close workspace\", which runs the same close as the palette's row. It closes the workspace it was opened on, which need not be the one on screen.\n\n## Open\n\n- The palette makes the person confirm in a submenu, and the context menu has no submenus. The choices are a second confirming entry in place of the first, a confirming prompt, or no confirmation. I lean to the confirming entry, since it matches the palette and needs no new widget.",
   "type": "feature",
-  "status": "open",
+  "status": "in_progress",
   "priority": 2,
   "labels": [
     "decade"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/8a3a6cd2",
+  "lease_expires": "2026-11-21T20:55:36.359206653Z",
   "defer_until": null,
   "created_at": "2026-11-19T20:40:52.441950181Z",
-  "updated_at": "2026-11-19T20:40:52.441950181Z",
+  "updated_at": "2026-11-21T20:40:36.359206653Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
