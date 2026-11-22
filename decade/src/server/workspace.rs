@@ -10,7 +10,7 @@ use decade_ui::{Button, CellRect, ContentId, Marks, Placeholder, Tag};
 
 use crate::server::channel::{Out, PaneNames, Router};
 use crate::server::clients::Client;
-use crate::server::save::TerminalTab;
+use crate::server::save::{Session, TerminalTab};
 use crate::server::scratch::Scratch;
 use decade_channel::AgentState;
 use serde_json::Value;
@@ -112,6 +112,9 @@ pub struct PaneInfo {
     /// The ghostty decade started for the pane.
     pub pid: Option<u32>,
 
+    /// The coax session the pane's terminal starts on, until it starts.
+    pub resume: Option<Session>,
+
     /// The name of the live agent in the pane, which labels its first tab.
     pub agent: Option<String>,
 
@@ -127,6 +130,7 @@ impl Default for PaneInfo {
             app_id: None,
             cwd: None,
             pid: None,
+            resume: None,
             agent: None,
             screenshots: false,
         }
@@ -1202,6 +1206,7 @@ pub(super) mod tests {
             tab,
             pane: 0,
             cwd: PathBuf::from("/tmp"),
+            session: None,
         };
         workspace.asleep = Some(vec![stored(0), stored(1), stored(2)]);
         workspace.remove_tab(1);

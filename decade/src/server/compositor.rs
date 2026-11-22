@@ -87,7 +87,7 @@ use crate::server::chrome::text::Text;
 use crate::server::clients::{self, Client as PaneClient};
 use crate::server::mcp;
 use crate::server::proc;
-use crate::server::save::{self, TerminalTab};
+use crate::server::save::{self, Session, TerminalTab};
 use crate::server::workspace::{self, Layout, Pane, PaneAction, Workspace};
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
 use decade_channel::AgentState;
@@ -602,12 +602,21 @@ impl State {
             self.spawn_terminal(workspace, tab, id);
         }
         for saved in tabs {
-            self.spawn_pane_tab(workspace, saved.tab, saved.pane, &saved.cwd);
+            let session = saved.session.as_ref();
+            self.spawn_pane_tab(workspace, saved.tab, saved.pane, &saved.cwd, session);
         }
     }
 
-    /// Start a ghostty that goes in the pane as a new tab.
-    fn spawn_pane_tab(&mut self, workspace: usize, tab: usize, id: usize, cwd: &Path) {
+    /// Start a ghostty that goes in the pane as a new tab, starting coax on
+    /// `session` when there is one.
+    fn spawn_pane_tab(
+        &mut self,
+        workspace: usize,
+        tab: usize,
+        id: usize,
+        cwd: &Path,
+        session: Option<&Session>,
+    ) {
         let entry = &mut self.workspaces[workspace].tabs[tab];
         let Some(pane) = entry.layout.pane(id) else {
             return;
@@ -617,14 +626,22 @@ impl State {
         let class = format!("{name}.t{}", info.next_tab);
         info.next_tab += 1;
         let shown = &self.workspaces[workspace];
-        let ghostty = self.children.ghostty(shown, &name, &class, cwd);
+        let ghostty = match session {
+            Some(session) => self.children.resuming(shown, &name, &class, session),
+            None => self.children.ghostty(shown, &name, &class, cwd),
+        };
         if let Err(error) = self.children.spawn(shown, ghostty) {
             eprintln!("decade: {error}");
         }
     }
 
-    /// Start the ghostty of a pane that holds a terminal, in the pane's cwd.
+    /// Start the ghostty of a pane that holds a terminal, in the pane's cwd,
+    /// starting coax on the session the pane keeps for its terminal.
     fn spawn_terminal(&mut self, workspace: usize, tab: usize, id: usize) {
+        let resume = self.workspaces[workspace].tabs[tab]
+            .info_mut(id)
+            .resume
+            .take();
         let shown = &self.workspaces[workspace];
         let Some(pane) = shown.tabs[tab].layout.pane(id) else {
             return;
@@ -634,7 +651,12 @@ impl State {
             .cwd
             .as_deref()
             .unwrap_or(&shown.cwd);
-        let ghostty = self.children.ghostty(shown, &pane.name, &pane.name, cwd);
+        let ghostty = match &resume {
+            Some(session) => self
+                .children
+                .resuming(shown, &pane.name, &pane.name, session),
+            None => self.children.ghostty(shown, &pane.name, &pane.name, cwd),
+        };
         match self.children.spawn(shown, ghostty) {
             Ok(pid) => self.workspaces[workspace].tabs[tab].started(id, pid),
             Err(error) => eprintln!("decade: {error}"),
@@ -1440,7 +1462,7 @@ impl State {
         }
         let cwd = (shown.tab().info(id).cwd.clone()).unwrap_or_else(|| shown.cwd.clone());
         let tab = shown.active_tab;
-        self.spawn_pane_tab(current, tab, id, &cwd);
+        self.spawn_pane_tab(current, tab, id, &cwd, None);
     }
 
     /// Show tab `index` of the pane in the current workspace's active tab.

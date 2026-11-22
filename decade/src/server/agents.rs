@@ -73,6 +73,13 @@ pub struct Agent {
     pub version: String,
     pub pane: Option<String>,
 
+    /// The flags the agent was started with, to start it again on its
+    /// session.
+    pub args: Vec<String>,
+
+    /// The process holding the agent's connection, while it is connected.
+    pub pid: Option<u32>,
+
     /// What the agent has reported, every update merged.
     pub report: Report,
 
@@ -135,15 +142,21 @@ impl Agents {
         self.list.iter_mut().find(|agent| agent.session == session)
     }
 
-    /// Connect the agent of a hello in pane `pane`: the session's agent
-    /// when the workspace holds it, or else a new one. A disconnected
-    /// agent left in that pane goes.
-    pub fn attach(&mut self, identity: decade_channel::Agent, pane: Option<String>, now: Instant) {
+    /// Connect the agent of a hello from process `pid` in pane `pane`: the
+    /// session's agent when the workspace holds it, or else a new one. A
+    /// disconnected agent left in that pane goes.
+    pub fn attach(
+        &mut self,
+        identity: decade_channel::Agent,
+        pane: Option<String>,
+        pid: Option<u32>,
+        now: Instant,
+    ) {
         let decade_channel::Agent {
             name,
             version,
             session,
-            args: _,
+            args,
         } = identity;
         if pane.is_some() {
             self.list
@@ -154,6 +167,8 @@ impl Agents {
                 agent.name = name;
                 agent.version = version;
                 agent.pane = pane;
+                agent.args = args;
+                agent.pid = pid;
                 agent.connected = true;
                 agent.last_seen = now;
             }
@@ -162,6 +177,8 @@ impl Agents {
                 name,
                 version,
                 pane,
+                args,
+                pid,
                 report: Report::default(),
                 since: now,
                 history: VecDeque::new(),
@@ -176,6 +193,7 @@ impl Agents {
     pub fn detach(&mut self, session: &str, now: Instant) {
         if let Some(agent) = self.get_mut(session) {
             agent.connected = false;
+            agent.pid = None;
             agent.last_seen = now;
         }
     }
@@ -302,8 +320,8 @@ mod tests {
     fn a_disconnected_agent_is_dropped_ten_minutes_after_it_was_last_seen() {
         let start = Instant::now();
         let mut agents = Agents::default();
-        agents.attach(identity("s1"), Some("chat".into()), start);
-        agents.attach(identity("s2"), Some("code".into()), start);
+        agents.attach(identity("s1"), Some("chat".into()), None, start);
+        agents.attach(identity("s2"), Some("code".into()), None, start);
         agents.detach("s1", start);
         assert!(!agents.expire(start + Duration::from_secs(599)));
         assert_eq!(agents.list.len(), 2);
@@ -317,7 +335,7 @@ mod tests {
     fn the_history_keeps_the_last_32_state_changes() {
         let start = Instant::now();
         let mut agents = Agents::default();
-        agents.attach(identity("s1"), Some("chat".into()), start);
+        agents.attach(identity("s1"), Some("chat".into()), None, start);
         let agent = agents.get_mut("s1").unwrap();
         for second in 0..40 {
             let next = [AgentState::Working, AgentState::Idle][second % 2];
@@ -344,7 +362,7 @@ mod tests {
             ("s2", AgentState::Done),
             ("s3", AgentState::Working),
         ] {
-            agents.attach(identity(session), None, start);
+            agents.attach(identity(session), None, None, start);
             agents
                 .get_mut(session)
                 .unwrap()
@@ -373,7 +391,7 @@ mod tests {
         let minutes = |n: u64| start + Duration::from_secs(n * 60);
         let mut agents = Agents::default();
         for (session, reported) in [("s1", AgentState::Done), ("s2", AgentState::Attention)] {
-            agents.attach(identity(session), None, start);
+            agents.attach(identity(session), None, None, start);
             agents
                 .get_mut(session)
                 .unwrap()
@@ -402,7 +420,7 @@ mod tests {
         let start = Instant::now();
         let minutes = |n: u64| start + Duration::from_secs(n * 60);
         let mut agents = Agents::default();
-        agents.attach(identity("s1"), None, start);
+        agents.attach(identity("s1"), None, None, start);
         let agent = agents.get_mut("s1").unwrap();
         agent.update(state(AgentState::Done), start);
         agents.shown(start);
@@ -421,11 +439,11 @@ mod tests {
     fn a_new_agent_in_a_pane_replaces_a_disconnected_one_there() {
         let start = Instant::now();
         let mut agents = Agents::default();
-        agents.attach(identity("old"), Some("chat".into()), start);
-        agents.attach(identity("other"), Some("code".into()), start);
+        agents.attach(identity("old"), Some("chat".into()), None, start);
+        agents.attach(identity("other"), Some("code".into()), None, start);
         agents.detach("old", start);
         agents.detach("other", start);
-        agents.attach(identity("new"), Some("chat".into()), start);
+        agents.attach(identity("new"), Some("chat".into()), None, start);
         let sessions: Vec<_> = agents.list.iter().map(|a| a.session.as_str()).collect();
         assert_eq!(sessions, ["other", "new"]);
     }
@@ -434,7 +452,7 @@ mod tests {
     fn the_listing_gives_each_agents_report_and_the_seconds_its_state_has_held() {
         let start = Instant::now();
         let mut agents = Agents::default();
-        agents.attach(identity("s1"), Some("chat".into()), start);
+        agents.attach(identity("s1"), Some("chat".into()), None, start);
         agents.get_mut("s1").unwrap().update(
             AgentUpdate {
                 state: Some(Some(AgentState::Attention)),

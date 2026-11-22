@@ -62,6 +62,10 @@ pub enum Out {
 pub struct Router {
     pub clients: HashMap<usize, Client>,
     pub agents: Agents,
+
+    /// The pid of the process at the other end of each client's socket,
+    /// from the time it connected.
+    pub peers: HashMap<usize, u32>,
 }
 
 impl Router {
@@ -89,6 +93,7 @@ impl Router {
     /// Forget client `id`, whose connection has dropped, and mark its
     /// agent disconnected at `now`.
     pub fn disconnect(&mut self, id: usize, now: Instant) {
+        self.peers.remove(&id);
         let session = self.clients.remove(&id).and_then(|client| client.session);
         if let Some(session) = session {
             self.agents.detach(&session, now);
@@ -341,7 +346,8 @@ impl Router {
                     client.session = None;
                 }
             }
-            self.agents.attach(identity, pane.clone(), now);
+            let pid = self.peers.get(&id).copied();
+            self.agents.attach(identity, pane.clone(), pid, now);
         }
         self.clients.insert(
             id,

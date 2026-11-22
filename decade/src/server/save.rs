@@ -8,11 +8,13 @@ use decade_ui::CellRect;
 
 use crate::chrome::frame::Group;
 use crate::files;
+use crate::server::agents::Agents;
 use crate::server::proc;
+use crate::server::scratch::descends_from;
 use crate::server::workspace::{Layout, Pane, Tab, Workspace};
 use decade_ui::{Axis, Node};
 
-const VERSION: u32 = 5;
+const VERSION: u32 = 6;
 
 #[derive(Serialize, Deserialize)]
 pub struct File {
@@ -115,9 +117,34 @@ struct SavedPane {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     app_id: Option<String>,
 
-    /// The directory of each terminal tab decade started in the pane.
+    /// The coax session running in the pane's terminal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<Session>,
+
+    /// Each terminal tab decade started in the pane.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    tabs: Vec<PathBuf>,
+    tabs: Vec<SavedTerminal>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+struct SavedTerminal {
+    cwd: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<Session>,
+}
+
+/// A coax session running in a terminal, to start again on restore.
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct Session {
+    /// The name of the agent coax runs.
+    pub agent: String,
+    pub id: String,
+
+    /// The flags coax was started with, without `--session`.
+    pub args: Vec<String>,
+
+    /// The directory coax runs in.
+    pub cwd: PathBuf,
 }
 
 pub fn path() -> Option<PathBuf> {
@@ -157,15 +184,43 @@ fn read(text: &str) -> Result<File, String> {
         }
         // version 3 adds only the optional tab name, version 4 only
         // the optional groups, and version 5 only the sleeping flag
-        2 | 3 | 4 | VERSION => {
-            let file: File = toml::from_str(text).map_err(error)?;
+        2..=5 => {
+            let mut file: toml::Table = toml::from_str(text).map_err(error)?;
+            terminal_tabs_as_tables(&mut file);
+            let file: File = file.try_into().map_err(error)?;
             Ok(File {
                 version: VERSION,
                 ..file
             })
         }
+        VERSION => toml::from_str(text).map_err(error),
         other => Err(format!("version {other} is not one this decade reads")),
     }
+}
+
+/// Rewrite each pane's `tabs` from a list of directories, as versions 5
+/// and before hold them, to a list of tables with a `cwd`.
+fn terminal_tabs_as_tables(file: &mut toml::Table) {
+    for workspace in tables(file.get_mut("workspace")) {
+        for tab in tables(workspace.get_mut("tab")) {
+            for pane in tables(tab.get_mut("pane")) {
+                let Some(toml::Value::Array(tabs)) = pane.get_mut("tabs") else {
+                    continue;
+                };
+                for cwd in tabs {
+                    let table = toml::Table::from_iter([("cwd".to_string(), cwd.clone())]);
+                    *cwd = toml::Value::Table(table);
+                }
+            }
+        }
+    }
+}
+
+/// The tables in `value`, an array of tables.
+fn tables(value: Option<&mut toml::Value>) -> impl Iterator<Item = &mut toml::Table> {
+    (value.and_then(toml::Value::as_array_mut).into_iter())
+        .flatten()
+        .filter_map(toml::Value::as_table_mut)
 }
 
 impl File {
@@ -231,15 +286,16 @@ pub fn saved(workspace: &Workspace, groups: &[Group]) -> Saved {
         tabs: (workspace.tabs.iter().enumerate())
             .map(|(index, tab)| SavedTab {
                 name: tab.name.clone(),
-                ..saved_tab(tab, index, asleep)
+                ..saved_tab(tab, index, asleep, &workspace.router.agents)
             })
             .collect(),
     }
 }
 
 /// Tab `index` as the file holds it, with the terminal tabs `asleep`
-/// keeps for it to start on wake.
-fn saved_tab(tab: &Tab, index: usize, asleep: &[TerminalTab]) -> SavedTab {
+/// keeps for it to start on wake and the sessions of `agents` running in
+/// its terminals.
+fn saved_tab(tab: &Tab, index: usize, asleep: &[TerminalTab], agents: &Agents) -> SavedTab {
     let layout = &tab.layout;
     let name_of = |id: usize| {
         layout
@@ -256,20 +312,38 @@ fn saved_tab(tab: &Tab, index: usize, asleep: &[TerminalTab]) -> SavedTab {
                 .cwd
                 .as_ref()
                 .map(|cwd| info.pid.and_then(shell_cwd).unwrap_or_else(|| cwd.clone()));
+
+            // a session not yet started again is kept until its
+            // terminal starts, which is while the workspace sleeps
+            let mut session = (info.pid)
+                .and_then(|ghostty| session_in(agents, ghostty))
+                .or_else(|| info.resume.clone());
             let stored = (asleep.iter())
                 .filter(|stored| stored.tab == index && stored.pane == pane.id)
-                .map(|stored| stored.cwd.clone());
-            let mut tabs: Vec<PathBuf> = tab
+                .map(|stored| SavedTerminal {
+                    cwd: stored.cwd.clone(),
+                    session: stored.session.clone(),
+                });
+            let mut tabs: Vec<SavedTerminal> = tab
                 .clients_in(pane)
                 .filter(|client| client.terminal_tab)
-                .filter_map(|client| client.pid.and_then(shell_cwd).or_else(|| info.cwd.clone()))
+                .filter_map(|client| {
+                    let cwd = client
+                        .pid
+                        .and_then(shell_cwd)
+                        .or_else(|| info.cwd.clone())?;
+                    let session = client.pid.and_then(|ghostty| session_in(agents, ghostty));
+                    Some(SavedTerminal { cwd, session })
+                })
                 .chain(stored)
                 .collect();
 
             // with the pane's own terminal gone, its first tab takes its
             // place, so a restore starts as many terminals as are running
             if cwd.is_some() && !tabs.is_empty() && tabs.len() == pane.tabs.len() {
-                cwd = Some(tabs.remove(0));
+                let first = tabs.remove(0);
+                cwd = Some(first.cwd);
+                session = first.session;
             }
             SavedPane {
                 name: pane.name.clone(),
@@ -278,6 +352,7 @@ fn saved_tab(tab: &Tab, index: usize, asleep: &[TerminalTab]) -> SavedTab {
                     .app_id
                     .clone()
                     .filter(|app_id| cwd.is_none() && !app_id.is_empty()),
+                session,
                 cwd,
                 tabs,
             }
@@ -317,12 +392,31 @@ fn shell_cwd(ghostty: u32) -> Option<PathBuf> {
     proc::first_child(ghostty).and_then(proc::cwd)
 }
 
+/// The session of the connected agent among `agents` that runs under the
+/// ghostty `ghostty`, when coax was started on a named agent and so can
+/// be started on the session again.
+fn session_in(agents: &Agents, ghostty: u32) -> Option<Session> {
+    agents.list.iter().find_map(|agent| {
+        let pid = agent.pid.filter(|_| agent.connected)?;
+        if !agent.args.iter().any(|arg| arg == "--agent") || !descends_from(pid, ghostty) {
+            return None;
+        }
+        Some(Session {
+            agent: agent.name.clone(),
+            id: agent.session.clone(),
+            args: agent.args.clone(),
+            cwd: proc::cwd(pid)?,
+        })
+    })
+}
+
 /// A terminal tab to start in a restored pane.
 #[derive(Debug, PartialEq)]
 pub struct TerminalTab {
     pub tab: usize,
     pub pane: usize,
     pub cwd: PathBuf,
+    pub session: Option<Session>,
 }
 
 impl Saved {
@@ -357,9 +451,13 @@ impl Saved {
         let mut tabs = Vec::new();
         for (tab, saved) in self.tabs.iter().enumerate() {
             for (pane, saved) in saved.panes.iter().enumerate() {
-                for cwd in &saved.tabs {
-                    let cwd = cwd.clone();
-                    tabs.push(TerminalTab { tab, pane, cwd });
+                for terminal in &saved.tabs {
+                    tabs.push(TerminalTab {
+                        tab,
+                        pane,
+                        cwd: terminal.cwd.clone(),
+                        session: terminal.session.clone(),
+                    });
                 }
             }
         }
@@ -424,6 +522,7 @@ impl SavedTab {
             // nothing to wait for
             info.pinned = saved.pinned && (saved.cwd.is_some() || saved.app_id.is_some());
             info.cwd = saved.cwd.clone();
+            info.resume = saved.session.clone();
             info.app_id = saved.app_id.clone();
         }
         Ok(tab)
@@ -477,6 +576,38 @@ mod tests {
         tab.pin(files, "org.gnome.Nautilus".to_string());
         tab.layout.focused = code;
         workspace
+    }
+
+    fn terminal(cwd: PathBuf) -> SavedTerminal {
+        SavedTerminal { cwd, session: None }
+    }
+
+    fn session(id: &str) -> Session {
+        Session {
+            agent: "claude".to_string(),
+            id: id.to_string(),
+            args: ["--agent", "claude", "--allow"]
+                .map(str::to_string)
+                .to_vec(),
+            cwd: PathBuf::from("/home/jack/projects/coax"),
+        }
+    }
+
+    /// The workspace's record with a session on the main terminal of
+    /// pane `code` and on the first of its two terminal tabs.
+    fn with_sessions(sleeping: bool) -> Saved {
+        let mut saved = saved(&workspace(), &[]);
+        let code = &mut saved.tabs[0].panes[1];
+        code.session = Some(session("main"));
+        code.tabs = vec![
+            SavedTerminal {
+                cwd: PathBuf::from("/tmp"),
+                session: Some(session("tab")),
+            },
+            terminal(PathBuf::from("/home/jack")),
+        ];
+        saved.sleeping = sleeping;
+        saved
     }
 
     fn first_tab(saved: &Saved) -> Tab {
@@ -660,7 +791,7 @@ cwd = "/tmp"
     fn the_directories_of_a_panes_terminal_tabs_read_back_with_the_pane() {
         let mut saved = saved(&workspace(), &[]);
         let tabs = vec![PathBuf::from("/tmp"), PathBuf::from("/home/jack")];
-        saved.tabs[0].panes[1].tabs = tabs.clone();
+        saved.tabs[0].panes[1].tabs = tabs.iter().cloned().map(terminal).collect();
         let text = to_text(vec![saved], &[], true).unwrap();
         let back = &read(&text).unwrap().workspaces[0];
         let (_, restored) = back
@@ -672,6 +803,7 @@ cwd = "/tmp"
                 tab: 0,
                 pane: 1,
                 cwd,
+                session: None,
             })
             .collect();
         assert_eq!(restored, expected);
@@ -684,7 +816,7 @@ cwd = "/tmp"
         workspace.add_tab(crate::server::workspace::tests::AREA);
         workspace.rename_tab(1, "logs").unwrap();
         let text = to_text(vec![saved(&workspace, &[])], &[], true).unwrap();
-        assert!(text.starts_with("version = 5"));
+        assert!(text.starts_with("version = 6"));
         let file = read(&text).unwrap();
         let (back, _) = (file.workspaces[0])
             .workspace(2, crate::server::workspace::tests::AREA, &[])
@@ -692,7 +824,7 @@ cwd = "/tmp"
         let names: Vec<_> = back.tabs.iter().map(|tab| tab.name.as_deref()).collect();
         assert_eq!(names, [None, Some("logs")]);
 
-        let old = text.replacen("version = 5", "version = 2", 1);
+        let old = text.replacen("version = 6", "version = 2", 1);
         let old = old.replace("name = \"logs\"\n", "");
         let file = read(&old).unwrap();
         assert!(file.workspaces[0].tabs.iter().all(|tab| tab.name.is_none()));
@@ -733,7 +865,7 @@ cwd = "/tmp"
     fn a_version_3_file_reads_with_no_groups() {
         let text = to_text(vec![saved(&workspace(), &[])], &[], true).unwrap();
         assert!(!text.contains("[[group]]"));
-        let old = text.replacen("version = 5", "version = 3", 1);
+        let old = text.replacen("version = 6", "version = 3", 1);
         let file = read(&old).unwrap();
         assert!(file.groups().is_empty());
         let area = crate::server::workspace::tests::AREA;
@@ -744,7 +876,7 @@ cwd = "/tmp"
     fn asleep() -> Workspace {
         let workspace = workspace();
         let mut saved = saved(&workspace, &[]);
-        saved.tabs[0].panes[1].tabs = vec![PathBuf::from("/home/jack")];
+        saved.tabs[0].panes[1].tabs = vec![terminal(PathBuf::from("/home/jack"))];
         saved.sleeping = true;
         let (asleep, tabs) = saved
             .workspace(2, crate::server::workspace::tests::AREA, &[])
@@ -760,6 +892,7 @@ cwd = "/tmp"
             tab: 0,
             pane: 1,
             cwd: PathBuf::from("/home/jack"),
+            session: None,
         };
         assert_eq!(asleep.asleep, Some(vec![tab]));
         let tab = asleep.tab();
@@ -768,10 +901,10 @@ cwd = "/tmp"
     }
 
     #[test]
-    fn a_sleeping_workspace_reads_back_asleep_at_version_5() {
+    fn a_sleeping_workspace_reads_back_asleep_at_version_6() {
         let asleep = asleep();
         let text = to_text(vec![saved(&asleep, &[])], &[], true).unwrap();
-        assert!(text.starts_with("version = 5"));
+        assert!(text.starts_with("version = 6"));
         assert!(text.contains("sleeping = true"));
         let file = read(&text).unwrap();
         assert_eq!(file.workspaces[0], saved(&asleep, &[]));
@@ -787,7 +920,7 @@ cwd = "/tmp"
     #[test]
     fn a_version_4_file_reads_with_every_workspace_awake() {
         let text = to_text(vec![saved(&workspace(), &[])], &[], true).unwrap();
-        let old = text.replacen("version = 5", "version = 4", 1);
+        let old = text.replacen("version = 6", "version = 4", 1);
         let file = read(&old).unwrap();
         let area = crate::server::workspace::tests::AREA;
         let (back, _) = file.workspaces[0].workspace(0, area, &[]).unwrap();
@@ -837,5 +970,99 @@ cwd = "/tmp"
         assert!(!tab.info(logs).pinned);
         assert!(workspace.keeps_empty(second, tab.layout.pane(logs).unwrap()));
         assert!(!workspace.tab_is_spent(second, |_| false));
+    }
+
+    #[test]
+    fn sessions_on_a_main_terminal_and_a_terminal_tab_read_back_at_version_6_to_start_again() {
+        let text = to_text(vec![with_sessions(false)], &[], true).unwrap();
+        assert!(text.starts_with("version = 6"));
+        let back = &read(&text).unwrap().workspaces[0];
+        assert_eq!(back, &with_sessions(false));
+        let area = crate::server::workspace::tests::AREA;
+        let (restored, tabs) = back.workspace(0, area, &[]).unwrap();
+        assert_eq!(restored.tab().info(1).resume, Some(session("main")));
+        assert_eq!(restored.tab().info(0).resume, None);
+        let sessions: Vec<_> = tabs.iter().map(|tab| tab.session.clone()).collect();
+        assert_eq!(sessions, [Some(session("tab")), None]);
+    }
+
+    #[test]
+    fn a_sleeping_workspace_keeps_its_sessions_in_the_next_save() {
+        let area = crate::server::workspace::tests::AREA;
+        let (asleep, _) = with_sessions(true).workspace(0, area, &[]).unwrap();
+        assert_eq!(saved(&asleep, &[]), with_sessions(true));
+    }
+
+    #[test]
+    fn a_version_5_file_reads_its_terminal_tabs_from_a_list_of_directories() {
+        let text = r#"
+version = 5
+sidebar_open = true
+
+[[workspace]]
+name = "decade"
+cwd = "/home/jack/projects/decade"
+active_tab = 0
+
+[[workspace.tab]]
+focused = "terminal"
+
+[workspace.tab.tree]
+pane = "terminal"
+
+[[workspace.tab.pane]]
+name = "terminal"
+cwd = "/home/jack/projects/decade"
+tabs = ["/tmp", "/home/jack"]
+"#;
+        let file = read(text).unwrap();
+        let area = crate::server::workspace::tests::AREA;
+        let (restored, tabs) = file.workspaces[0].workspace(0, area, &[]).unwrap();
+        assert_eq!(restored.tab().info(0).resume, None);
+        let expected: Vec<TerminalTab> = ["/tmp", "/home/jack"]
+            .into_iter()
+            .map(|cwd| TerminalTab {
+                tab: 0,
+                pane: 0,
+                cwd: PathBuf::from(cwd),
+                session: None,
+            })
+            .collect();
+        assert_eq!(tabs, expected);
+    }
+
+    #[test]
+    fn only_a_connected_agent_started_on_a_named_agent_under_the_terminal_is_saved() {
+        let identity = |session: &str, args: &[&str]| decade_channel::Agent {
+            name: "claude".to_string(),
+            version: "0.4.0".to_string(),
+            session: session.to_string(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+        };
+        let named = ["--agent", "claude"];
+        let found = proc::tests::under_shell("(cd / && sleep 5); true", |shell| {
+            let coax = proc::first_child(shell)?;
+            let mut workspace = workspace();
+            workspace.tab_mut().info_mut(1).pid = Some(shell);
+            let session_of = |workspace: &Workspace| {
+                saved(workspace, &[]).tabs[0].panes[1]
+                    .session
+                    .clone()
+                    .map(|session| (session.id, session.cwd))
+            };
+            let now = std::time::Instant::now();
+            let agents = &mut workspace.router.agents;
+            agents.attach(identity("picked", &["--allow"]), None, Some(coax), now);
+            agents.attach(identity("gone", &named), None, Some(coax), now);
+            agents.detach("gone", now);
+            let elsewhere = Some(std::process::id());
+            agents.attach(identity("elsewhere", &named), None, elsewhere, now);
+            let none = session_of(&workspace);
+            let agents = &mut workspace.router.agents;
+            agents.attach(identity("named", &named), None, Some(coax), now);
+            let found = session_of(&workspace)?;
+            (found.1 == Path::new("/")).then_some((none, found.0))
+        });
+        assert_eq!(found, Some((None, "named".to_string())));
     }
 }

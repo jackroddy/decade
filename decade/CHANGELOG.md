@@ -27,16 +27,24 @@ command line and what the tool writes.
   and the workspace's card shows a sleep mark where its agent's mark goes.
   A click on that mark, on a wake button, or on Wake in the menu starts
   its terminals again, each in the directory its shell was in. Shells
-  start fresh, without their scrollback. Agent sessions and GUI apps do
-  not start again. Showing a sleeping workspace does not wake it, and it
-  stays asleep when the server restarts. While an agent in the workspace
-  is working, Sleep asks for a second click. A group's menu offers Sleep
-  all and Wake all.
+  start fresh, without their scrollback. GUI apps and agents other than
+  coax do not start again. Showing a sleeping workspace does not wake it,
+  and it stays asleep when the server restarts. While an agent in the
+  workspace is working, Sleep asks for a second click. A group's menu
+  offers Sleep all and Wake all.
+- decade starts a coax session again in the terminal it ran in. When
+  decade saves a terminal, it records the session of a connected coax
+  under it that was started with `--agent`, with coax's flags and
+  directory. On restore and on wake, decade starts that terminal in
+  coax's directory and types `coax <flags> --session <id>` into its
+  shell. When coax exits, the shell stays at its prompt. A coax that has
+  quit is not in the next save.
 
 ### Changed
 
-- The saved workspaces file is at version 5, which records whether each
-  workspace is asleep. decade still reads the files of earlier versions.
+- decade saves workspaces at version 6 of its file. It saves whether
+  each workspace is asleep and the coax session running in each
+  terminal. decade still reads the files of earlier versions.
 - The instructions decade's MCP server gives an agent end by naming the
   workspace the agent runs in, and its pane when the address names one.
 - A pane whose program exits while the pane is being dragged ends the

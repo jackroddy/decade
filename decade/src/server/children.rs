@@ -4,6 +4,7 @@ use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 
+use crate::server::save::Session;
 use crate::server::workspace::{Workspace, app_id_prefix};
 
 /// The programs decade started, and what each one is told about decade.
@@ -83,6 +84,21 @@ impl Children {
         ghostty
     }
 
+    /// A ghostty for the pane like `ghostty`'s, in the session's directory,
+    /// whose shell starts coax on the session and is left at its prompt
+    /// when coax exits.
+    pub fn resuming(
+        &self,
+        workspace: &Workspace,
+        pane: &str,
+        class: &str,
+        session: &Session,
+    ) -> Command {
+        let mut ghostty = self.ghostty(workspace, pane, class, &session.cwd);
+        ghostty.arg(resume_input(session));
+        ghostty
+    }
+
     /// Start the command for the workspace, and return its pid. Nothing
     /// starts for a sleeping workspace.
     pub fn spawn(&mut self, workspace: &Workspace, command: Command) -> Result<u32, String> {
@@ -156,6 +172,39 @@ impl Children {
             let _ = child.kill();
         }
     }
+}
+
+/// The ghostty option that types `coax <args> --session <id>` and a
+/// return into the terminal's shell.
+fn resume_input(session: &Session) -> String {
+    let mut line = "coax".to_string();
+    let session_flag = ["--session".to_string(), session.id.clone()];
+    for word in session.args.iter().chain(&session_flag) {
+        line.push(' ');
+        line.push_str(&shell_quoted(word));
+    }
+
+    // ghostty reads the value as the body of a Zig string literal
+    let mut input = "--input=raw:".to_string();
+    for c in line.chars() {
+        match c {
+            '\\' => input.push_str("\\\\"),
+            '"' => input.push_str("\\\""),
+            c if c.is_ascii_control() => input.push_str(&format!("\\x{:02x}", c as u8)),
+            c => input.push(c),
+        }
+    }
+    input.push_str("\\n");
+    input
+}
+
+/// `word` as one word to a POSIX shell.
+fn shell_quoted(word: &str) -> String {
+    let plain = |c: char| c.is_ascii_alphanumeric() || "-_./=:,+@%".contains(c);
+    if !word.is_empty() && word.chars().all(plain) {
+        return word.to_string();
+    }
+    format!("'{}'", word.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
@@ -280,6 +329,36 @@ mod tests {
         assert_eq!(exited, expected);
         assert!(children.running(kept));
         children.kill_all();
+    }
+
+    #[test]
+    fn a_resuming_ghostty_starts_in_the_sessions_directory_and_types_coax_on_the_session() {
+        let children = Children::new(OsString::from("wayland-9"), PathBuf::from("/run"), None);
+        let session = Session {
+            agent: "claude".to_string(),
+            id: "7f3a".to_string(),
+            args: ["--agent", "my agent", "--allow"]
+                .map(str::to_string)
+                .to_vec(),
+            cwd: PathBuf::from("/home/jack/projects/coax"),
+        };
+        let ghostty = children.resuming(&workspace(1), "chat", "chat", &session);
+        assert_eq!(ghostty.get_current_dir(), Some(session.cwd.as_path()));
+        assert_eq!(
+            ghostty.get_args().last().unwrap(),
+            r"--input=raw:coax --agent 'my agent' --allow --session 7f3a\n"
+        );
+
+        // the shell reads 'it'\''s\' as it's\, and ghostty reads a
+        // doubled backslash as one
+        let session = Session {
+            args: vec!["--agent".to_string(), "it's\\".to_string()],
+            ..session
+        };
+        assert_eq!(
+            resume_input(&session),
+            r"--input=raw:coax --agent 'it'\\''s\\' --session 7f3a\n"
+        );
     }
 
     #[test]

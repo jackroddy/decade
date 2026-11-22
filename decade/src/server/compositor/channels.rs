@@ -64,11 +64,15 @@ impl State {
         let Ok(writer) = stream.try_clone() else {
             return;
         };
-        if self.workspace_index(workspace).is_none() {
+        let Some(index) = self.workspace_index(workspace) else {
             return;
-        }
+        };
         let id = self.next_client;
         self.next_client += 1;
+        if let Ok(peer) = rustix::net::sockopt::get_socket_peercred(&stream) {
+            let pid = peer.pid.as_raw_nonzero().get() as u32;
+            self.workspaces[index].router.peers.insert(id, pid);
+        }
         self.sockets.insert(id, (workspace, writer));
         let mut lines = Lines::default();
         let inserted = self.loop_handle.insert_source(
