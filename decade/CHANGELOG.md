@@ -37,6 +37,8 @@ command line and what the tool writes.
 
 - The saved workspaces file is at version 5, which records whether each
   workspace is asleep. decade still reads the files of earlier versions.
+- The instructions decade's MCP server gives an agent end by naming the
+  workspace the agent runs in, and its pane when the address names one.
 - A pane whose program exits while the pane is being dragged ends the
   drag. Before, the drop could put the closed pane back into the layout.
 - A window from a program that decade did not start goes to the workspace

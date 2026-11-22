@@ -139,6 +139,7 @@ impl State {
                 self.request_redraw();
                 return Ok(format!("pointing at pane {pane}"));
             }
+            mcp::Call::Workspace => return Ok(shown.name.clone()),
             mcp::Call::Agents => {
                 let agents = shown.router.agents.listing(Instant::now());
                 return Ok(agents.to_string());

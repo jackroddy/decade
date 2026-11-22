@@ -4,7 +4,8 @@ use std::net::TcpListener;
 use decade_channel::{Clear, Highlight, Show};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+    InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
+    ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -62,6 +63,9 @@ pub enum Call {
     Panes,
     Agents,
     ScratchOpen(Launch),
+
+    /// The name of the workspace the address names.
+    Workspace,
 
     /// Capture the client area of pane `pane` as a PNG.
     Screenshot {
@@ -316,6 +320,23 @@ fn parse<T: DeserializeOwned>(tool: &str, arguments: Map<String, Value>) -> Resu
     serde_json::from_value(Value::Object(arguments)).map_err(|error| format!("{tool}: {error}"))
 }
 
+impl Decade {
+    async fn workspace_name(&self, workspace: u32) -> Option<String> {
+        let (reply, answer) = oneshot::channel();
+        let request = Request {
+            workspace,
+            pane: None,
+            call: Call::Workspace,
+            reply,
+        };
+        self.requests.send(request).ok()?;
+        match answer.await {
+            Ok(Ok(Answer::Text(name))) => Some(name),
+            _ => None,
+        }
+    }
+}
+
 impl ServerHandler for Decade {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
@@ -335,6 +356,29 @@ impl ServerHandler for Decade {
                  a pane draws, once the user allows it. agents lists the agents in the \
                  workspace with what each last reported.",
             )
+    }
+
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, ErrorData> {
+        context.peer.set_peer_info(request.clone());
+        let mut result = self.negotiate_initialize(&request)?;
+        let query = (context.extensions.get::<axum::http::request::Parts>())
+            .and_then(|parts| parts.uri.query())
+            .unwrap_or_default();
+        if let Some(workspace) = workspace_in(query)
+            && let Some(name) = self.workspace_name(workspace).await
+            && let Some(instructions) = &mut result.instructions
+        {
+            instructions.push_str(&format!(" This agent runs in the decade workspace {name}"));
+            if let Some(pane) = query_value(query, "pane") {
+                instructions.push_str(&format!(", in its pane {pane}"));
+            }
+            instructions.push('.');
+        }
+        Ok(result)
     }
 
     async fn list_tools(
@@ -434,7 +478,7 @@ mod tests {
     fn tools_are_relayed_as_calls_and_answers_become_results() {
         let (sender, source) = channel::channel::<Request>();
         let unaddressed = start(sender).unwrap();
-        let url = format!("{unaddressed}?workspace=7");
+        let url = format!("{unaddressed}?workspace=7&pane=chat");
 
         let mut event_loop: EventLoop<Vec<(u32, Value)>> = EventLoop::try_new().unwrap();
         event_loop
@@ -460,6 +504,7 @@ mod tests {
                     }
                     Call::Point { pane, .. } => Err(format!("no pane named {pane}")),
                     Call::Screenshot { pane } => Ok(Answer::Png(pane.into_bytes())),
+                    Call::Workspace => Ok(Answer::Text("decade".to_string())),
                     _ => Err("unexpected call".to_string()),
                 };
                 let _ = request.reply.send(reply);
@@ -473,6 +518,9 @@ mod tests {
                 .unwrap();
             runtime.block_on(async move {
                 let client = ().serve(StreamableHttpClientTransport::from_uri(url)).await.unwrap();
+                let instructions = client
+                    .peer_info()
+                    .and_then(|info| info.instructions.clone());
                 let names: Vec<String> = client
                     .list_all_tools()
                     .await
@@ -513,7 +561,7 @@ mod tests {
                     .call_tool(CallToolRequestParams::new("panes"))
                     .await;
                 unaddressed.cancel().await.unwrap();
-                (names, show, panes, point, screenshot, refused)
+                (names, show, panes, point, screenshot, refused, instructions)
             })
         });
 
@@ -523,7 +571,12 @@ mod tests {
                 .dispatch(Some(Duration::from_millis(50)), &mut seen)
                 .unwrap();
         }
-        let (names, show, panes, point, screenshot, refused) = client.join().unwrap();
+        let (names, show, panes, point, screenshot, refused, instructions) = client.join().unwrap();
+        assert!(
+            instructions.is_some_and(|text| text
+                .ends_with(" This agent runs in the decade workspace decade, in its pane chat.")),
+            "the instructions name the workspace and pane of the address"
+        );
 
         assert_eq!(
             names,
