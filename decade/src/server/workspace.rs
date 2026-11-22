@@ -10,6 +10,7 @@ use decade_ui::{Button, CellRect, ContentId, Marks, Placeholder, Tag};
 
 use crate::server::channel::{Out, PaneNames, Router};
 use crate::server::clients::Client;
+use crate::server::save::TerminalTab;
 use crate::server::scratch::Scratch;
 use decade_channel::AgentState;
 use serde_json::Value;
@@ -58,6 +59,10 @@ pub struct Workspace {
     /// The pane whose screenshot was taken last, and when, while its
     /// screenshot tag flashes.
     pub flash: Option<(String, Instant)>,
+
+    /// The terminal tabs to start on wake, or `None` while the workspace
+    /// is awake.
+    pub asleep: Option<Vec<TerminalTab>>,
 
     /// The id the next client to arrive in a pane gets.
     next_content: u64,
@@ -571,6 +576,7 @@ impl Workspace {
             point: None,
             group: None,
             flash: None,
+            asleep: None,
             next_content: 0,
         };
         workspace.mark_panes();
@@ -795,6 +801,12 @@ impl Workspace {
         for pane in &removed.layout.panes {
             self.forget_pane(&pane.name);
         }
+        if let Some(asleep) = &mut self.asleep {
+            asleep.retain(|stored| stored.tab != tab);
+            for stored in asleep.iter_mut().filter(|stored| stored.tab > tab) {
+                stored.tab -= 1;
+            }
+        }
         let was_active = self.active_tab == tab;
         if self.active_tab > tab || self.active_tab == self.tabs.len() {
             self.active_tab = self.active_tab.saturating_sub(1);
@@ -877,9 +889,9 @@ impl Workspace {
     }
 
     /// Whether the pane of tab `tab` stays when it has no client: it is
-    /// pinned or it is the scratch pane.
+    /// pinned, it is the scratch pane, or the workspace is asleep.
     pub fn keeps_empty(&self, tab: usize, pane: &Pane) -> bool {
-        self.tabs[tab].info(pane.id).pinned || self.is_scratch(pane)
+        self.asleep.is_some() || self.tabs[tab].info(pane.id).pinned || self.is_scratch(pane)
     }
 
     /// Whether tab `tab` has nothing left in it and closes: no pane has a
@@ -912,6 +924,20 @@ impl Workspace {
         for tab in &mut self.tabs {
             tab.mark_panes(scratch);
         }
+    }
+
+    /// Put the workspace to sleep as `restored`, the same workspace rebuilt
+    /// from its saved record: take its tabs and scratch pane, drop its
+    /// agents, point and flash, and keep `tabs` to start on wake.
+    pub fn sleep(&mut self, restored: Workspace, tabs: Vec<TerminalTab>) {
+        self.tabs = restored.tabs;
+        self.active_tab = restored.active_tab;
+        self.scratch = restored.scratch;
+        self.router = Router::default();
+        self.point = None;
+        self.flash = None;
+        self.asleep = Some(tabs);
+        self.mark_panes();
     }
 
     /// The name of the scratch pane, if the workspace has one.
@@ -1153,6 +1179,21 @@ pub(super) mod tests {
         assert_eq!(workspace.active_tab, 0);
         assert_eq!(workspace.by_name("terminal3"), None);
         assert_eq!(workspace.by_name("terminal2"), Some((0, 0)));
+    }
+
+    #[test]
+    fn removing_a_tab_of_a_sleeping_workspace_drops_its_terminal_tabs_and_shifts_the_later_ones() {
+        let mut workspace = at_home();
+        workspace.add_tab(AREA);
+        workspace.add_tab(AREA);
+        let stored = |tab| TerminalTab {
+            tab,
+            pane: 0,
+            cwd: PathBuf::from("/tmp"),
+        };
+        workspace.asleep = Some(vec![stored(0), stored(1), stored(2)]);
+        workspace.remove_tab(1);
+        assert_eq!(workspace.asleep, Some(vec![stored(0), stored(1)]));
     }
 
     #[test]

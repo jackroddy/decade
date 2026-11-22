@@ -252,11 +252,11 @@ impl State {
         if launch.terminal {
             let mut ghostty = self.children.ghostty(shown, name, name, &shown.cwd);
             ghostty.arg("-e").arg(&launch.program).args(&launch.args);
-            return self.children.spawn(ghostty);
+            return self.children.spawn(shown.id, ghostty);
         }
         let mut command = self.children.command(shown, &launch.program, Some(name));
         command.args(&launch.args);
-        let (pid, stderr) = self.children.spawn_with_stderr(command)?;
+        let (pid, stderr) = self.children.spawn_with_stderr(shown.id, command)?;
         let mut lines = Lines::default();
         let inserted = self.loop_handle.insert_source(
             Generic::new(stderr, Interest::READ, CalloopMode::Level),
@@ -305,7 +305,11 @@ impl State {
 
     /// Answer the workspace's waiting `scratch.open` with `answer`, or else
     /// with what is known of its program so far.
-    fn answer_scratch(&mut self, workspace: usize, answer: Option<Result<String, String>>) {
+    pub(super) fn answer_scratch(
+        &mut self,
+        workspace: usize,
+        answer: Option<Result<String, String>>,
+    ) {
         let Some(scratch) = &mut self.workspaces[workspace].scratch else {
             return;
         };

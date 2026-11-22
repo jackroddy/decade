@@ -65,6 +65,16 @@ pub enum Command {
     /// directory.
     ChangeDirectory(u32),
     CloseWorkspace(u32),
+
+    /// Put the workspace to sleep.
+    //
+    // TODO: no menu entry runs Sleep or Wake yet
+    #[expect(dead_code)]
+    Sleep(u32),
+
+    /// Wake the sleeping workspace.
+    #[expect(dead_code)]
+    Wake(u32),
 }
 
 fn entry(label: &str, command: Command) -> Entry<Command> {

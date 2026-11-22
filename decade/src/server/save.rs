@@ -12,7 +12,7 @@ use crate::server::proc;
 use crate::server::workspace::{Layout, Pane, Tab, Workspace};
 use decade_ui::{Axis, Node};
 
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 
 #[derive(Serialize, Deserialize)]
 pub struct File {
@@ -47,6 +47,8 @@ pub struct Saved {
     /// The name of the group the workspace is in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     group: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    sleeping: bool,
     #[serde(rename = "tab")]
     tabs: Vec<SavedTab>,
 }
@@ -142,6 +144,7 @@ fn read(text: &str) -> Result<File, String> {
                     active_tab: 0,
                     scratch: None,
                     group: None,
+                    sleeping: false,
                     tabs: vec![old.tab],
                 })
                 .collect();
@@ -152,9 +155,9 @@ fn read(text: &str) -> Result<File, String> {
                 workspaces,
             })
         }
-        // version 3 adds only the optional tab name, and version 4
-        // only the optional groups
-        2 | 3 | VERSION => {
+        // version 3 adds only the optional tab name, version 4 only
+        // the optional groups, and version 5 only the sleeping flag
+        2 | 3 | 4 | VERSION => {
             let file: File = toml::from_str(text).map_err(error)?;
             Ok(File {
                 version: VERSION,
@@ -211,28 +214,32 @@ fn to_text(
     })
 }
 
-fn saved(workspace: &Workspace, groups: &[Group]) -> Saved {
+/// The workspace as the file holds it, with the cwd of each terminal read
+/// from its shell.
+pub fn saved(workspace: &Workspace, groups: &[Group]) -> Saved {
     let group = (groups.iter())
         .find(|group| Some(group.id) == workspace.group)
         .map(|group| group.name.clone());
+    let asleep = workspace.asleep.as_deref().unwrap_or_default();
     Saved {
         name: workspace.name.clone(),
         cwd: workspace.cwd.clone(),
         active_tab: workspace.active_tab,
         scratch: workspace.scratch_pane().map(str::to_string),
         group,
-        tabs: workspace
-            .tabs
-            .iter()
-            .map(|tab| SavedTab {
+        sleeping: workspace.asleep.is_some(),
+        tabs: (workspace.tabs.iter().enumerate())
+            .map(|(index, tab)| SavedTab {
                 name: tab.name.clone(),
-                ..saved_tab(tab)
+                ..saved_tab(tab, index, asleep)
             })
             .collect(),
     }
 }
 
-fn saved_tab(tab: &Tab) -> SavedTab {
+/// Tab `index` as the file holds it, with the terminal tabs `asleep`
+/// keeps for it to start on wake.
+fn saved_tab(tab: &Tab, index: usize, asleep: &[TerminalTab]) -> SavedTab {
     let layout = &tab.layout;
     let name_of = |id: usize| {
         layout
@@ -249,10 +256,14 @@ fn saved_tab(tab: &Tab) -> SavedTab {
                 .cwd
                 .as_ref()
                 .map(|cwd| info.pid.and_then(shell_cwd).unwrap_or_else(|| cwd.clone()));
+            let stored = (asleep.iter())
+                .filter(|stored| stored.tab == index && stored.pane == pane.id)
+                .map(|stored| stored.cwd.clone());
             let mut tabs: Vec<PathBuf> = tab
                 .clients_in(pane)
                 .filter(|client| client.terminal_tab)
                 .filter_map(|client| client.pid.and_then(shell_cwd).or_else(|| info.cwd.clone()))
+                .chain(stored)
                 .collect();
 
             // with the pane's own terminal gone, its first tab takes its
@@ -316,7 +327,8 @@ pub struct TerminalTab {
 
 impl Saved {
     /// Rebuild the workspace with the id `id`, in its group among `groups`,
-    /// and list the terminal tabs to start in its panes.
+    /// and list the terminal tabs to start in its panes. A sleeping
+    /// workspace keeps its terminal tabs for its wake and lists none.
     pub fn workspace(
         &self,
         id: u32,
@@ -350,6 +362,10 @@ impl Saved {
                     tabs.push(TerminalTab { tab, pane, cwd });
                 }
             }
+        }
+        if self.sleeping {
+            restored.asleep = Some(tabs);
+            return Ok((restored, Vec::new()));
         }
         Ok((restored, tabs))
     }
@@ -667,7 +683,7 @@ cwd = "/tmp"
         workspace.add_tab(crate::server::workspace::tests::AREA);
         workspace.rename_tab(1, "logs").unwrap();
         let text = to_text(vec![saved(&workspace, &[])], &[], true).unwrap();
-        assert!(text.starts_with("version = 4"));
+        assert!(text.starts_with("version = 5"));
         let file = read(&text).unwrap();
         let (back, _) = (file.workspaces[0])
             .workspace(2, crate::server::workspace::tests::AREA, &[])
@@ -675,7 +691,7 @@ cwd = "/tmp"
         let names: Vec<_> = back.tabs.iter().map(|tab| tab.name.as_deref()).collect();
         assert_eq!(names, [None, Some("logs")]);
 
-        let old = text.replacen("version = 4", "version = 2", 1);
+        let old = text.replacen("version = 5", "version = 2", 1);
         let old = old.replace("name = \"logs\"\n", "");
         let file = read(&old).unwrap();
         assert!(file.workspaces[0].tabs.iter().all(|tab| tab.name.is_none()));
@@ -716,11 +732,109 @@ cwd = "/tmp"
     fn a_version_3_file_reads_with_no_groups() {
         let text = to_text(vec![saved(&workspace(), &[])], &[], true).unwrap();
         assert!(!text.contains("[[group]]"));
-        let old = text.replacen("version = 4", "version = 3", 1);
+        let old = text.replacen("version = 5", "version = 3", 1);
         let file = read(&old).unwrap();
         assert!(file.groups().is_empty());
         let area = crate::server::workspace::tests::AREA;
         let (back, _) = file.workspaces[0].workspace(0, area, &[]).unwrap();
         assert_eq!(back.group, None);
+    }
+
+    fn asleep() -> Workspace {
+        let workspace = workspace();
+        let mut saved = saved(&workspace, &[]);
+        saved.tabs[0].panes[1].tabs = vec![PathBuf::from("/home/jack")];
+        saved.sleeping = true;
+        let (asleep, tabs) = saved
+            .workspace(2, crate::server::workspace::tests::AREA, &[])
+            .unwrap();
+        assert!(tabs.is_empty());
+        asleep
+    }
+
+    #[test]
+    fn a_sleeping_workspace_keeps_its_terminal_tabs_for_its_wake_and_lists_none_to_start() {
+        let asleep = asleep();
+        let tab = TerminalTab {
+            tab: 0,
+            pane: 1,
+            cwd: PathBuf::from("/home/jack"),
+        };
+        assert_eq!(asleep.asleep, Some(vec![tab]));
+        let tab = asleep.tab();
+        assert!(tab.layout.panes.iter().all(|pane| pane.tabs.is_empty()));
+        assert!(tab.info.values().all(|info| info.pid.is_none()));
+    }
+
+    #[test]
+    fn a_sleeping_workspace_reads_back_asleep_at_version_5() {
+        let asleep = asleep();
+        let text = to_text(vec![saved(&asleep, &[])], &[], true).unwrap();
+        assert!(text.starts_with("version = 5"));
+        assert!(text.contains("sleeping = true"));
+        let file = read(&text).unwrap();
+        assert_eq!(file.workspaces[0], saved(&asleep, &[]));
+        let area = crate::server::workspace::tests::AREA;
+        let (back, tabs) = file.workspaces[0].workspace(2, area, &[]).unwrap();
+        assert!(tabs.is_empty());
+        assert_eq!(back.asleep, asleep.asleep);
+
+        let awake = to_text(vec![saved(&workspace(), &[])], &[], true).unwrap();
+        assert!(!awake.contains("sleeping"));
+    }
+
+    #[test]
+    fn a_version_4_file_reads_with_every_workspace_awake() {
+        let text = to_text(vec![saved(&workspace(), &[])], &[], true).unwrap();
+        let old = text.replacen("version = 5", "version = 4", 1);
+        let file = read(&old).unwrap();
+        let area = crate::server::workspace::tests::AREA;
+        let (back, _) = file.workspaces[0].workspace(0, area, &[]).unwrap();
+        assert_eq!(back.asleep, None);
+        let names: Vec<_> = back.panes().map(|pane| pane.name.as_str()).collect();
+        assert_eq!(names, ["terminal", "code", "nautilus"]);
+    }
+
+    #[test]
+    fn sleeping_rebuilds_the_tabs_from_the_saved_record_keeping_unpinned_panes_and_the_tree() {
+        let mut workspace = workspace();
+        let (second, _) = workspace.add_tab(crate::server::workspace::tests::AREA);
+        let tab = &mut workspace.tabs[second];
+        let logs = tab.add_pane(tab.layout.focused, "logs".to_string());
+        tab.info_mut(logs).app_id = Some("org.gnome.Logs".to_string());
+        workspace.active_tab = second;
+        workspace.toggle_scratch("code");
+        workspace.group = Some(4);
+        let before: Vec<Vec<(String, CellRect)>> = (workspace.tabs.iter())
+            .map(|tab| {
+                (tab.layout.panes.iter())
+                    .map(|pane| (pane.name.clone(), pane.rect))
+                    .collect()
+            })
+            .collect();
+        let record = saved(&workspace, &[]);
+        let area = crate::server::workspace::tests::AREA;
+        let (restored, tabs) = record.workspace(2, area, &[]).unwrap();
+        workspace.sleep(restored, tabs);
+
+        let after: Vec<Vec<(String, CellRect)>> = (workspace.tabs.iter())
+            .map(|tab| {
+                (tab.layout.panes.iter())
+                    .map(|pane| (pane.name.clone(), pane.rect))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(after, before);
+        assert_eq!(saved(&workspace, &[]).tabs, record.tabs);
+        assert_eq!(workspace.active_tab, second);
+        assert_eq!(workspace.scratch_pane(), Some("code"));
+        assert_eq!(workspace.group, Some(4));
+        assert_eq!(workspace.asleep, Some(Vec::new()));
+        assert!(workspace.tabs.iter().all(|tab| tab.clients.is_empty()));
+        let tab = &workspace.tabs[second];
+        let logs = tab.layout.by_name("logs").unwrap();
+        assert!(!tab.info(logs).pinned);
+        assert!(workspace.keeps_empty(second, tab.layout.pane(logs).unwrap()));
+        assert!(!workspace.tab_is_spent(second, |_| false));
     }
 }

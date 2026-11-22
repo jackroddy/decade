@@ -538,7 +538,7 @@ impl State {
         let workspace = &self.workspaces[self.current()];
         let mut command = self.children.command(workspace, program, None);
         command.args(args);
-        if let Err(error) = self.children.spawn(command) {
+        if let Err(error) = self.children.spawn(workspace.id, command) {
             eprintln!("decade: {error}");
         }
     }
@@ -562,9 +562,12 @@ impl State {
             match restored {
                 Ok(workspaces) => {
                     for (workspace, tabs) in workspaces {
+                        let awake = workspace.asleep.is_none();
                         self.workspaces.push(workspace);
                         self.next_workspace += 1;
-                        self.start_workspace(self.workspaces.len() - 1, tabs);
+                        if awake {
+                            self.start_workspace(self.workspaces.len() - 1, tabs);
+                        }
                     }
                 }
                 Err(error) => {
@@ -613,10 +616,9 @@ impl State {
         let info = entry.info_mut(id);
         let class = format!("{name}.t{}", info.next_tab);
         info.next_tab += 1;
-        let ghostty = self
-            .children
-            .ghostty(&self.workspaces[workspace], &name, &class, cwd);
-        if let Err(error) = self.children.spawn(ghostty) {
+        let shown = &self.workspaces[workspace];
+        let ghostty = self.children.ghostty(shown, &name, &class, cwd);
+        if let Err(error) = self.children.spawn(shown.id, ghostty) {
             eprintln!("decade: {error}");
         }
     }
@@ -633,7 +635,7 @@ impl State {
             .as_deref()
             .unwrap_or(&shown.cwd);
         let ghostty = self.children.ghostty(shown, &pane.name, &pane.name, cwd);
-        match self.children.spawn(ghostty) {
+        match self.children.spawn(shown.id, ghostty) {
             Ok(pid) => self.workspaces[workspace].tabs[tab].started(id, pid),
             Err(error) => eprintln!("decade: {error}"),
         }
@@ -749,6 +751,58 @@ impl State {
         self.finish_closing(index);
     }
 
+    /// Put the workspace in the state a server stop leaves it in: its
+    /// programs killed, its other windows asked to close, and its tabs
+    /// rebuilt empty from its saved record.
+    fn sleep_workspace(&mut self, id: u32) {
+        let Some(index) = self.workspace_index(id) else {
+            return;
+        };
+        let shown = &self.workspaces[index];
+        if shown.asleep.is_some() {
+            return;
+        }
+
+        // the record is taken while the shells run, so it
+        // holds the directories they are in now
+        let record = save::saved(shown, &self.groups);
+        let (restored, tabs) = match record.workspace(id, self.pane_area(), &self.groups) {
+            Ok(rebuilt) => rebuilt,
+            Err(error) => {
+                eprintln!("decade: {} cannot sleep: {error}", shown.name);
+                return;
+            }
+        };
+        self.children.kill_workspace(id);
+        for client in shown.tabs.iter().flat_map(|tab| tab.clients.values()) {
+            client.toplevel.send_close();
+        }
+        let name = shown.name.clone();
+        self.answer_scratch(index, Some(Err(format!("workspace {name} went to sleep"))));
+        self.unlisten(index);
+        self.dismiss_popups();
+        self.workspaces[index].sleep(restored, tabs);
+        if index == self.current() {
+            self.workspace_shown();
+        } else {
+            self.relayout_workspace(index);
+        }
+        self.schedule_save();
+    }
+
+    /// Start the sleeping workspace's terminals and listen on its socket again.
+    fn wake_workspace(&mut self, id: u32) {
+        let Some(index) = self.workspace_index(id) else {
+            return;
+        };
+        let Some(tabs) = self.workspaces[index].asleep.take() else {
+            return;
+        };
+        self.start_workspace(index, tabs);
+        self.relayout_workspace(index);
+        self.schedule_save();
+    }
+
     fn close_tab(&mut self, workspace: u32, tab: usize) {
         let Some(index) = self.workspace_index(workspace) else {
             return;
@@ -791,14 +845,21 @@ impl State {
         }
     }
 
-    fn remove_workspace(&mut self, index: usize) {
-        let removed = self.workspaces.remove(index);
-        if let Some(token) = removed.listener {
+    /// Stop listening on the workspace's socket, and drop its channel
+    /// clients.
+    fn unlisten(&mut self, index: usize) {
+        let shown = &mut self.workspaces[index];
+        if let Some(token) = shown.listener.take() {
             self.loop_handle.remove(token);
         }
-        let _ = std::fs::remove_file(self.children.socket_path(removed.id));
-        self.sockets
-            .retain(|_, (workspace, _)| *workspace != removed.id);
+        let id = shown.id;
+        let _ = std::fs::remove_file(self.children.socket_path(id));
+        self.sockets.retain(|_, (workspace, _)| *workspace != id);
+    }
+
+    fn remove_workspace(&mut self, index: usize) {
+        self.unlisten(index);
+        let removed = self.workspaces.remove(index);
         if self.workspaces.is_empty() {
             self.add_workspace(workspace::home());
         }
@@ -947,6 +1008,8 @@ impl State {
                 }
             }
             Command::CloseWorkspace(id) => self.close_workspace(id),
+            Command::Sleep(id) => self.sleep_workspace(id),
+            Command::Wake(id) => self.wake_workspace(id),
         }
     }
 
@@ -1722,9 +1785,8 @@ impl CompositorHandler for State {
                 .and_then(|pid| self.expecting(pid))
                 .map(|(index, tab, id)| (index, tab, id, false));
             let placed = expected.or_else(|| {
-                self.workspaces
-                    .iter()
-                    .enumerate()
+                (self.workspaces.iter().enumerate())
+                    .filter(|(_, workspace)| workspace.asleep.is_none())
                     .find_map(|(index, workspace)| {
                         let prefix = workspace::app_id_prefix(workspace.id);
                         workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {

@@ -13,7 +13,9 @@ pub struct Children {
 
     /// The MCP server's address, without the workspace it serves.
     mcp: Option<String>,
-    running: Vec<Child>,
+
+    /// Each running child, with the id of the workspace it was started for.
+    running: Vec<(u32, Child)>,
 }
 
 impl Children {
@@ -81,16 +83,21 @@ impl Children {
         ghostty
     }
 
-    /// Start the command, and return its pid.
-    pub fn spawn(&mut self, command: Command) -> Result<u32, String> {
-        self.start(command).map(|child| child.id())
+    /// Start the command for the workspace with the id `workspace`, and
+    /// return its pid.
+    pub fn spawn(&mut self, workspace: u32, command: Command) -> Result<u32, String> {
+        self.start(workspace, command).map(|child| child.id())
     }
 
     /// Start the command with its stderr on a pipe, and return its pid and
     /// the pipe's nonblocking read end.
-    pub fn spawn_with_stderr(&mut self, mut command: Command) -> Result<(u32, File), String> {
+    pub fn spawn_with_stderr(
+        &mut self,
+        workspace: u32,
+        mut command: Command,
+    ) -> Result<(u32, File), String> {
         command.stderr(Stdio::piped());
-        let child = self.start(command)?;
+        let child = self.start(workspace, command)?;
         let pid = child.id();
         let stderr = File::from(OwnedFd::from(child.stderr.take().expect("a piped stderr")));
         rustix::io::ioctl_fionbio(&stderr, true)
@@ -98,40 +105,48 @@ impl Children {
         Ok((pid, stderr))
     }
 
-    fn start(&mut self, mut command: Command) -> Result<&mut Child, String> {
+    fn start(&mut self, workspace: u32, mut command: Command) -> Result<&mut Child, String> {
         let program = command.get_program().to_string_lossy().into_owned();
         let child = command
             .spawn()
             .map_err(|error| format!("could not start {program}: {error}"))?;
-        self.running.push(child);
-        Ok(self.running.last_mut().unwrap())
+        self.running.push((workspace, child));
+        Ok(&mut self.running.last_mut().unwrap().1)
     }
 
     /// Whether the child with this pid has not exited.
     pub fn running(&mut self, pid: u32) -> bool {
         self.running
             .iter_mut()
-            .find(|child| child.id() == pid)
-            .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
+            .find(|(_, child)| child.id() == pid)
+            .is_some_and(|(_, child)| matches!(child.try_wait(), Ok(None)))
     }
 
     /// Wait on every child that has exited, so none is left a zombie, and
     /// return the pid and exit status of each.
     pub fn reap(&mut self) -> Vec<(u32, ExitStatus)> {
         let mut exited = Vec::new();
-        self.running.retain_mut(|child| match child.try_wait() {
-            Ok(None) => true,
-            Ok(Some(status)) => {
-                exited.push((child.id(), status));
-                false
-            }
-            Err(_) => false,
-        });
+        self.running
+            .retain_mut(|(_, child)| match child.try_wait() {
+                Ok(None) => true,
+                Ok(Some(status)) => {
+                    exited.push((child.id(), status));
+                    false
+                }
+                Err(_) => false,
+            });
         exited
     }
 
     pub fn kill_all(&mut self) {
-        for child in &mut self.running {
+        for (_, child) in &mut self.running {
+            let _ = child.kill();
+        }
+    }
+
+    /// Kill every child started for the workspace with the id `workspace`.
+    pub fn kill_workspace(&mut self, workspace: u32) {
+        for (_, child) in (self.running.iter_mut()).filter(|(started, _)| *started == workspace) {
             let _ = child.kill();
         }
     }
@@ -186,10 +201,10 @@ mod tests {
     #[test]
     fn a_reaped_child_that_exited_leaves_no_zombie_and_gives_its_status() {
         let mut children = Children::new("wayland-9".into(), "/tmp".into(), None);
-        let pid = children.spawn(Command::new("false")).unwrap();
+        let pid = children.spawn(0, Command::new("false")).unwrap();
         let mut sleep = Command::new("sleep");
         sleep.arg("5");
-        let sleeper = children.spawn(sleep).unwrap();
+        let sleeper = children.spawn(0, sleep).unwrap();
         let mut exited = Vec::new();
         for _ in 0..100 {
             exited.extend(children.reap());
@@ -201,7 +216,7 @@ mod tests {
         assert!(!Path::new(&format!("/proc/{pid}")).exists());
         assert_eq!(exited.len(), 1);
         assert_eq!((exited[0].0, exited[0].1.code()), (pid, Some(1)));
-        assert_eq!(children.running[0].id(), sleeper);
+        assert_eq!(children.running[0].1.id(), sleeper);
         children.kill_all();
     }
 
@@ -211,7 +226,7 @@ mod tests {
         let mut shell = Command::new("sh");
         shell.args(["-c", "echo out; echo broken >&2"]);
         shell.stdout(Stdio::null());
-        let (_, stderr) = children.spawn_with_stderr(shell).unwrap();
+        let (_, stderr) = children.spawn_with_stderr(0, shell).unwrap();
         let mut seen = Vec::new();
         let mut lines = crate::lines::Lines::default();
         for _ in 0..100 {
@@ -221,6 +236,33 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert_eq!(seen, ["broken"]);
+        children.kill_all();
+    }
+
+    #[test]
+    fn killing_a_workspaces_children_leaves_the_other_workspaces_running() {
+        let mut children = Children::new("wayland-9".into(), "/tmp".into(), None);
+        let sleeper = |children: &mut Children, workspace| {
+            let mut sleep = Command::new("sleep");
+            sleep.arg("30");
+            children.spawn(workspace, sleep).unwrap()
+        };
+        let killed = [sleeper(&mut children, 1), sleeper(&mut children, 1)];
+        let kept = sleeper(&mut children, 2);
+        children.kill_workspace(1);
+        let mut exited = Vec::new();
+        for _ in 0..100 {
+            exited.extend(children.reap().into_iter().map(|(pid, _)| pid));
+            if exited.len() == 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        exited.sort();
+        let mut expected = killed.to_vec();
+        expected.sort();
+        assert_eq!(exited, expected);
+        assert!(children.running(kept));
         children.kill_all();
     }
 
