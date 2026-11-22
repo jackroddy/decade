@@ -15,7 +15,7 @@
   "lease_expires": "2026-11-22T08:53:01.032656528Z",
   "defer_until": null,
   "created_at": "2026-11-21T20:46:49.630125886Z",
-  "updated_at": "2026-11-22T08:38:01.048492939Z",
+  "updated_at": "2026-11-22T08:51:49.477698177Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -35,6 +35,14 @@
       "author": "Jack Roddy/8a3a6cd2",
       "text": "Jack signed off this plan on 2026-11-22. It lands as two commits on `dev`.\n\n1. Server side. Sleep takes the workspace's `Saved` record before anything dies, kills the programs decade started in it, asks its other windows to close, drops its agents, point and flash, and replaces its tabs with what `Saved::workspace()` builds from that record. The result matches what a server restart shows, and `prune` never sees the collapse. `Children` tags each child with its workspace id so one workspace's programs can be killed. Wake runs `start_workspace()` with the stored terminal tabs. The save format goes to version 5 with `sleeping` on `Saved`, and the reader keeps parsing versions 2 to 4. A workspace restored asleep spawns no terminals.\n2. Interface. A sleeping card shows Zzz in its round button, and a click wakes it. A sleeping tile is dimmed with a \"z\". Each empty pane shows \"asleep\" with a wake button. The workspace menu offers Sleep or Wake, and a group's menu offers \"Sleep all\" and \"Wake all\". Sleep asks for a second click while the workspace has a working agent. Switching to a sleeping workspace does not wake it.",
       "commit": "0c3e7e2",
+      "branch": "dev"
+    },
+    {
+      "id": "06a26b10",
+      "at": "2026-11-22T08:51:49.477697497Z",
+      "author": "Jack Roddy/8a3a6cd2",
+      "text": "Landed in a406238 (sleep, wake and save format version 5 on the server) and f62a5f1 (card mark, tile, asleep placeholders, workspace and group menus, guards against starting programs). Scripted sessions slept and woke a split workspace and restarted the server with one asleep. A window from a process that outlives the sleep can still land in the workspace; that is filed separately.",
+      "commit": "f62a5f1",
       "branch": "dev"
     }
   ],
