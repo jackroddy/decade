@@ -1,0 +1,10 @@
+{
+  "slug": "agent-run-programs-reach-the-live-server",
+  "text": "A program an agent runs from inside a decade pane inherits DECADE_SOCKET, DECADE_PANE, DECADE_WORKSPACE and DECADE_MCP, so a decade-aware program such as coax connects to the live server as an agent in that pane. Test runs of such programs need env -u on all four and their own XDG_RUNTIME_DIR. Children::command in decade/src/server/children.rs sets the variables. Seen 2026-11-22 when a test coax joined the live server.",
+  "created_at": "2026-11-22T09:28:24.815505998Z",
+  "updated_at": "2026-11-22T09:28:24.815505998Z",
+  "stamp": {
+    "commit": "fa830ce",
+    "branch": "dev"
+  }
+}
