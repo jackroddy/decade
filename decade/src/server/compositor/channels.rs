@@ -12,7 +12,7 @@ use smithay::wayland::shell::xdg::ToplevelSurface;
 use crate::lines::Lines;
 use crate::server::channel::Out;
 use crate::server::mcp;
-use crate::server::scratch::{self, Launch, Waiting};
+use crate::server::scratch::{self, Launch, Scratch, Started, Waiting};
 
 use super::State;
 
@@ -148,6 +148,10 @@ impl State {
                 let agents = shown.router.agents.listing(Instant::now());
                 return Ok(agents.to_string());
             }
+            mcp::Call::ScratchStatus => {
+                let status = shown.scratch.as_ref().map(Scratch::status);
+                return Ok(status.unwrap_or_else(|| scratch::NOT_STARTED.to_string()));
+            }
             mcp::Call::Panes => {
                 let panes = Reply::Panes(shown.pane_list(caller));
                 return Ok(serde_json::to_string(&panes).unwrap());
@@ -225,6 +229,8 @@ impl State {
         let Some(scratch) = &mut self.workspaces[workspace].scratch else {
             return;
         };
+        scratch.started = (started.as_ref().ok())
+            .map(|&pid| Started::new(launch.program.clone(), pid, launch.terminal));
         let name = scratch.pane.clone();
         let pid = match started {
             Ok(pid) if !launch.terminal => pid,
@@ -244,7 +250,6 @@ impl State {
         scratch.expected = Some(pid);
         if let Some(waiting) = &mut scratch.waiting {
             waiting.pid = Some(pid);
-            waiting.stderr_open = true;
             self.time_scratch(workspace);
         }
     }
@@ -324,7 +329,8 @@ impl State {
         if let Some(timer) = waiting.timer {
             self.loop_handle.remove(timer);
         }
-        let answer = answer.unwrap_or_else(|| Ok(waiting.report(&scratch.pane)));
+        let answer =
+            answer.unwrap_or_else(|| Ok(waiting.report(&scratch.pane, scratch.started.as_ref())));
         let _ = waiting.reply.send(answer.map(mcp::Answer::Text));
     }
 
@@ -337,27 +343,30 @@ impl State {
         })
     }
 
+    /// The workspace whose scratch program last started is `pid`, and
+    /// that program.
+    fn started_in(&mut self, pid: u32) -> Option<(usize, &mut Started)> {
+        let mut workspaces = self.workspaces.iter_mut().enumerate();
+        workspaces.find_map(|(index, workspace)| {
+            let started = workspace.scratch.as_mut()?.started_as(pid)?;
+            Some((index, started))
+        })
+    }
+
     fn scratch_stderr(&mut self, pid: u32, line: &str) {
         eprintln!("{line}");
-        if let Some(workspace) = self.waiting_on(pid)
-            && let Some(scratch) = &mut self.workspaces[workspace].scratch
-            && let Some(waiting) = &mut scratch.waiting
-        {
-            waiting.stderr_line(line);
+        if let Some((_, started)) = self.started_in(pid) {
+            started.stderr_line(line);
         }
     }
 
     fn scratch_stderr_closed(&mut self, pid: u32) {
-        let Some(workspace) = self.waiting_on(pid) else {
+        let Some((workspace, started)) = self.started_in(pid) else {
             return;
         };
-        let Some(waiting) = (self.workspaces[workspace].scratch.as_mut())
-            .and_then(|scratch| scratch.waiting.as_mut())
-        else {
-            return;
-        };
-        waiting.stderr_open = false;
-        if waiting.exited.is_some() {
+        started.stderr_open = false;
+        let exited = started.exited.is_some();
+        if exited && self.waiting_on(pid) == Some(workspace) {
             self.answer_scratch(workspace, None);
         }
     }
@@ -365,16 +374,18 @@ impl State {
     /// Note that the child `pid` has exited, and answer a `scratch.open`
     /// waiting on it once its stderr has been read to the end.
     pub(super) fn child_exited(&mut self, pid: u32, status: ExitStatus) {
-        let Some(workspace) = self.waiting_on(pid) else {
+        let Some((workspace, started)) = self.started_in(pid) else {
             return;
         };
-        let Some(waiting) = (self.workspaces[workspace].scratch.as_mut())
-            .and_then(|scratch| scratch.waiting.as_mut())
-        else {
+
+        // a record that already has an exit is for an earlier
+        // process that had this pid
+        if started.exited.is_some() {
             return;
-        };
-        waiting.exited = Some(status);
-        if !waiting.stderr_open {
+        }
+        started.exited = Some(status);
+        let stderr_open = started.stderr_open;
+        if !stderr_open && self.waiting_on(pid) == Some(workspace) {
             self.answer_scratch(workspace, None);
         }
     }

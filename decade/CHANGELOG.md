@@ -39,6 +39,13 @@ command line and what the tool writes.
   coax's directory and types `coax <flags> --session <id>` into its
   shell. When coax exits, the shell stays at its prompt. A coax that has
   quit is not in the next save.
+- An MCP tool `scratch.status`, with no arguments. Its answer says
+  whether the program `scratch.open` last started in the workspace is
+  still running. Once that program has exited, the answer gives its exit
+  status and the last 20 lines of its stderr. For a program started in a
+  terminal, the answer gives the terminal's state and no stderr lines.
+  decade forgets the program when the workspace sleeps or closes, and
+  when the person unmarks or closes the scratch pane.
 
 ### Changed
 

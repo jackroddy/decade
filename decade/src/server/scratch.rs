@@ -19,8 +19,14 @@ const ANCESTRY_DEPTH: usize = 8;
 /// gives no `wait`.
 pub const DEFAULT_WAIT: Duration = Duration::from_secs(5);
 
-/// How many of the last lines of a program's stderr an exit reports.
+/// How many of the last lines of a program's stderr decade keeps.
 const STDERR_LINES: usize = 20;
+
+/// How many characters of a stderr line decade keeps.
+const STDERR_LINE_CHARS: usize = 500;
+
+/// The answer to `scratch.status` when no program has been started.
+pub const NOT_STARTED: &str = "no program has been started with scratch.open in this workspace";
 
 /// The pane agents show programs in, one per workspace at most.
 pub struct Scratch {
@@ -33,6 +39,9 @@ pub struct Scratch {
     /// The program that starts once the pane's client has gone.
     pub next: Option<Launch>,
     pub waiting: Option<Waiting>,
+
+    /// The program `scratch.open` last started.
+    pub started: Option<Started>,
 }
 
 /// A `scratch.open` call that has not been answered yet.
@@ -44,6 +53,15 @@ pub struct Waiting {
     /// The program's pid, or `None` while the old occupant closes.
     pub pid: Option<u32>,
     pub timer: Option<RegistrationToken>,
+}
+
+/// A program `scratch.open` started, and what is known of it since.
+pub struct Started {
+    pub program: String,
+
+    /// The pid of the program, or of the terminal it runs in.
+    pub pid: u32,
+    pub terminal: bool,
     pub exited: Option<ExitStatus>,
 
     /// The last lines the program wrote to stderr.
@@ -75,6 +93,20 @@ impl Scratch {
             expected: None,
             next: None,
             waiting: None,
+            started: None,
+        }
+    }
+
+    /// The program last started, if its pid is `pid`.
+    pub fn started_as(&mut self, pid: u32) -> Option<&mut Started> {
+        self.started.as_mut().filter(|started| started.pid == pid)
+    }
+
+    /// The answer to `scratch.status`.
+    pub fn status(&self) -> String {
+        match &self.started {
+            Some(started) => started.status(),
+            None => NOT_STARTED.to_string(),
         }
     }
 }
@@ -87,9 +119,46 @@ impl Waiting {
             wait,
             pid: None,
             timer: None,
+        }
+    }
+
+    /// The answer to the call from what is known of its program so far, in
+    /// the scratch pane `pane`.
+    pub fn report(&self, pane: &str, started: Option<&Started>) -> String {
+        let program = &self.program;
+        let Some(started) = started.filter(|started| Some(started.pid) == self.pid) else {
+            return format!(
+                "asked the program in pane {pane} to close; it has not closed yet, \
+                 and {program} starts there once it has"
+            );
+        };
+        match started.exited {
+            Some(status) if started.stderr.is_empty() => {
+                format!("{program} exited before opening a window ({status}); its stderr was empty")
+            }
+            Some(status) => format!(
+                "{program} exited before opening a window ({status}); \
+                 the last lines of its stderr:\n{}",
+                started.stderr_lines()
+            ),
+            None => format!(
+                "{program} is running in pane {pane} with no window after {}s; \
+                 decade puts its window in the pane when it opens one",
+                self.wait.as_secs_f64()
+            ),
+        }
+    }
+}
+
+impl Started {
+    pub fn new(program: String, pid: u32, terminal: bool) -> Started {
+        Started {
+            program,
+            pid,
+            terminal,
             exited: None,
             stderr: VecDeque::new(),
-            stderr_open: false,
+            stderr_open: !terminal,
         }
     }
 
@@ -97,34 +166,37 @@ impl Waiting {
         if self.stderr.len() == STDERR_LINES {
             self.stderr.pop_front();
         }
-        self.stderr.push_back(line.to_string());
+        self.stderr
+            .push_back(line.chars().take(STDERR_LINE_CHARS).collect());
     }
 
-    /// The answer to the call from what is known of the program so far, in
-    /// the scratch pane `pane`.
-    pub fn report(&self, pane: &str) -> String {
-        let program = &self.program;
-        match (self.pid, self.exited) {
-            (None, _) => format!(
-                "asked the program in pane {pane} to close; it has not closed yet, \
-                 and {program} starts there once it has"
-            ),
-            (Some(_), Some(status)) if self.stderr.is_empty() => {
-                format!("{program} exited before opening a window ({status}); its stderr was empty")
+    fn stderr_lines(&self) -> String {
+        let lines: Vec<&str> = self.stderr.iter().map(String::as_str).collect();
+        lines.join("\n")
+    }
+
+    /// The answer to `scratch.status` for this program.
+    pub fn status(&self) -> String {
+        let Started { program, pid, .. } = self;
+        let Some(status) = self.exited else {
+            if self.terminal {
+                return format!("{program} is running in a terminal (pid {pid})");
             }
-            (Some(_), Some(status)) => {
-                let lines: Vec<&str> = self.stderr.iter().map(String::as_str).collect();
-                let lines = lines.join("\n");
-                format!(
-                    "{program} exited before opening a window ({status}); \
-                     the last lines of its stderr:\n{lines}"
-                )
-            }
-            (Some(_), None) => format!(
-                "{program} is running in pane {pane} with no window after {}s; \
-                 decade puts its window in the pane when it opens one",
-                self.wait.as_secs_f64()
-            ),
+            return format!("{program} (pid {pid}) is running");
+        };
+        let exited = match status.code() {
+            Some(code) => format!("exited with status {code}"),
+            None => format!("exited ({status})"),
+        };
+        if self.terminal {
+            format!("{program} ran in a terminal (pid {pid}), which {exited}")
+        } else if self.stderr.is_empty() {
+            format!("{program} (pid {pid}) {exited}; its stderr was empty")
+        } else {
+            format!(
+                "{program} (pid {pid}) {exited}; its last stderr lines:\n{}",
+                self.stderr_lines()
+            )
         }
     }
 }
@@ -218,20 +290,24 @@ mod tests {
         waiting
     }
 
+    fn exit(code: i32) -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        ExitStatus::from_raw(code << 8)
+    }
+
     #[test]
     fn an_exit_is_reported_with_its_status_and_the_last_twenty_lines_of_stderr() {
-        use std::os::unix::process::ExitStatusExt;
-
-        let mut waiting = waiting(Some(40));
-        waiting.exited = Some(ExitStatus::from_raw(1 << 8));
+        let waiting = waiting(Some(40));
+        let mut started = Started::new("acre-gui".into(), 40, false);
+        started.exited = Some(exit(1));
         assert_eq!(
-            waiting.report("scratch"),
+            waiting.report("scratch", Some(&started)),
             "acre-gui exited before opening a window (exit status: 1); its stderr was empty"
         );
         for n in 1..=25 {
-            waiting.stderr_line(&format!("line {n}"));
+            started.stderr_line(&format!("line {n}"));
         }
-        let report = waiting.report("scratch");
+        let report = waiting.report("scratch", Some(&started));
         let lines: Vec<&str> = report.lines().collect();
         assert_eq!(
             lines[0],
@@ -243,16 +319,80 @@ mod tests {
 
     #[test]
     fn a_program_past_its_wait_is_reported_running_and_one_not_started_as_waiting_to_start() {
+        let started = Started::new("acre-gui".into(), 40, false);
         assert_eq!(
-            waiting(Some(40)).report("scratch"),
+            waiting(Some(40)).report("scratch", Some(&started)),
             "acre-gui is running in pane scratch with no window after 2.5s; \
              decade puts its window in the pane when it opens one"
         );
-        assert!(
-            waiting(None)
-                .report("scratch")
-                .starts_with("asked the program in pane scratch to close; it has not closed yet")
+
+        // the program from an earlier scratch.open is still the
+        // one started while the pane's old occupant closes
+        for started in [None, Some(&started)] {
+            assert!(
+                waiting(None).report("scratch", started).starts_with(
+                    "asked the program in pane scratch to close; it has not closed yet"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn the_status_says_a_program_runs_or_gives_its_exit_and_last_stderr_lines() {
+        let mut scratch = Scratch::new("scratch".into());
+        assert_eq!(scratch.status(), NOT_STARTED);
+        scratch.started = Some(Started::new("acre-gui".into(), 123, false));
+        assert_eq!(scratch.status(), "acre-gui (pid 123) is running");
+        let started = scratch.started.as_mut().unwrap();
+        started.exited = Some(exit(101));
+        assert_eq!(
+            scratch.status(),
+            "acre-gui (pid 123) exited with status 101; its stderr was empty"
         );
+        let started = scratch.started.as_mut().unwrap();
+        started.stderr_line("thread 'main' panicked");
+        started.stderr_line("note: run with RUST_BACKTRACE=1");
+        assert_eq!(
+            scratch.status(),
+            "acre-gui (pid 123) exited with status 101; its last stderr lines:\n\
+             thread 'main' panicked\nnote: run with RUST_BACKTRACE=1"
+        );
+    }
+
+    #[test]
+    fn the_status_of_a_program_in_a_terminal_is_the_terminals_with_no_stderr() {
+        let mut started = Started::new("htop".into(), 77, true);
+        assert!(!started.stderr_open);
+        assert_eq!(started.status(), "htop is running in a terminal (pid 77)");
+        started.exited = Some(exit(0));
+        assert_eq!(
+            started.status(),
+            "htop ran in a terminal (pid 77), which exited with status 0"
+        );
+    }
+
+    #[test]
+    fn a_new_start_replaces_the_record_and_the_old_programs_stderr_is_not_kept() {
+        let mut scratch = Scratch::new("scratch".into());
+        scratch.started = Some(Started::new("acre-gui".into(), 40, false));
+        scratch.started_as(40).unwrap().stderr_line("old");
+        scratch.started = Some(Started::new("acre-gui".into(), 41, false));
+        assert!(scratch.started_as(40).is_none());
+        scratch.started_as(41).unwrap().stderr_line("new");
+        assert_eq!(scratch.started.as_ref().unwrap().stderr, ["new"]);
+        assert_eq!(scratch.status(), "acre-gui (pid 41) is running");
+    }
+
+    #[test]
+    fn stderr_keeps_the_last_twenty_lines_each_cut_to_its_first_500_characters() {
+        let mut started = Started::new("acre-gui".into(), 40, false);
+        for n in 1..=45 {
+            started.stderr_line(&format!("line {n}"));
+        }
+        started.stderr_line(&"x".repeat(2000));
+        assert_eq!(started.stderr.len(), 20);
+        assert_eq!(started.stderr[0], "line 27");
+        assert_eq!(started.stderr[19].len(), 500);
     }
 
     #[test]

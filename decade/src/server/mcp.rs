@@ -63,6 +63,7 @@ pub enum Call {
     Panes,
     Agents,
     ScratchOpen(Launch),
+    ScratchStatus,
 
     /// The name of the workspace the address names.
     Workspace,
@@ -201,6 +202,11 @@ fn tools() -> Vec<Tool> {
             })),
         ),
         Tool::new(
+            "scratch.status",
+            "Tell whether the program scratch.open last started in this workspace is still running. Once it has exited, the answer gives its exit status and the last 20 lines of its stderr. For a program started with terminal true, the answer is about the terminal and has no stderr lines",
+            schema(json!({"type": "object", "properties": {}})),
+        ),
+        Tool::new(
             "screenshot",
             "Capture what a pane in the shown tab draws, without its bar or outline, as a PNG at the screen's pixels. Unless the user has turned on accept screenshots for the pane, decade asks the user first and waits up to 30 seconds. A refusal or no answer fails the call with the reason",
             schema(json!({
@@ -287,6 +293,7 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
             Ok(Call::Point { pane, note })
         }
         "scratch.open" => parse(name, arguments).map(Call::ScratchOpen),
+        "scratch.status" => Ok(Call::ScratchStatus),
         "screenshot" => {
             let Screenshot { pane } = parse(name, arguments)?;
             Ok(Call::Screenshot { pane })
@@ -351,7 +358,9 @@ impl ServerHandler for Decade {
                  line pairs. The user may mark one pane as the scratch pane, where agents \
                  show things. scratch.open starts a program in it, \
                  replacing the program there, and scratch.send sends that program a message. \
-                 Both fail when the workspace has no scratch pane. point draws the user's eye \
+                 Both fail when the workspace has no scratch pane. scratch.status tells \
+                 whether the program scratch.open last started still runs, or how it exited. \
+                 point draws the user's eye \
                  to a pane without taking keyboard focus. screenshot returns an image of what \
                  a pane draws, once the user allows it. agents lists the agents in the \
                  workspace with what each last reported.",
@@ -588,6 +597,7 @@ mod tests {
                 "agents",
                 "point",
                 "scratch.open",
+                "scratch.status",
                 "screenshot",
                 "scratch.send"
             ]
@@ -659,6 +669,10 @@ mod tests {
         };
         assert!(reason.starts_with("scratch.send: invalid type: string"));
         assert!(matches!(call_for("agents", Map::new()), Ok(Call::Agents)));
+        assert!(matches!(
+            call_for("scratch.status", Map::new()),
+            Ok(Call::ScratchStatus)
+        ));
         let missing = call_for("point", Map::new());
         assert_eq!(missing.err().unwrap(), "point: missing field `pane`");
         assert_eq!(
