@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-22T09:44:50.121575465Z",
   "defer_until": null,
   "created_at": "2026-11-13T00:33:26.972619564Z",
-  "updated_at": "2026-11-22T09:29:50.121575465Z",
+  "updated_at": "2026-11-22T09:30:08.711472515Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "fc2be27c",
+      "at": "2026-11-22T09:30:08.711471815Z",
+      "author": "Jack Roddy/8a3a6cd2",
+      "text": "Jack signed off on 2026-11-22: a new MCP tool, `scratch.status`, with no arguments. It answers for the program `scratch.open` last started in the caller's workspace. The answer says the program is running, or gives its exit status and the last 20 lines of its stderr once it has exited.\n\nOn the other open points:\n\n- With `terminal: true` the program runs inside ghostty, and its stderr goes to the terminal. `scratch.status` answers for that terminal: running, or exited with ghostty's status, and no stderr lines.\n- decade does not tell the agent of an exit unasked. MCP gives decade no channel to an agent outside a call.",
+      "commit": "fa830ce",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "b9f97c7",
