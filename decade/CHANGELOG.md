@@ -37,6 +37,8 @@ command line and what the tool writes.
 
 - The saved workspaces file is at version 5, which records whether each
   workspace is asleep. decade still reads the files of earlier versions.
+- A pane whose program exits while the pane is being dragged ends the
+  drag. Before, the drop could put the closed pane back into the layout.
 - A window from a program that decade did not start goes to the workspace
   the program was launched from. It gets a new pane beside the pane the
   program was launched from. decade finds both from the `DECADE_SOCKET` and

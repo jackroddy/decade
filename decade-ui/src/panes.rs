@@ -539,6 +539,9 @@ impl<A: Copy + PartialEq> Layout<A> {
         if self.zoom == Some(id) {
             self.zoom = None;
         }
+        if self.dragged().is_some_and(|drag| drag.pane == id) {
+            self.drag = None;
+        }
         self.arrange();
         if self.focused == id {
             let next = heir
@@ -657,8 +660,6 @@ impl<A: Copy + PartialEq> Layout<A> {
         let Drag::Pane(PaneDrag { pane, cell, .. }) = self.drag.take()? else {
             return Some(Update::Nothing);
         };
-        // TODO: a pane closed during the drag is still `pane` here, and
-        // `apply_drop` puts its id back into the tree
         match cell.and_then(|(column, row)| self.drop_at(pane, column, row)) {
             Some(drop) => {
                 self.apply_drop(pane, drop);
@@ -1775,6 +1776,22 @@ mod tests {
         let chat = layout.pane(0).unwrap().rect;
         assert_eq!(code.row, chat.row);
         assert_eq!(code.column + code.columns, chat.column);
+    }
+
+    #[test]
+    fn removing_the_dragged_pane_ends_the_drag_so_its_release_drops_nothing() {
+        let mut layout: Layout = three_anchors();
+        let code = layout.pane(2).unwrap().rect;
+        assert_eq!(layout.press(px(5, 5), CELL, false, true), Press::Drag(0));
+        layout.motion(
+            px(code.column + code.columns / 2, code.row + code.rows / 2),
+            CELL,
+        );
+        layout.remove(0);
+        assert!(layout.drag.is_none());
+        assert_eq!(layout.release(), None);
+        assert!(layout.pane(0).is_none());
+        assert_eq!(layout.panes.len(), 2);
     }
 
     #[test]
