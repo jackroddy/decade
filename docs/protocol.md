@@ -49,8 +49,11 @@ A client that runs an agent adds an `agent` block with the agent's name,
 its version and the id of its session:
 
 ```json
-{"hello": {"name": "coax", "pane": "chat", "agent": {"name": "coax", "version": "0.4.0", "session": "7f3a"}}}
+{"hello": {"name": "coax", "pane": "chat", "agent": {"name": "coax", "version": "0.4.0", "session": "7f3a", "args": ["--agent", "claude"]}}}
 ```
+
+`args` holds the flags the program was started with, so that decade can
+start it again on the same session. It is optional and defaults to empty.
 
 A client without it is a plain pane program.
 

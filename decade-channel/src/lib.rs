@@ -93,6 +93,11 @@ pub struct Agent {
     pub name: String,
     pub version: String,
     pub session: String,
+
+    /// The flags the program was started with, to start it again on the
+    /// same session.
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 /// The payload of `agent`: the fields of the agent's report that changed.
@@ -776,6 +781,7 @@ mod tests {
             name: "coax".into(),
             version: "0.4.0".into(),
             session: "s1".into(),
+            args: vec!["--agent".into(), "claude".into()],
         };
         let hello = Hello {
             name: "coax".into(),
@@ -787,7 +793,12 @@ mod tests {
         let value = serde_json::to_value(&hello).unwrap();
         assert_eq!(
             value["agent"],
-            json!({"name": "coax", "version": "0.4.0", "session": "s1"})
+            json!({
+                "name": "coax",
+                "version": "0.4.0",
+                "session": "s1",
+                "args": ["--agent", "claude"]
+            })
         );
         assert_eq!(serde_json::from_value::<Hello>(value).unwrap(), hello);
         let plain = Hello {
@@ -795,5 +806,16 @@ mod tests {
             ..hello
         };
         assert!(serde_json::to_value(&plain).unwrap().get("agent").is_none());
+    }
+
+    #[test]
+    fn an_agent_without_args_reads_with_no_args() {
+        let agent: Agent = serde_json::from_value(json!({
+            "name": "coax",
+            "version": "0.4.0",
+            "session": "s1"
+        }))
+        .unwrap();
+        assert!(agent.args.is_empty());
     }
 }

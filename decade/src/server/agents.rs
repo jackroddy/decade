@@ -143,6 +143,7 @@ impl Agents {
             name,
             version,
             session,
+            args: _,
         } = identity;
         if pane.is_some() {
             self.list
@@ -286,6 +287,7 @@ mod tests {
             name: "coax".into(),
             version: "0.4.0".into(),
             session: session.into(),
+            args: Vec::new(),
         }
     }
 
