@@ -1,14 +1,16 @@
 # decade
 
-A cargo workspace of two crates, each in a directory of its own name.
+A cargo workspace of three crates, each in a directory of its own name.
 `decade` is a Wayland compositor nested in a window whose panes are other
-programs; `decade-channel` is the client side of its socket as a library, for
+programs. `decade-channel` is the client side of its socket as a library, for
 programs that run in those panes and speak the protocol in
-`docs/protocol.md`. `docs/` and `scripts/` sit at the workspace root. The pane
-programs themselves live in the decade-apps repository.
+`docs/protocol.md`. `decade-ui` is the UI kit that decade's chrome is drawn
+with. `docs/` and `scripts/` sit at the workspace root. The pane programs
+themselves live in the decade-apps repository.
 
-Every foam issue carries the label of the crate it changes, `decade` or
-`decade-channel`. A milestone that spans both carries both.
+Every foam issue carries the label of each crate it changes. The labels are
+`decade`, `decade-channel` and `decade-ui`. A milestone that spans several
+crates carries each of their labels.
 
 Design rationale that the code does not state lives in foam's memories, and
 pending work lives in foam's issues. `foam prime` prints both at session start.
@@ -68,16 +70,17 @@ x on its bar or when the program in it exits.
 texture at that size, on whole pixels. Text is never scaled. Anything drawn
 scaled, such as the drag ghost, leaves its text out.
 
-**UI toolkit.** decade's UI kit is kept apart so it can become its own crate
-once a second program needs it. The kit is the cell grid, the scene and its
-shapes, colours, text rasterization, and panes: the split tree, tabs, pane
-bars, and the input that resizes, moves and focuses them. A pane's content is
-an id that the kit lays out and leaves a placeholder for. The application's
-backend draws what each id shows. The kit imports nothing from smithay and
-nothing else from decade. Wayland clients, texture upload and decade's own
-widgets, such as the sidebar and the palette, stay outside it. The split is
-being designed under foam milestone decade-4a4e0f. No code moves until Jack
-signs off the design.
+**UI toolkit.** `decade-ui` is decade's UI kit, for programs that look and
+behave like decade. It holds the cell grid, the scene and its shapes, colours,
+text rasterization, panes and the overlay widgets. Panes cover the split tree,
+tabs, pane bars, and the input that resizes, moves and focuses them. A pane's
+content is an id that the kit lays out and leaves a `Shape::Content` for. The
+program draws what each id shows. Widgets and panes return actions of the
+program's own type. The kit imports nothing from smithay and nothing from
+decade. Wayland clients and texture upload stay in decade. decade's own
+widgets, such as the sidebar and the palette, live in `decade/src/chrome/`,
+which names neither smithay nor `crate::server`, so a viewer on another
+machine can draw them.
 
 **Formats.** A change to an on-disk layout bumps that format's version byte.
 The reader keeps an arm for the old layout by default. A breaking release may
