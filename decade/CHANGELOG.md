@@ -21,9 +21,22 @@ command line and what the tool writes.
   and sets the workspace's directory, which new tabs and launched apps
   start in. Running shells stay where they are, and the name stays.
   Close asks for a second click, then closes the workspace and its panes.
+- A workspace can sleep. Sleep in its right-click menu saves its layout,
+  asks its windows to close and stops the programs decade started in it.
+  The panes stay, empty. Each pane shows "asleep" and a wake button,
+  and the workspace's card shows a sleep mark where its agent's mark goes.
+  A click on that mark, on a wake button, or on Wake in the menu starts
+  its terminals again, each in the directory its shell was in. Shells
+  start fresh, without their scrollback. Agent sessions and GUI apps do
+  not start again. Showing a sleeping workspace does not wake it, and it
+  stays asleep when the server restarts. While an agent in the workspace
+  is working, Sleep asks for a second click. A group's menu offers Sleep
+  all and Wake all.
 
 ### Changed
 
+- The saved workspaces file is at version 5, which records whether each
+  workspace is asleep. decade still reads the files of earlier versions.
 - A window from a program that decade did not start goes to the workspace
   the program was launched from. It gets a new pane beside the pane the
   program was launched from. decade finds both from the `DECADE_SOCKET` and

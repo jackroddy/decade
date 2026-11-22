@@ -18,7 +18,7 @@ use crate::chrome::menu::{Action, Outcome};
 use crate::chrome::prompt::{self, Answer};
 use crate::chrome::rename::Named;
 use crate::server::clients;
-use crate::server::workspace::PaneAction;
+use crate::server::workspace::{PaneAction, Workspace};
 use crate::wire::{
     self, BTN_BACK, BTN_LEFT, BTN_RIGHT, BTN_SIDE, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
 };
@@ -421,7 +421,8 @@ impl State {
         };
         let palette = self.overlay.is_some();
         let dialog = (self.asking.as_ref()).map(|asking| asking.armed(Instant::now()));
-        let restartable = self.tab().restartable(self.layout().focused);
+        let restartable = self.workspaces[self.current()].asleep.is_none()
+            && self.tab().restartable(self.layout().focused);
         let mut control_key = false;
         let key = keyboard.input::<Option<Key>, _>(
             self,
@@ -663,6 +664,10 @@ impl State {
                 self.focus(id);
                 self.restart_pane(self.current(), id);
             }
+            PaneAction::Wake => {
+                let id = self.workspaces[self.current()].id;
+                self.wake_workspace(id);
+            }
         }
     }
 
@@ -734,15 +739,28 @@ impl State {
         let (x, y) = self.pointer_px();
         let frame = self.frame(self.current());
         let place = match frame.hit(x, y) {
-            Some(Hit::Show(id) | Hit::Clear(id)) => {
-                (self.workspace_index(id)).map(|index| Place::Workspace {
-                    id,
-                    name: self.workspaces[index].name.clone(),
-                    clearable: frame.clearable(id),
-                    group: self.workspaces[index].group,
+            Some(Hit::Show(id) | Hit::Clear(id) | Hit::Wake(id)) => {
+                (self.workspace_index(id)).map(|index| {
+                    let shown = &self.workspaces[index];
+                    Place::Workspace {
+                        id,
+                        name: shown.name.clone(),
+                        clearable: frame.clearable(id),
+                        group: shown.group,
+                        asleep: shown.asleep.is_some(),
+                        working: shown.working(),
+                    }
                 })
             }
-            Some(Hit::Group(id)) => Some(Place::Group(id)),
+            Some(Hit::Group(id)) => {
+                let members = || (self.workspaces.iter()).filter(|shown| shown.group == Some(id));
+                Some(Place::Group {
+                    id,
+                    awake: members().any(|shown| shown.asleep.is_none()),
+                    asleep: members().any(|shown| shown.asleep.is_some()),
+                    working: members().any(Workspace::working),
+                })
+            }
             Some(Hit::Tab(index)) => Some(Place::Tab(index)),
             Some(Hit::New) => self.sidebar_open.then_some(Place::Sidebar),
             Some(_) => None,

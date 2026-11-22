@@ -58,6 +58,14 @@ impl State {
         }
     }
 
+    /// The ids of the workspaces in group `id`.
+    pub(super) fn members(&self, id: u32) -> Vec<u32> {
+        (self.workspaces.iter())
+            .filter(|shown| shown.group == Some(id))
+            .map(|shown| shown.id)
+            .collect()
+    }
+
     /// Move group `id` to index `to` among the groups.
     pub(super) fn move_group(&mut self, id: u32, to: usize) {
         let Some(from) = self.groups.iter().position(|group| group.id == id) else {

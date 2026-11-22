@@ -252,11 +252,11 @@ impl State {
         if launch.terminal {
             let mut ghostty = self.children.ghostty(shown, name, name, &shown.cwd);
             ghostty.arg("-e").arg(&launch.program).args(&launch.args);
-            return self.children.spawn(shown.id, ghostty);
+            return self.children.spawn(shown, ghostty);
         }
         let mut command = self.children.command(shown, &launch.program, Some(name));
         command.args(&launch.args);
-        let (pid, stderr) = self.children.spawn_with_stderr(shown.id, command)?;
+        let (pid, stderr) = self.children.spawn_with_stderr(shown, command)?;
         let mut lines = Lines::default();
         let inserted = self.loop_handle.insert_source(
             Generic::new(stderr, Interest::READ, CalloopMode::Level),

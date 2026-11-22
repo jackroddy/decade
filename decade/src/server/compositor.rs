@@ -538,7 +538,7 @@ impl State {
         let workspace = &self.workspaces[self.current()];
         let mut command = self.children.command(workspace, program, None);
         command.args(args);
-        if let Err(error) = self.children.spawn(workspace.id, command) {
+        if let Err(error) = self.children.spawn(workspace, command) {
             eprintln!("decade: {error}");
         }
     }
@@ -618,7 +618,7 @@ impl State {
         info.next_tab += 1;
         let shown = &self.workspaces[workspace];
         let ghostty = self.children.ghostty(shown, &name, &class, cwd);
-        if let Err(error) = self.children.spawn(shown.id, ghostty) {
+        if let Err(error) = self.children.spawn(shown, ghostty) {
             eprintln!("decade: {error}");
         }
     }
@@ -635,7 +635,7 @@ impl State {
             .as_deref()
             .unwrap_or(&shown.cwd);
         let ghostty = self.children.ghostty(shown, &pane.name, &pane.name, cwd);
-        match self.children.spawn(shown.id, ghostty) {
+        match self.children.spawn(shown, ghostty) {
             Ok(pid) => self.workspaces[workspace].tabs[tab].started(id, pid),
             Err(error) => eprintln!("decade: {error}"),
         }
@@ -798,6 +798,7 @@ impl State {
         let Some(tabs) = self.workspaces[index].asleep.take() else {
             return;
         };
+        self.workspaces[index].mark_panes();
         self.start_workspace(index, tabs);
         self.relayout_workspace(index);
         self.schedule_save();
@@ -1010,6 +1011,16 @@ impl State {
             Command::CloseWorkspace(id) => self.close_workspace(id),
             Command::Sleep(id) => self.sleep_workspace(id),
             Command::Wake(id) => self.wake_workspace(id),
+            Command::SleepGroup(group) => {
+                for id in self.members(group) {
+                    self.sleep_workspace(id);
+                }
+            }
+            Command::WakeGroup(group) => {
+                for id in self.members(group) {
+                    self.wake_workspace(id);
+                }
+            }
         }
     }
 
@@ -1213,6 +1224,7 @@ impl State {
         match hit {
             Hit::Show(id) => self.show_on_active(id),
             Hit::Clear(id) => self.run_command(Command::Clear(id)),
+            Hit::Wake(id) => self.wake_workspace(id),
             Hit::Group(id) => self.toggle_fold(id),
             Hit::New => self.start_new_workspace(),
             Hit::Palette => self.open_palette(),
@@ -1405,6 +1417,9 @@ impl State {
     fn new_terminal_pane(&mut self) {
         let current = self.current();
         let shown = &mut self.workspaces[current];
+        if shown.asleep.is_some() {
+            return;
+        }
         let tab = shown.active_tab;
         let cwd = shown.cwd.clone();
         let at = shown.tabs[tab].layout.focused;
@@ -1440,6 +1455,9 @@ impl State {
 
     fn new_tab(&mut self) {
         let current = self.current();
+        if self.workspaces[current].asleep.is_some() {
+            return;
+        }
         let area = self.pane_area();
         let (tab, _) = self.workspaces[current].add_tab(area);
         let id = self.workspaces[current].tabs[tab].layout.focused;

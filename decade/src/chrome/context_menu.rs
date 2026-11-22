@@ -22,10 +22,20 @@ pub enum Place {
         name: String,
         clearable: bool,
         group: Option<u32>,
+        asleep: bool,
+
+        /// Whether an agent in the workspace is working.
+        working: bool,
     },
 
-    /// A group's header in the open sidebar, by the group's id.
-    Group(u32),
+    /// A group's header in the open sidebar, with whether any of its
+    /// workspaces is awake, asleep, or has a working agent.
+    Group {
+        id: u32,
+        awake: bool,
+        asleep: bool,
+        working: bool,
+    },
 
     /// A tab's pill on the top bar, by index.
     Tab(usize),
@@ -67,14 +77,16 @@ pub enum Command {
     CloseWorkspace(u32),
 
     /// Put the workspace to sleep.
-    //
-    // TODO: no menu entry runs Sleep or Wake yet
-    #[expect(dead_code)]
     Sleep(u32),
 
     /// Wake the sleeping workspace.
-    #[expect(dead_code)]
     Wake(u32),
+
+    /// Put every workspace in the group to sleep.
+    SleepGroup(u32),
+
+    /// Wake every sleeping workspace in the group.
+    WakeGroup(u32),
 }
 
 fn entry(label: &str, command: Command) -> Entry<Command> {
@@ -122,6 +134,8 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry<Command>> {
             name,
             clearable,
             group,
+            asleep,
+            working,
         } => {
             let mut entries = Vec::new();
             if clearable {
@@ -142,6 +156,14 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry<Command>> {
                 };
                 entries.push(entry(&format!("Move out of {}", own.name), command));
             }
+            if asleep {
+                entries.push(entry("Wake", Command::Wake(id)));
+            } else {
+                entries.push(Entry {
+                    confirm: working.then(|| format!("Sleep {name} while its agent works")),
+                    ..entry("Sleep", Command::Sleep(id))
+                });
+            }
             entries.push(entry("Change directory…", Command::ChangeDirectory(id)));
             entries.push(Entry {
                 confirm: Some(format!("Close {name} and its panes")),
@@ -149,10 +171,28 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry<Command>> {
             });
             entries
         }
-        Place::Group(id) => vec![
-            entry("Rename", Command::Rename(Named::Group(id))),
-            entry("Delete", Command::DeleteGroup(id)),
-        ],
+        Place::Group {
+            id,
+            awake,
+            asleep,
+            working,
+        } => {
+            let mut entries = vec![entry("Rename", Command::Rename(Named::Group(id)))];
+            if awake {
+                let name = (groups.iter())
+                    .find(|group| group.id == id)
+                    .map_or("the group", |group| group.name.as_str());
+                entries.push(Entry {
+                    confirm: working.then(|| format!("Sleep {name} while an agent works")),
+                    ..entry("Sleep all", Command::SleepGroup(id))
+                });
+            }
+            if asleep {
+                entries.push(entry("Wake all", Command::WakeGroup(id)));
+            }
+            entries.push(entry("Delete", Command::DeleteGroup(id)));
+            entries
+        }
         Place::Tab(index) => vec![entry("Rename", Command::Rename(Named::Tab(index)))],
         Place::Sidebar => vec![entry("New group", Command::NewGroup)],
     }
@@ -232,6 +272,17 @@ mod tests {
             name: "decade".to_string(),
             clearable,
             group,
+            asleep: false,
+            working: false,
+        }
+    }
+
+    fn group(awake: bool, asleep: bool, working: bool) -> Place {
+        Place::Group {
+            id: 7,
+            awake,
+            asleep,
+            working,
         }
     }
 
@@ -269,6 +320,7 @@ mod tests {
                 "Rename",
                 "Move to work",
                 "Move to home",
+                "Sleep",
                 "Change directory…",
                 "Close…"
             ]
@@ -280,6 +332,7 @@ mod tests {
                 "Rename",
                 "Move to home",
                 "Move out of work",
+                "Sleep",
                 "Change directory…",
                 "Close…"
             ]
@@ -303,9 +356,65 @@ mod tests {
     }
 
     #[test]
+    fn an_awake_workspace_offers_sleep_asking_twice_while_its_agent_works_and_an_asleep_one_wake() {
+        let place = |asleep, working| Place::Workspace {
+            id: 2,
+            name: "decade".to_string(),
+            clearable: false,
+            group: None,
+            asleep,
+            working,
+        };
+        let sleep = |working| {
+            let entries = entries(place(false, working), &[]);
+            entries.into_iter().find(|entry| entry.label == "Sleep")
+        };
+        assert_eq!(sleep(false), Some(entry("Sleep", Command::Sleep(2))));
+        let asking = sleep(true).unwrap();
+        assert_eq!(asking.action, Command::Sleep(2));
+        assert_eq!(
+            asking.confirm.as_deref(),
+            Some("Sleep decade while its agent works")
+        );
+        let entries = entries(place(true, false), &[]);
+        assert!(entries.contains(&entry("Wake", Command::Wake(2))));
+        assert!(!entries.iter().any(|entry| entry.label == "Sleep"));
+    }
+
+    #[test]
+    fn a_group_offers_sleep_all_while_a_workspace_is_awake_and_wake_all_while_one_is_asleep() {
+        let labels = |place| -> Vec<String> {
+            (entries(place, &groups()).into_iter())
+                .map(|entry| entry.label)
+                .collect()
+        };
+        assert_eq!(
+            labels(group(true, true, false)),
+            ["Rename", "Sleep all", "Wake all", "Delete"]
+        );
+        assert_eq!(
+            labels(group(true, false, false)),
+            ["Rename", "Sleep all", "Delete"]
+        );
+        assert_eq!(
+            labels(group(false, true, false)),
+            ["Rename", "Wake all", "Delete"]
+        );
+        assert_eq!(labels(group(false, false, false)), ["Rename", "Delete"]);
+        let quiet = entries(group(true, true, false), &groups());
+        assert_eq!(quiet[1], entry("Sleep all", Command::SleepGroup(7)));
+        assert_eq!(quiet[2], entry("Wake all", Command::WakeGroup(7)));
+        let working = entries(group(true, false, true), &groups());
+        assert_eq!(
+            working[1].confirm.as_deref(),
+            Some("Sleep work while an agent works")
+        );
+    }
+
+    #[test]
     fn a_group_header_offers_rename_and_delete_and_empty_sidebar_space_a_new_group() {
         assert_eq!(
-            entries(Place::Group(7), &groups()),
+            entries(group(false, false, false), &groups()),
             [
                 entry("Rename", Command::Rename(Named::Group(7))),
                 entry("Delete", Command::DeleteGroup(7))
@@ -319,7 +428,7 @@ mod tests {
 
     #[test]
     fn delete_is_the_only_destructive_entry() {
-        let destructive: Vec<String> = (entries(Place::Group(7), &groups()).into_iter())
+        let destructive: Vec<String> = (entries(group(true, true, true), &groups()).into_iter())
             .filter(|entry| entry.destructive)
             .map(|entry| entry.label)
             .collect();

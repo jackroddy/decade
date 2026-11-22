@@ -365,6 +365,7 @@ impl Saved {
         }
         if self.sleeping {
             restored.asleep = Some(tabs);
+            restored.mark_panes();
             return Ok((restored, Vec::new()));
         }
         Ok((restored, tabs))

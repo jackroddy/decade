@@ -23,6 +23,9 @@ const DOT: char = '●';
 /// The mark of a dim agent.
 const DIM_MARK: char = '○';
 
+/// The mark on a sleeping workspace's disc.
+const SLEEP_MARK: char = '\u{f04b2}';
+
 /// The time from one peak of a card's breathing to the next.
 const BREATH_PERIOD: Duration = Duration::from_millis(1600);
 
@@ -176,6 +179,7 @@ pub struct Entry {
 
     /// The id of the group the workspace is in.
     pub group: Option<u32>,
+    pub asleep: bool,
 }
 
 impl Entry {
@@ -200,6 +204,7 @@ impl Entry {
 pub enum Hit {
     Show(u32),
     Clear(u32),
+    Wake(u32),
 
     /// Fold or unfold the group with this id.
     Group(u32),
@@ -981,7 +986,9 @@ impl Frame {
             let entry = &self.entries[i];
             let (left, top, size) = self.disc(top);
             let on_disc = (left..left + size).contains(&x) && (top..top + size).contains(&y);
-            return Some(if on_disc && entry.clearable() {
+            return Some(if on_disc && entry.asleep {
+                Hit::Wake(entry.id)
+            } else if on_disc && entry.clearable() {
                 Hit::Clear(entry.id)
             } else {
                 Hit::Show(entry.id)
@@ -1315,8 +1322,12 @@ impl Frame {
         }
 
         let others = entry.agents.len().saturating_sub(1);
-        let state = fit(&state_text(agent, others), room);
-        scene.text_px(x, line(2), &state, Face::Chrome, agent_tint(agent));
+        let (state, color) = if entry.asleep {
+            ("asleep".to_string(), MUTED)
+        } else {
+            (state_text(agent, others), agent_tint(agent))
+        };
+        scene.text_px(x, line(2), &fit(&state, room), Face::Chrome, color);
 
         if let Some(message) = agent.and_then(|agent| agent.message.as_deref()) {
             let message = fit(message, room.saturating_sub(2));
@@ -1330,14 +1341,26 @@ impl Frame {
         }
     }
 
-    /// The disc at a card's top right holding its agent's glyph, on a card
-    /// whose background is `background`. Under the pointer, the disc of a
-    /// card that a click clears gets a ring and a check mark.
+    /// The disc at a card's top right holding its agent's glyph, or the
+    /// sleep mark of a sleeping workspace, on a card whose background is
+    /// `background`. Under the pointer, the disc of a card that a click
+    /// clears gets a ring and a check mark, and that of a sleeping card a
+    /// ring.
     fn draw_disc(&self, scene: &mut Scene, entry: &Entry, top: i32, background: Rgba) {
         let (x, y, size) = self.disc(top);
         let (glyph, color) = glyph(entry.agents.first());
         let hovered = entry.clearable() && self.hover == Some(Hit::Clear(entry.id));
-        let (fill, border, glyph, glyph_color) = if hovered {
+        let waking = entry.asleep && self.hover == Some(Hit::Wake(entry.id));
+        let (fill, border, glyph, glyph_color) = if waking {
+            let ring = self.scaled(DISC_RING);
+            let halo = palette::mix(background, DIM, 0.45);
+            let outer = size + 2 * ring;
+            scene.rounded(x - ring, y - ring, (outer, outer), outer / 2, halo, halo);
+            (palette::LIGHTER_BACKGROUND, DIM, SLEEP_MARK, TEXT)
+        } else if entry.asleep {
+            let (fill, border) = (palette::RAISED_BACKGROUND, palette::LIGHTER_BACKGROUND);
+            (fill, border, SLEEP_MARK, DIM)
+        } else if hovered {
             let ring = self.scaled(DISC_RING);
             let halo = palette::mix(background, color, 0.45);
             let outer = size + 2 * ring;
@@ -1364,7 +1387,8 @@ impl Frame {
         let hit = entry.map_or(Hit::New, |entry| Hit::Show(entry.id));
         let current = entry.is_some_and(|entry| entry.current);
         let hovered = self.hover == Some(hit);
-        let (mut fill, mut ring, color) = match (entry, current, hovered) {
+        let asleep = entry.is_some_and(|entry| entry.asleep);
+        let (mut fill, mut ring, mut color) = match (entry, current, hovered) {
             (_, true, _) => (CURRENT, palette::ACCENT, TEXT),
             (Some(_), false, true) => (palette::LIGHTER_BACKGROUND, DIM, palette::FADED_FOREGROUND),
             (None, false, true) => (palette::LIGHTER_BACKGROUND, DIM, DIM),
@@ -1378,6 +1402,9 @@ impl Frame {
         if let Some(pulse) = entry.and_then(|entry| entry.pulse) {
             fill = palette::mix(fill, POINTED, POINTED_FILL * pulse);
             ring = palette::mix(ring, POINTED, pulse);
+        }
+        if asleep && !current && !hovered {
+            (fill, ring, color) = (SIDEBAR, palette::LIGHTER_BACKGROUND, MUTED);
         }
         let radius = self.scaled(TILE_RADIUS);
         scene.rounded(left, top, (size, size), radius, fill, ring);
@@ -1396,16 +1423,25 @@ impl Frame {
         );
         scene.text_px(x, y, &text, face, color);
 
-        let Some(dot) = entry.and_then(Entry::state) else {
-            return;
-        };
         // the mockup sets the ringed dot 3 px past the inside of the
         // tile's 1 px border, so 2 px past its outside
         let ring = self.scaled(STATE_DOT_RING);
         let inner = self.scaled(STATE_DOT);
         let outer = inner + 2 * ring;
         let (x, y) = (left + size + self.scaled(2) - outer, top - self.scaled(2));
+        let dot = entry.and_then(Entry::state);
+        if !asleep && dot.is_none() {
+            return;
+        }
         scene.rounded(x, y, (outer, outer), outer / 2, SIDEBAR, SIDEBAR);
+        if asleep {
+            let (z_x, z_y) = (x + (outer - cell_width) / 2, y + (outer - cell_height) / 2);
+            scene.text_px(z_x, z_y, "z", Face::ChromeBold, DIM);
+            return;
+        }
+        let Some(dot) = dot else {
+            return;
+        };
         let (_, color) = mark(Some(dot));
         scene.rounded(x + ring, y + ring, (inner, inner), inner / 2, color, color);
     }
@@ -1446,7 +1482,11 @@ impl Frame {
         scene.text_px(x, line(1), &path, Face::Chrome, DIM);
 
         let mut next = 2;
-        if entry.agents.is_empty() {
+        if entry.asleep {
+            let state = fit(&format!("{SLEEP_MARK} asleep"), room);
+            scene.text_px(x, line(next), &state, Face::Chrome, MUTED);
+            next += 2;
+        } else if entry.agents.is_empty() {
             let state = fit(&state_line(None, 0), room);
             scene.text_px(x, line(next), &state, Face::Chrome, MUTED);
             next += 2;
@@ -1531,6 +1571,7 @@ mod tests {
             current: id == 0,
             pulse: None,
             group: None,
+            asleep: false,
         }
     }
 
@@ -1660,6 +1701,45 @@ mod tests {
         // nail is working and jack has no agent
         assert_eq!(frame.hit(left + 13, 402 + 4 + 13), Some(Hit::Show(1)));
         assert_eq!(frame.hit(left + 13, 506 + 4 + 13), Some(Hit::Show(0)));
+    }
+
+    fn with_jack_asleep(open: bool) -> Frame {
+        let mut entries = entries();
+        entries[0].asleep = true;
+        frame_of(open, entries, Vec::new())
+    }
+
+    fn texts(frame: &Frame) -> Vec<String> {
+        let mut scene = Scene::new(&decade_ui::Font::load(14.0));
+        frame.draw(&mut scene);
+        (scene.shapes.into_iter())
+            .filter_map(|shape| match shape {
+                Shape::Text { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_click_on_the_disc_of_a_sleeping_card_wakes_it_and_elsewhere_shows_it() {
+        let frame = with_jack_asleep(true);
+        let (left, top) = (6 + 244 - 6 - 26, 506 + 4);
+        assert_eq!(frame.hit(left, top), Some(Hit::Wake(0)));
+        assert_eq!(frame.hit(left + 25, top + 25), Some(Hit::Wake(0)));
+        assert_eq!(frame.hit(left - 1, top + 13), Some(Hit::Show(0)));
+        assert_eq!(frame.hit(left + 13, 402 + 4 + 13), Some(Hit::Show(1)));
+    }
+
+    #[test]
+    fn a_sleeping_card_shows_the_sleep_mark_and_reads_asleep_and_its_tile_has_a_z() {
+        let open = texts(&with_jack_asleep(true));
+        assert!(open.contains(&SLEEP_MARK.to_string()));
+        assert!(open.contains(&"asleep".to_string()));
+        assert!(!open.contains(&"no agent".to_string()));
+        let awake = texts(&frame(true));
+        assert!(!awake.contains(&SLEEP_MARK.to_string()));
+        assert!(texts(&with_jack_asleep(false)).contains(&"z".to_string()));
+        assert!(!texts(&frame(false)).contains(&"z".to_string()));
     }
 
     #[test]

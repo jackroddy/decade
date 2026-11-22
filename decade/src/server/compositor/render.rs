@@ -253,6 +253,7 @@ impl State {
                 current: i == shown,
                 pulse: pulse(workspace).filter(|_| i != shown),
                 group: workspace.group,
+                asleep: workspace.asleep.is_some(),
             })
             .collect();
         let shown = &self.workspaces[shown];

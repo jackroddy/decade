@@ -32,6 +32,7 @@ pub enum PaneAction {
     Scratch,
     Pin,
     Restart,
+    Wake,
 }
 
 pub struct Workspace {
@@ -344,17 +345,18 @@ impl Tab {
     }
 
     /// Set the marks of every pane from what decade keeps about it, with
-    /// the pane named `scratch` as the scratch pane.
-    pub fn mark_panes(&mut self, scratch: Option<&str>) {
+    /// the pane named `scratch` as the scratch pane, in a workspace that
+    /// is `asleep` or awake.
+    pub fn mark_panes(&mut self, scratch: Option<&str>, asleep: bool) {
         for pane in &mut self.layout.panes {
             let scratched = scratch == Some(pane.name.as_str());
-            pane.marks = marks(&self.info[&pane.id], scratched);
+            pane.marks = marks(&self.info[&pane.id], scratched, asleep);
         }
     }
 }
 
 /// The buttons, tags and placeholder of a pane with `info`.
-fn marks(info: &PaneInfo, scratched: bool) -> Marks<PaneAction> {
+fn marks(info: &PaneInfo, scratched: bool, asleep: bool) -> Marks<PaneAction> {
     let button = |on: bool, icons: (char, char), action| Button {
         icon: if on { icons.0 } else { icons.1 },
         on,
@@ -381,7 +383,12 @@ fn marks(info: &PaneInfo, scratched: bool) -> Marks<PaneAction> {
 
     // `Tab::restartable` without its check for no tabs, since
     // the layout draws a placeholder only on a pane with none
-    let placeholder = if info.cwd.is_some() && info.pinned {
+    let placeholder = if asleep {
+        Placeholder {
+            lines: vec!["asleep".to_string()],
+            button: Some(("wake".to_string(), PaneAction::Wake)),
+        }
+    } else if info.cwd.is_some() && info.pinned {
         Placeholder {
             lines: vec!["shell exited".to_string()],
             button: Some(("restart".to_string(), PaneAction::Restart)),
@@ -911,6 +918,11 @@ impl Workspace {
         self.scratch_pane() == Some(pane.name.as_str())
     }
 
+    /// Whether a live agent in the workspace is working.
+    pub fn working(&self) -> bool {
+        (self.router.agents.states()).any(|state| state == AgentState::Working)
+    }
+
     /// The most urgent state of the workspace's live agents, or `None`
     /// when no live agent has reported.
     pub fn agent_state(&self) -> Option<AgentState> {
@@ -922,7 +934,7 @@ impl Workspace {
     pub fn mark_panes(&mut self) {
         let scratch = self.scratch.as_ref().map(|scratch| scratch.pane.as_str());
         for tab in &mut self.tabs {
-            tab.mark_panes(scratch);
+            tab.mark_panes(scratch, self.asleep.is_some());
         }
     }
 
@@ -1430,7 +1442,7 @@ pub(super) mod tests {
     }
 
     fn drawn_texts(tab: &mut Tab) -> Vec<String> {
-        tab.mark_panes(None);
+        tab.mark_panes(None, false);
         layout_texts(&tab.layout)
     }
 
@@ -1598,6 +1610,36 @@ pub(super) mod tests {
         workspace.tab_mut().unpin(0);
         workspace.mark_panes();
         assert_eq!(workspace.layout().placeholder_action(0), None);
+    }
+
+    #[test]
+    fn every_empty_pane_of_a_sleeping_workspace_says_asleep_with_a_wake_button() {
+        let mut workspace = at_home();
+        let tab = workspace.tab_mut();
+        tab.pin(0, "decade.w0.terminal".to_string());
+        let files = add_transient(tab, "files");
+        tab.info_mut(files).app_id = Some("org.gnome.Nautilus".to_string());
+        add_transient(tab, "notes");
+        workspace.toggle_scratch("notes");
+        workspace.asleep = Some(Vec::new());
+        workspace.mark_panes();
+        let texts = layout_texts(workspace.layout());
+        assert_eq!(texts.iter().filter(|text| *text == "asleep").count(), 3);
+        assert_eq!(texts.iter().filter(|text| *text == "wake").count(), 3);
+        for gone in [
+            "shell exited",
+            "restart",
+            "no client",
+            "agents show things here",
+        ] {
+            assert!(!texts.iter().any(|text| text == gone), "{gone}");
+        }
+        for id in 0..3 {
+            assert_eq!(
+                workspace.layout().placeholder_action(id),
+                Some(PaneAction::Wake)
+            );
+        }
     }
 
     #[test]

@@ -83,9 +83,9 @@ impl Children {
         ghostty
     }
 
-    /// Start the command for the workspace with the id `workspace`, and
-    /// return its pid.
-    pub fn spawn(&mut self, workspace: u32, command: Command) -> Result<u32, String> {
+    /// Start the command for the workspace, and return its pid. Nothing
+    /// starts for a sleeping workspace.
+    pub fn spawn(&mut self, workspace: &Workspace, command: Command) -> Result<u32, String> {
         self.start(workspace, command).map(|child| child.id())
     }
 
@@ -93,7 +93,7 @@ impl Children {
     /// the pipe's nonblocking read end.
     pub fn spawn_with_stderr(
         &mut self,
-        workspace: u32,
+        workspace: &Workspace,
         mut command: Command,
     ) -> Result<(u32, File), String> {
         command.stderr(Stdio::piped());
@@ -105,12 +105,18 @@ impl Children {
         Ok((pid, stderr))
     }
 
-    fn start(&mut self, workspace: u32, mut command: Command) -> Result<&mut Child, String> {
+    fn start(&mut self, workspace: &Workspace, mut command: Command) -> Result<&mut Child, String> {
         let program = command.get_program().to_string_lossy().into_owned();
+        if workspace.asleep.is_some() {
+            return Err(format!(
+                "{program} does not start in {}, which is asleep",
+                workspace.name
+            ));
+        }
         let child = command
             .spawn()
             .map_err(|error| format!("could not start {program}: {error}"))?;
-        self.running.push((workspace, child));
+        self.running.push((workspace.id, child));
         Ok(&mut self.running.last_mut().unwrap().1)
     }
 
@@ -164,6 +170,14 @@ mod tests {
             .map(|value| value.to_string_lossy().into_owned())
     }
 
+    fn workspace(id: u32) -> Workspace {
+        Workspace::new(
+            id,
+            PathBuf::from("/tmp"),
+            crate::server::workspace::tests::AREA,
+        )
+    }
+
     #[test]
     fn a_ghostty_for_a_pane_is_told_its_workspace_pane_socket_and_mcp_address() {
         let children = Children::new(
@@ -201,10 +215,12 @@ mod tests {
     #[test]
     fn a_reaped_child_that_exited_leaves_no_zombie_and_gives_its_status() {
         let mut children = Children::new("wayland-9".into(), "/tmp".into(), None);
-        let pid = children.spawn(0, Command::new("false")).unwrap();
+        let pid = children
+            .spawn(&workspace(0), Command::new("false"))
+            .unwrap();
         let mut sleep = Command::new("sleep");
         sleep.arg("5");
-        let sleeper = children.spawn(0, sleep).unwrap();
+        let sleeper = children.spawn(&workspace(0), sleep).unwrap();
         let mut exited = Vec::new();
         for _ in 0..100 {
             exited.extend(children.reap());
@@ -226,7 +242,7 @@ mod tests {
         let mut shell = Command::new("sh");
         shell.args(["-c", "echo out; echo broken >&2"]);
         shell.stdout(Stdio::null());
-        let (_, stderr) = children.spawn_with_stderr(0, shell).unwrap();
+        let (_, stderr) = children.spawn_with_stderr(&workspace(0), shell).unwrap();
         let mut seen = Vec::new();
         let mut lines = crate::lines::Lines::default();
         for _ in 0..100 {
@@ -242,10 +258,10 @@ mod tests {
     #[test]
     fn killing_a_workspaces_children_leaves_the_other_workspaces_running() {
         let mut children = Children::new("wayland-9".into(), "/tmp".into(), None);
-        let sleeper = |children: &mut Children, workspace| {
+        let sleeper = |children: &mut Children, id| {
             let mut sleep = Command::new("sleep");
             sleep.arg("30");
-            children.spawn(workspace, sleep).unwrap()
+            children.spawn(&workspace(id), sleep).unwrap()
         };
         let killed = [sleeper(&mut children, 1), sleeper(&mut children, 1)];
         let kept = sleeper(&mut children, 2);
@@ -264,6 +280,21 @@ mod tests {
         assert_eq!(exited, expected);
         assert!(children.running(kept));
         children.kill_all();
+    }
+
+    #[test]
+    fn nothing_starts_for_a_sleeping_workspace() {
+        let mut children = Children::new("wayland-9".into(), "/tmp".into(), None);
+        let mut asleep = workspace(1);
+        asleep.asleep = Some(Vec::new());
+        let ghostty = children.ghostty(&asleep, "terminal", "terminal", Path::new("/tmp"));
+        assert!(children.spawn(&asleep, ghostty).is_err());
+        assert!(
+            children
+                .spawn_with_stderr(&asleep, Command::new("true"))
+                .is_err()
+        );
+        assert!(children.running.is_empty());
     }
 
     #[test]
