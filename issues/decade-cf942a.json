@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T23:01:25.31803197Z",
-  "updated_at": "2026-11-08T21:17:01.684723221Z",
+  "updated_at": "2026-11-22T09:00:40.863824278Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "941b43b8",
+      "at": "2026-11-22T09:00:40.863823508Z",
+      "author": "Jack Roddy/8a3a6cd2",
+      "text": "Jack decided on 2026-11-22:\n\n- Only coax sessions are resumed. coax already reports its agent name and session id over the decade socket (`Agent` in `decade-channel/src/lib.rs`), so decade detects nothing new.\n- coax gains a flag that resumes a session by id, as in `coax --agent <name> --session <id>`, in place of its picker.\n- A restored pane runs its shell in the saved directory, and the shell runs the resuming coax. Quitting coax leaves a shell prompt.\n- The resumed coax gets the flags it was started with, minus `--prompt`. coax reports them so decade can save them.",
+      "commit": "cfbd239",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "40e7937",
