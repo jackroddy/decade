@@ -1,6 +1,6 @@
 # decade
 
-> **<u>d</u>ynamic <u>e</u>xtensible <u>c</u>ollaborative <u>a</u>gent <u>d</u>evelopment <u>e</u>nvironment**
+> **<u>d</u>ynamic, <u>e</u>xtensible, and <u>c</u>ollaborative <u>a</u>gent <u>d</u>evelopment <u>e</u>nvironment**
 
 ## about
 
