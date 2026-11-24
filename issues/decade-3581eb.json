@@ -3,7 +3,7 @@
   "title": "The name field has no cursor, so only the end of a name can be edited",
   "body": "The name field that rename and new group open (`NameField` in `src/server/chrome/rename.rs`, from 9c9668c) takes typed characters and Backspace only. The first key typed replaces the old name. Left, Right, Home and End do nothing, so fixing a typo in the middle of a long name means deleting back to it.\n\n## Proposal\n\nThe field keeps a cursor that Left, Right, Home and End move, and typing and Backspace act at the cursor. The first key still replaces the whole name unless it is a movement key.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "decade",
@@ -13,19 +13,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/5da9dd6b",
-  "lease_expires": "2026-11-24T23:09:29.696166595Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T01:06:39.29694682Z",
-  "updated_at": "2026-11-24T23:05:15.002293248Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-24T23:05:16.951878647Z",
+  "closed_at": "2026-11-24T23:05:16.951878647Z",
+  "close_reason": "Landed in 8f232e4. NameField keeps a caret that Left, Right, Home and End move, and typing and Backspace act at it. MenuKey gained Home and End.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "da4f5cd",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "8f232e4",
+      "branch": "dev"
+    }
   }
 }
