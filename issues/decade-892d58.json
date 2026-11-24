@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-24T23:09:29.739076492Z",
   "defer_until": null,
   "created_at": "2026-11-07T05:27:44.876807341Z",
-  "updated_at": "2026-11-24T22:54:29.739076492Z",
+  "updated_at": "2026-11-24T23:06:43.275748116Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "463465b4",
+      "at": "2026-11-24T23:06:43.275747506Z",
+      "author": "Jack Roddy/5da9dd6b",
+      "text": "Not started; the spec leaves three things open that change the look or the design. (1) Twelve palette names have no key in colors.toml: FADED_FOREGROUND, LIGHT_RED/YELLOW/GREEN, DARK_RED/YELLOW/GREEN, MID_RED/YELLOW/GREEN, RAISED_BACKGROUND, BORDER (SHADOW is a fixed black). They must be derived from theme keys (mix toward foreground or background?) or stay fixed; fixed values clash with a different theme. (2) decade-ui's palette is pub consts (163 uses, plus const aliases in frame.rs and panes.rs). Runtime colours need a loaded Palette value or a once-set global; which one is a design choice. (3) A viewer on another machine draws chrome, so the server must send the palette over the wire or the viewer reads its own file; the spec does not say which.",
+      "commit": "767e18a",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "93a5286",
