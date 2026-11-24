@@ -3,7 +3,7 @@
   "title": "A workspace can have any number of scratch panes",
   "body": "A workspace holds at most one scratch pane. `Workspace::scratch` in `decade/src/server/workspace.rs` is an `Option<Scratch>`, and `Workspace::toggle_scratch` replaces it. Marking a second pane as scratch unmarks the first, and the test `marking_a_pane_scratch_unmarks_the_one_before_it` pins that behaviour. The MCP tools assume the one pane too. `scratch.open`, `scratch.send` and `scratch.status` take no pane argument, and `scratch_launch` in `decade/src/server/compositor/channels.rs` reads the one name from `Workspace::scratch_pane`. The saved record in `decade/src/server/save.rs` stores `scratch: Option<String>`.\n\n## Proposal\n\n- Every pane the user marks as scratch stays marked. Marking one pane leaves the others alone, and there is no limit on the count.\n- A scratch pane is known by the pane's own name. Pane names are already unique in a workspace (`unique_name`, `check_name`), and a renamed pane still answers to its former names (`Pane::answers_to` in `decade-ui/src/panes.rs`).\n- `scratch.open`, `scratch.send` and `scratch.status` take the name of a scratch pane. When the workspace has exactly one scratch pane, the name may be left out, as the tools work today. A call that leaves the name out while there are several, or names no scratch pane, fails, and the error lists the workspace's scratch panes.\n- Every agent in the workspace can reach every scratch pane.\n- Each scratch pane keeps its own `Scratch` state: the program last started, the call waiting on it, and its stderr.\n\n## Rejected\n\n- Numeric ids that only ever increase. They would keep an agent's references stable when a pane closes, but Jack judged that a renumbering mix-up costs one message to the agent, and names alone are simpler.\n\n## Out of scope\n\n- A mapping from agents to the scratch panes each may use. Jack runs one agent per workspace.\n- Agents naming panes, in decade-092b41.\n\n## Cost\n\nThe saved workspace record changes from one optional name to a list. That bumps the format's version byte, and the reader keeps an arm for the old layout. The MCP tool arguments change, which moves `decade`'s minor version.",
   "type": "feature",
-  "status": "open",
+  "status": "in_progress",
   "priority": 2,
   "labels": [
     "decade"
@@ -11,11 +11,11 @@
   "parent": null,
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/5da9dd6b",
+  "lease_expires": "2026-11-24T23:09:29.674561533Z",
   "defer_until": null,
   "created_at": "2026-11-24T22:19:51.452378971Z",
-  "updated_at": "2026-11-24T22:48:38.81083139Z",
+  "updated_at": "2026-11-24T22:54:29.674561533Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
