@@ -1,0 +1,30 @@
+{
+  "id": "decade-bf3aee",
+  "title": "A workspace can have only one scratch pane",
+  "body": "A workspace holds at most one scratch pane. `Workspace::scratch` in `decade/src/server/workspace.rs` is an `Option<Scratch>`, and `Workspace::toggle_scratch` replaces it. Marking a second pane as scratch unmarks the first, and the test `marking_a_pane_scratch_unmarks_the_one_before_it` pins that behaviour. The MCP tools assume the one pane too. `scratch.open`, `scratch.send` and `scratch.status` take no pane argument, and `scratch_launch` in `decade/src/server/compositor/channels.rs` reads the one name from `Workspace::scratch_pane`. The saved record in `decade/src/server/save.rs` stores `scratch: Option<String>`.\n\nJack wants as many scratch panes in a workspace as he marks, or as he allows agents to make.\n\n## Cost\n\nThe saved workspace record changes from one optional name to a list. That bumps the format's version byte, and the reader keeps an arm for the old layout. The MCP tool arguments change, which moves `decade`'s minor version.\n\n## Open\n\n- How does `scratch.open` pick a pane when the workspace has several? It could take the pane's name, use the caller's own scratch pane, or take any idle one.\n- What does \"allow\" mean? One reading is that Jack sets a number of scratch panes an agent may open on its own, and decade splits a new pane for each.\n- Does each agent get its own scratch pane, or do agents share the set?",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [
+    "decade"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-24T22:19:51.452378971Z",
+  "updated_at": "2026-11-24T22:19:51.452378971Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "6b11699",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
