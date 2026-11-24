@@ -263,6 +263,12 @@ pub struct PaneDrag {
     pub grab: Point,
     pub start: Instant,
 
+    /// Where the press was, in pixels.
+    origin: (f64, f64),
+
+    /// Whether the pointer has moved far enough for the pane to be dragged.
+    moved: bool,
+
     /// The cell under the pointer since the drag began.
     cell: Option<(u32, u32)>,
 }
@@ -626,6 +632,8 @@ impl<A: Copy + PartialEq> Layout<A> {
                 pane: id,
                 grab,
                 start: Instant::now(),
+                origin: at,
+                moved: ctrl,
                 cell: None,
             }));
             return Press::Drag(id);
@@ -647,9 +655,22 @@ impl<A: Copy + PartialEq> Layout<A> {
                 Some(Update::Relayout)
             }
             Drag::Pane(mut drag) => {
-                drag.cell = Some((column, row));
+                let threshold = f64::from(cell.height / 2);
+                if !drag.moved
+                    && ((at.0 - drag.origin.0).abs() >= threshold
+                        || (at.1 - drag.origin.1).abs() >= threshold)
+                {
+                    drag.moved = true;
+                    drag.start = Instant::now();
+                }
+                let update = if drag.moved {
+                    drag.cell = Some((column, row));
+                    Update::Redraw
+                } else {
+                    Update::Nothing
+                };
                 self.drag = Some(Drag::Pane(drag));
-                Some(Update::Redraw)
+                Some(update)
             }
         }
     }
@@ -670,9 +691,10 @@ impl<A: Copy + PartialEq> Layout<A> {
     }
 
     /// The pane being dragged, drawn as a ghost rather than in its slot.
+    /// A press on a pane's name is not a drag until the pointer moves.
     pub fn dragged(&self) -> Option<&PaneDrag> {
         match &self.drag {
-            Some(Drag::Pane(drag)) => Some(drag),
+            Some(Drag::Pane(drag)) if drag.moved => Some(drag),
             _ => None,
         }
     }
@@ -1579,6 +1601,8 @@ mod tests {
             pane,
             grab: Point { x: 0, y: 0 },
             start: Instant::now(),
+            origin: (0.0, 0.0),
+            moved: true,
             cell,
         })
     }
@@ -1743,6 +1767,31 @@ mod tests {
     fn a_press_on_a_pane_name_in_the_ctrl_bar_drags_the_pane() {
         let mut layout: Layout = three_anchors();
         assert_eq!(layout.press(px(2, 1), CELL, true, false), Press::Drag(0));
+    }
+
+    #[test]
+    fn a_press_on_a_pane_name_is_not_a_drag_until_the_pointer_moves_a_few_pixels() {
+        let mut layout: Layout = three_anchors();
+        let at = px(2, 1);
+        assert_eq!(layout.press(at, CELL, true, false), Press::Drag(0));
+        assert!(layout.dragged().is_none());
+        let near = (at.0 + 1.0, at.1);
+        assert_eq!(layout.motion(near, CELL), Some(Update::Nothing));
+        assert!(layout.dragged().is_none());
+        let far = (at.0 + f64::from(CELL.height), at.1);
+        assert_eq!(layout.motion(far, CELL), Some(Update::Redraw));
+        assert_eq!(layout.dragged().unwrap().pane, 0);
+    }
+
+    #[test]
+    fn a_click_on_a_pane_name_drops_nothing() {
+        let mut layout: Layout = three_anchors();
+        let before = layout.pane(0).unwrap().rect;
+        layout.press(px(2, 1), CELL, true, false);
+        layout.motion(px(2, 1), CELL);
+        assert_eq!(layout.release(), Some(Update::Redraw));
+        assert_eq!(layout.pane(0).unwrap().rect, before);
+        assert!(layout.dragged().is_none());
     }
 
     #[test]

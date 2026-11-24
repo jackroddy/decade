@@ -57,6 +57,9 @@ command line and what the tool writes.
 
 ### Changed
 
+- A press on a pane's name on the Ctrl bar starts a pane drag only once the
+  pointer moves a few pixels. A double-click to rename no longer flashes
+  the drag ghost.
 - decade saves workspaces at version 7 of its file. It saves whether
   each workspace is asleep, the coax session running in each terminal,
   and every scratch pane of each workspace. decade still reads the
