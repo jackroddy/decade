@@ -60,6 +60,12 @@ command line and what the tool writes.
 
 ### Changed
 
+- decade draws in the colours of the Omarchy theme. The server and each
+  viewer read `omarchy/current/theme/colors.toml` under
+  `$XDG_STATE_HOME` or `~/.local/state` once at start. A key that is
+  missing keeps the colour decade had before. The shades for state lines,
+  cards and borders are blends of the theme's colours. A theme change
+  reaches decade when it restarts.
 - A viewer that shows a point only as a workspace card or tile redraws about
   10 times a second while it pulses. A viewer that shows the pointed
   pane's outline or tab pill still redraws about 30 times a second.

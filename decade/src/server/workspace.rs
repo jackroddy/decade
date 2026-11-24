@@ -1743,8 +1743,8 @@ pub(super) mod tests {
         let mut workspace = at_home();
         workspace.add_pane(0, 0, "code", None);
         workspace.layout_mut().focused = 1;
-        let muted = decade_ui::palette::MUTED;
-        let bright = decade_ui::palette::FOREGROUND;
+        let muted = decade_ui::palette::get().muted;
+        let bright = decade_ui::palette::get().foreground;
         assert_eq!(
             bar_icons(workspace.layout(), 0),
             [

@@ -28,7 +28,10 @@ const USAGE: &str = "usage: decade [--class <app id>]
 fn main() {
     let mut args = std::env::args().skip(1);
     match (args.next().as_deref(), args.next(), args.next()) {
-        (Some("server"), None, _) => server::compositor::run(),
+        (Some("server"), None, _) => {
+            set_palette();
+            server::compositor::run();
+        }
         (Some("start"), None, _) => start(),
         (Some("stop"), None, _) => stop(),
         (Some("restart"), None, _) => {
@@ -43,13 +46,29 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        (None, _, _) => viewer::run("decade".to_string()),
-        (Some("--class"), Some(class), None) => viewer::run(class),
+        (None, _, _) => {
+            set_palette();
+            viewer::run("decade".to_string());
+        }
+        (Some("--class"), Some(class), None) => {
+            set_palette();
+            viewer::run(class);
+        }
         _ => {
             eprintln!("{USAGE}");
             std::process::exit(2);
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn set_palette() {
+    let path = files::xdg_home("XDG_STATE_HOME", ".local/state")
+        .map(|state| state.join("omarchy/current/theme/colors.toml"));
+    let text = path
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default();
+    decade_ui::palette::set(decade_ui::palette::Palette::from_theme(&text));
 }
 
 #[cfg(target_os = "linux")]

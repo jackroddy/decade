@@ -16,8 +16,12 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
   key still replaces the old name unless it is a movement key.
 - `Scene` is a list of shapes in pixels with helpers for a grid of
   monospace cells. `Shape::Content` marks where a program draws what a
-  `ContentId` shows. `CellRect`, `Point` and `Size` are its geometry, and
-  `palette` holds `Rgba` and the theme's colours.
+  `ContentId` shows. `CellRect`, `Point` and `Size` are its geometry.
+- `palette::Palette` holds the colours of an Omarchy theme and shades
+  blended from them. `Palette::from_theme` reads them from the text of a
+  `colors.toml`, with a fixed colour for each key it lacks. A program
+  sets one with `palette::set` at start, and drawing code reads it with
+  `palette::get`.
 - `Fonts` loads the chrome and menu fonts at a size in pixels and
   rasterizes a run of text in a `Face` to premultiplied RGBA pixels.
   `fit` and `tail` shorten text to a number of characters.

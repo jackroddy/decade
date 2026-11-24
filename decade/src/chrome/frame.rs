@@ -35,16 +35,7 @@ const MENU_WIDTH: u32 = 5;
 /// The most columns of what runs in a tab, on its pill.
 const TAB_LABEL: usize = 16;
 
-const BAR: Rgba = palette::LIGHTER_BACKGROUND;
-const SIDEBAR: Rgba = palette::DARK_BACKGROUND;
-const EDGE: Rgba = palette::SELECTION;
-const CURRENT: Rgba = palette::SELECTION;
-const TEXT: Rgba = palette::FOREGROUND;
-const DIM: Rgba = palette::LIGHT_FOREGROUND;
-const MUTED: Rgba = palette::MUTED;
-const POINTED: Rgba = palette::MAGENTA;
-
-/// How far toward `POINTED` a pulsing pill, card or tile is filled at
+/// How far toward magenta a pulsing pill, card or tile is filled at
 /// the pulse's peak; its ring goes all the way.
 const POINTED_FILL: f32 = 0.3;
 
@@ -291,52 +282,52 @@ pub struct Frame {
 /// The mark for an agent state and its colour.
 pub(super) fn mark(state: Option<AgentState>) -> (char, Rgba) {
     match state {
-        Some(AgentState::Attention) => ('!', palette::RED),
-        Some(AgentState::Done) => ('✓', palette::GREEN),
-        Some(AgentState::Working) => ('●', palette::YELLOW),
-        Some(AgentState::Idle) => ('○', DIM),
-        None => ('·', MUTED),
+        Some(AgentState::Attention) => ('!', palette::get().red),
+        Some(AgentState::Done) => ('✓', palette::get().green),
+        Some(AgentState::Working) => ('●', palette::get().yellow),
+        Some(AgentState::Idle) => ('○', palette::get().light_foreground),
+        None => ('·', palette::get().muted),
     }
 }
 
 /// The colour of a card's stripe.
 fn stripe(state: Option<AgentState>) -> Option<Rgba> {
     match state? {
-        AgentState::Attention => Some(palette::RED),
-        AgentState::Done => Some(palette::GREEN),
-        AgentState::Working => Some(palette::YELLOW),
-        AgentState::Idle => Some(palette::SELECTION),
+        AgentState::Attention => Some(palette::get().red),
+        AgentState::Done => Some(palette::get().green),
+        AgentState::Working => Some(palette::get().yellow),
+        AgentState::Idle => Some(palette::get().selection),
     }
 }
 
 /// The colour of a card's state line.
 fn tint(state: Option<AgentState>) -> Rgba {
     match state {
-        Some(AgentState::Attention) => palette::LIGHT_RED,
-        Some(AgentState::Done) => palette::LIGHT_GREEN,
-        Some(AgentState::Working) => palette::LIGHT_YELLOW,
-        Some(AgentState::Idle) => DIM,
-        None => MUTED,
+        Some(AgentState::Attention) => palette::get().light_red,
+        Some(AgentState::Done) => palette::get().light_green,
+        Some(AgentState::Working) => palette::get().light_yellow,
+        Some(AgentState::Idle) => palette::get().light_foreground,
+        None => palette::get().muted,
     }
 }
 
 /// The background of a state's pill on the top bar.
 fn pill_background(state: AgentState) -> Rgba {
     match state {
-        AgentState::Attention => palette::DARK_RED,
-        AgentState::Done => palette::DARK_GREEN,
-        AgentState::Working => palette::DARK_YELLOW,
-        AgentState::Idle => CURRENT,
+        AgentState::Attention => palette::get().dark_red,
+        AgentState::Done => palette::get().dark_green,
+        AgentState::Working => palette::get().dark_yellow,
+        AgentState::Idle => palette::get().selection,
     }
 }
 
 /// The background of a state's pill on the top bar under the pointer.
 fn pill_hover(state: AgentState) -> Rgba {
     match state {
-        AgentState::Attention => palette::MID_RED,
-        AgentState::Done => palette::MID_GREEN,
-        AgentState::Working => palette::MID_YELLOW,
-        AgentState::Idle => palette::BORDER,
+        AgentState::Attention => palette::get().mid_red,
+        AgentState::Done => palette::get().mid_green,
+        AgentState::Working => palette::get().mid_yellow,
+        AgentState::Idle => palette::get().border,
     }
 }
 
@@ -344,10 +335,10 @@ fn pill_hover(state: AgentState) -> Rgba {
 /// breathes.
 fn breath_tint(state: AgentState, current: bool) -> Rgba {
     match (state, current) {
-        (AgentState::Attention, false) => palette::DARK_RED,
-        (AgentState::Attention, true) => palette::MID_RED,
-        (_, false) => palette::DARK_GREEN,
-        (_, true) => palette::MID_GREEN,
+        (AgentState::Attention, false) => palette::get().dark_red,
+        (AgentState::Attention, true) => palette::get().mid_red,
+        (_, false) => palette::get().dark_green,
+        (_, true) => palette::get().mid_green,
     }
 }
 
@@ -362,7 +353,7 @@ pub fn breath(elapsed: Duration) -> f32 {
 /// The glyph for the agent a card shows, and its colour.
 fn glyph(agent: Option<&Agent>) -> (char, Rgba) {
     match agent {
-        Some(agent) if agent.dim.is_some() => (DIM_MARK, MUTED),
+        Some(agent) if agent.dim.is_some() => (DIM_MARK, palette::get().muted),
         agent => mark(agent.and_then(|agent| agent.state)),
     }
 }
@@ -391,7 +382,7 @@ fn state_text(agent: Option<&Agent>, others: usize) -> String {
     }
 }
 
-/// The colour of an agent's state line: its state's, or `MUTED` when it
+/// The colour of an agent's state line: its state's, or muted when it
 /// is dim.
 fn agent_tint(agent: Option<&Agent>) -> Rgba {
     tint(agent.and_then(Agent::live_state))
@@ -406,7 +397,7 @@ type Span = (String, Rgba);
 fn usage(agent: &Agent, room: usize) -> Vec<Span> {
     let mut parts = Vec::new();
     if let Some(model) = &agent.model {
-        parts.push((model.clone(), DIM));
+        parts.push((model.clone(), palette::get().light_foreground));
     }
     if let Some(Context { used, limit }) = agent.context.filter(|context| context.limit > 0) {
         let percent = (used as f64 / limit as f64 * 100.0).round();
@@ -414,7 +405,7 @@ fn usage(agent: &Agent, room: usize) -> Vec<Span> {
     }
     if let Some(Tokens { input, output }) = agent.tokens {
         let tokens = count(input.saturating_add(output));
-        parts.push((format!("{tokens} tok"), DIM));
+        parts.push((format!("{tokens} tok"), palette::get().light_foreground));
     }
     let width = |parts: &[Span]| {
         let text: usize = parts.iter().map(|(text, _)| text.chars().count()).sum();
@@ -426,7 +417,7 @@ fn usage(agent: &Agent, room: usize) -> Vec<Span> {
     let mut spans = Vec::new();
     for (i, part) in parts.into_iter().enumerate() {
         if i > 0 {
-            spans.push((" · ".to_string(), MUTED));
+            spans.push((" · ".to_string(), palette::get().muted));
         }
         spans.push(part);
     }
@@ -436,11 +427,11 @@ fn usage(agent: &Agent, room: usize) -> Vec<Span> {
 /// The colour of a context use of `percent`.
 fn context_color(percent: f64) -> Rgba {
     if percent < 50.0 {
-        palette::GREEN
+        palette::get().green
     } else if percent <= 80.0 {
-        palette::YELLOW
+        palette::get().yellow
     } else {
-        palette::RED
+        palette::get().red
     }
 }
 
@@ -1010,14 +1001,20 @@ impl Frame {
         let (cell_width, cell_height) = self.cell;
         let (width, height) = (self.columns as i32 * cell_width, TOP as i32 * cell_height);
         let line = scene.line_width();
-        scene.rect(0, 0, width, height, BAR);
-        scene.rect(0, height - line, width, line, EDGE);
+        scene.rect(0, 0, width, height, palette::get().lighter_background);
+        scene.rect(0, height - line, width, line, palette::get().selection);
 
         let y = cell_height / 2;
         let x = |column: u32| column as i32 * cell_width;
         let diamond = DIAMOND.to_string();
-        scene.text_px(x(1), y, &diamond, Face::ChromeBold, palette::ACCENT);
-        scene.text_px(x(NAME_COLUMN), y, &self.name(), Face::ChromeBold, TEXT);
+        scene.text_px(x(1), y, &diamond, Face::ChromeBold, palette::get().accent);
+        scene.text_px(
+            x(NAME_COLUMN),
+            y,
+            &self.name(),
+            Face::ChromeBold,
+            palette::get().foreground,
+        );
 
         let tabs = self.tab_pills();
         for pill in &tabs {
@@ -1027,20 +1024,34 @@ impl Frame {
             };
             let hovered = self.hover == Some(pill.hit);
             let color = if pill.hit == Hit::Tab(self.active_tab) {
-                self.draw_pill(scene, pill.column, pill.width(), CURRENT, CURRENT);
-                TEXT
+                self.draw_pill(
+                    scene,
+                    pill.column,
+                    pill.width(),
+                    palette::get().selection,
+                    palette::get().selection,
+                );
+                palette::get().foreground
             } else if let Some(pulse) = pulse {
-                let base = if hovered { palette::SELECTION } else { BAR };
-                let fill = palette::mix(base, POINTED, POINTED_FILL * pulse);
-                let ring = palette::mix(base, POINTED, pulse);
+                let base = if hovered {
+                    palette::get().selection
+                } else {
+                    palette::get().lighter_background
+                };
+                let fill = palette::mix(base, palette::get().magenta, POINTED_FILL * pulse);
+                let ring = palette::mix(base, palette::get().magenta, pulse);
                 self.draw_pill(scene, pill.column, pill.width(), fill, ring);
-                palette::mix(DIM, TEXT, pulse)
+                palette::mix(
+                    palette::get().light_foreground,
+                    palette::get().foreground,
+                    pulse,
+                )
             } else {
                 if hovered {
-                    let hover = palette::SELECTION;
+                    let hover = palette::get().selection;
                     self.draw_pill(scene, pill.column, pill.width(), hover, hover);
                 }
-                DIM
+                palette::get().light_foreground
             };
             scene.text_px(x(pill.column), y, &pill.text, Face::Chrome, color);
             if let Some(dot) = pill.dot {
@@ -1057,11 +1068,17 @@ impl Frame {
             let zoom = if self.zoom { "  zoom" } else { "" };
             let room = states_start.saturating_sub(column + 2) as usize;
             if room > zoom.len() {
-                scene.text_px(x(separator), y, "│", Face::Chrome, MUTED);
+                scene.text_px(x(separator), y, "│", Face::Chrome, palette::get().muted);
                 let title = fit(&self.title, room - zoom.len());
-                scene.text_px(x(column), y, &title, Face::Chrome, DIM);
+                scene.text_px(
+                    x(column),
+                    y,
+                    &title,
+                    Face::Chrome,
+                    palette::get().light_foreground,
+                );
                 let zoom_column = column + title.chars().count() as u32;
-                scene.text_px(x(zoom_column), y, zoom, Face::Chrome, palette::ACCENT);
+                scene.text_px(x(zoom_column), y, zoom, Face::Chrome, palette::get().accent);
             }
         }
 
@@ -1085,9 +1102,9 @@ impl Frame {
         }
         let menu = self.columns.saturating_sub(3);
         let color = if self.hover == Some(Hit::Palette) {
-            TEXT
+            palette::get().foreground
         } else {
-            DIM
+            palette::get().light_foreground
         };
         scene.text_px(x(menu), y, &MENU.to_string(), Face::Chrome, color);
     }
@@ -1109,25 +1126,25 @@ impl Frame {
             columns: width,
             rows: self.rows.saturating_sub(TOP),
         };
-        scene.fill(side, SIDEBAR);
-        scene.right_edge(side, EDGE);
+        scene.fill(side, palette::get().dark_background);
+        scene.right_edge(side, palette::get().selection);
         if !self.open {
             for (i, top) in self.tiles() {
                 self.draw_tile(scene, i.map(|i| &self.entries[i]), top);
             }
             let (left, size) = (self.tile_left(), self.scaled(TILE));
             for y in self.rules() {
-                scene.rect(left, y, size, scene.line_width(), palette::BORDER);
+                scene.rect(left, y, size, scene.line_width(), palette::get().border);
             }
             return;
         }
         let count = self.entries.len().to_string();
-        scene.text(1, TOP + 1, "WORKSPACES", DIM);
+        scene.text(1, TOP + 1, "WORKSPACES", palette::get().light_foreground);
         scene.text(
             width.saturating_sub(1 + count.len() as u32),
             TOP + 1,
             &count,
-            DIM,
+            palette::get().light_foreground,
         );
         if let Some((hit, (_, y))) = self.drag {
             self.draw_drop(scene, hit, y);
@@ -1140,7 +1157,13 @@ impl Frame {
             }
         }
         if let Some(new) = new {
-            scene.text_px(self.cell.0, new, "+ new workspace", Face::Chrome, DIM);
+            scene.text_px(
+                self.cell.0,
+                new,
+                "+ new workspace",
+                Face::Chrome,
+                palette::get().light_foreground,
+            );
         }
     }
 
@@ -1176,12 +1199,19 @@ impl Frame {
             top,
             size,
             radius,
-            palette::ACCENT,
-            palette::ACCENT,
+            palette::get().accent,
+            palette::get().accent,
         );
         let inner = (size.0 - 2 * ring, size.1 - 2 * ring);
         let (x, y) = (left - inset + ring, top + ring);
-        scene.rounded(x, y, inner, radius, SIDEBAR, SIDEBAR);
+        scene.rounded(
+            x,
+            y,
+            inner,
+            radius,
+            palette::get().dark_background,
+            palette::get().dark_background,
+        );
     }
 
     /// What a folded group's header shows at its right: a count per state
@@ -1200,14 +1230,17 @@ impl Frame {
                     continue;
                 }
                 if !spans.is_empty() {
-                    spans.push(("  ".to_string(), DIM));
+                    spans.push(("  ".to_string(), palette::get().light_foreground));
                 }
                 let (glyph, color) = mark(Some(state));
                 spans.push((format!("{glyph} {count}"), color));
             }
         }
         if spans.is_empty() {
-            spans.push((members().count().to_string(), DIM));
+            spans.push((
+                members().count().to_string(),
+                palette::get().light_foreground,
+            ));
         }
         spans
     }
@@ -1218,15 +1251,19 @@ impl Frame {
     fn header_background(&self, index: usize) -> Rgba {
         let group = &self.groups[index];
         if self.hover == Some(Hit::Group(group.id)) {
-            return palette::LIGHTER_BACKGROUND;
+            return palette::get().lighter_background;
         }
         let urgent = (self.entries.iter())
             .filter(|entry| entry.group == Some(group.id) && entry.clearable())
             .filter_map(Entry::state)
             .max();
         match urgent.filter(|_| group.folded) {
-            Some(state) => palette::mix(SIDEBAR, breath_tint(state, false), self.breath),
-            None => SIDEBAR,
+            Some(state) => palette::mix(
+                palette::get().dark_background,
+                breath_tint(state, false),
+                self.breath,
+            ),
+            None => palette::get().dark_background,
         }
     }
 
@@ -1237,13 +1274,19 @@ impl Frame {
         let (cell_width, _) = self.cell;
         let (left, width) = self.card_span();
         let background = self.header_background(index);
-        if background != SIDEBAR {
+        if background != palette::get().dark_background {
             let radius = self.scaled(CARD_RADIUS);
             scene.rounded(left, top, (width, height), radius, background, background);
         }
         let y = top + self.scaled(CARD_PADDING);
         let fold = if group.folded { '▸' } else { '▾' };
-        scene.text_px(left + cell_width, y, &fold.to_string(), Face::Chrome, DIM);
+        scene.text_px(
+            left + cell_width,
+            y,
+            &fold.to_string(),
+            Face::Chrome,
+            palette::get().light_foreground,
+        );
 
         let spans = self.header_counts(index);
         let counts: usize = spans.iter().map(|(text, _)| text.chars().count()).sum();
@@ -1256,7 +1299,7 @@ impl Frame {
         let name_left = self.header_name_left(left);
         let room = ((right - name_left) / cell_width).max(0) as usize;
         let name = fit(&group.name, room.saturating_sub(counts + 1));
-        let color = palette::FADED_FOREGROUND;
+        let color = palette::get().faded_foreground;
         scene.text_px(name_left, y, &name, Face::ChromeBold, color);
     }
 
@@ -1267,23 +1310,23 @@ impl Frame {
         let radius = self.scaled(CARD_RADIUS);
         let hovered = self.hover == Some(Hit::Show(entry.id));
         let mut background = match (entry.current, hovered) {
-            (true, _) => CURRENT,
-            (false, true) => palette::LIGHTER_BACKGROUND,
-            (false, false) => SIDEBAR,
+            (true, _) => palette::get().selection,
+            (false, true) => palette::get().lighter_background,
+            (false, false) => palette::get().dark_background,
         };
         if let Some(state) = entry.state().filter(|_| entry.clearable() && !hovered) {
             let tint = breath_tint(state, entry.current);
             background = palette::mix(background, tint, self.breath);
         }
         let pulse = entry.pulse.unwrap_or(0.0);
-        let ring = palette::mix(background, POINTED, pulse);
-        let background = palette::mix(background, POINTED, POINTED_FILL * pulse);
-        if background != SIDEBAR || ring != SIDEBAR {
+        let ring = palette::mix(background, palette::get().magenta, pulse);
+        let background = palette::mix(background, palette::get().magenta, POINTED_FILL * pulse);
+        if background != palette::get().dark_background || ring != palette::get().dark_background {
             scene.rounded(left, top, (width, height), radius, background, ring);
         }
         let agent = entry.agents.first();
         let color = match agent {
-            Some(agent) if agent.dim.is_some() => Some(MUTED),
+            Some(agent) if agent.dim.is_some() => Some(palette::get().muted),
             _ => stripe(entry.state()),
         };
         if let Some(color) = color {
@@ -1306,24 +1349,36 @@ impl Frame {
 
         let name = fit(&entry.name, beside_disc);
         let name_color = if entry.current {
-            TEXT
+            palette::get().foreground
         } else {
-            palette::FADED_FOREGROUND
+            palette::get().faded_foreground
         };
         scene.text_px(x, line(0), &name, Face::ChromeBold, name_color);
 
         let branch = (entry.branch.as_deref()).map(|branch| fit(branch, beside_disc / 2));
         let branch_width = branch.as_ref().map_or(0, |b| b.chars().count() + 2);
         let path = tail(&entry.path, beside_disc.saturating_sub(branch_width));
-        scene.text_px(x, line(1), &path, Face::Chrome, DIM);
+        scene.text_px(
+            x,
+            line(1),
+            &path,
+            Face::Chrome,
+            palette::get().light_foreground,
+        );
         if let Some(branch) = branch {
             let branch_x = x + (path.chars().count() + 2) as i32 * cell_width;
-            scene.text_px(branch_x, line(1), &branch, Face::Chrome, palette::CYAN);
+            scene.text_px(
+                branch_x,
+                line(1),
+                &branch,
+                Face::Chrome,
+                palette::get().cyan,
+            );
         }
 
         let others = entry.agents.len().saturating_sub(1);
         let (state, color) = if entry.asleep {
-            ("asleep".to_string(), MUTED)
+            ("asleep".to_string(), palette::get().muted)
         } else {
             (state_text(agent, others), agent_tint(agent))
         };
@@ -1331,7 +1386,13 @@ impl Frame {
 
         if let Some(message) = agent.and_then(|agent| agent.message.as_deref()) {
             let message = fit(message, room.saturating_sub(2));
-            scene.text_px(x + 2 * cell_width, line(3), &message, Face::Chrome, DIM);
+            scene.text_px(
+                x + 2 * cell_width,
+                line(3),
+                &message,
+                Face::Chrome,
+                palette::get().light_foreground,
+            );
         }
         let spans = agent.map_or(Vec::new(), |agent| usage(agent, room.saturating_sub(2)));
         let mut span_x = x + 2 * cell_width;
@@ -1353,25 +1414,46 @@ impl Frame {
         let waking = entry.asleep && self.hover == Some(Hit::Wake(entry.id));
         let (fill, border, glyph, glyph_color) = if waking {
             let ring = self.scaled(DISC_RING);
-            let halo = palette::mix(background, DIM, 0.45);
+            let halo = palette::mix(background, palette::get().light_foreground, 0.45);
             let outer = size + 2 * ring;
             scene.rounded(x - ring, y - ring, (outer, outer), outer / 2, halo, halo);
-            (palette::LIGHTER_BACKGROUND, DIM, SLEEP_MARK, TEXT)
+            (
+                palette::get().lighter_background,
+                palette::get().light_foreground,
+                SLEEP_MARK,
+                palette::get().foreground,
+            )
         } else if entry.asleep {
-            let (fill, border) = (palette::RAISED_BACKGROUND, palette::LIGHTER_BACKGROUND);
-            (fill, border, SLEEP_MARK, DIM)
+            let (fill, border) = (
+                palette::get().raised_background,
+                palette::get().lighter_background,
+            );
+            (fill, border, SLEEP_MARK, palette::get().light_foreground)
         } else if hovered {
             let ring = self.scaled(DISC_RING);
             let halo = palette::mix(background, color, 0.45);
             let outer = size + 2 * ring;
             scene.rounded(x - ring, y - ring, (outer, outer), outer / 2, halo, halo);
             let border = tint(entry.state());
-            (palette::mix(SIDEBAR, color, 0.5), border, '✓', TEXT)
+            (
+                palette::mix(palette::get().dark_background, color, 0.5),
+                border,
+                '✓',
+                palette::get().foreground,
+            )
         } else if entry.clearable() {
             let border = palette::mix(background, color, 0.55);
-            (palette::mix(SIDEBAR, color, 0.22), border, glyph, color)
+            (
+                palette::mix(palette::get().dark_background, color, 0.22),
+                border,
+                glyph,
+                color,
+            )
         } else {
-            let (fill, border) = (palette::RAISED_BACKGROUND, palette::LIGHTER_BACKGROUND);
+            let (fill, border) = (
+                palette::get().raised_background,
+                palette::get().lighter_background,
+            );
             (fill, border, glyph, color)
         };
         scene.rounded(x, y, (size, size), size / 2, fill, border);
@@ -1389,22 +1471,42 @@ impl Frame {
         let hovered = self.hover == Some(hit);
         let asleep = entry.is_some_and(|entry| entry.asleep);
         let (mut fill, mut ring, mut color) = match (entry, current, hovered) {
-            (_, true, _) => (CURRENT, palette::ACCENT, TEXT),
-            (Some(_), false, true) => (palette::LIGHTER_BACKGROUND, DIM, palette::FADED_FOREGROUND),
-            (None, false, true) => (palette::LIGHTER_BACKGROUND, DIM, DIM),
-            (Some(_), false, false) => (
-                palette::RAISED_BACKGROUND,
-                palette::LIGHTER_BACKGROUND,
-                palette::FADED_FOREGROUND,
+            (_, true, _) => (
+                palette::get().selection,
+                palette::get().accent,
+                palette::get().foreground,
             ),
-            (None, false, false) => (SIDEBAR, palette::BORDER, DIM),
+            (Some(_), false, true) => (
+                palette::get().lighter_background,
+                palette::get().light_foreground,
+                palette::get().faded_foreground,
+            ),
+            (None, false, true) => (
+                palette::get().lighter_background,
+                palette::get().light_foreground,
+                palette::get().light_foreground,
+            ),
+            (Some(_), false, false) => (
+                palette::get().raised_background,
+                palette::get().lighter_background,
+                palette::get().faded_foreground,
+            ),
+            (None, false, false) => (
+                palette::get().dark_background,
+                palette::get().border,
+                palette::get().light_foreground,
+            ),
         };
         if let Some(pulse) = entry.and_then(|entry| entry.pulse) {
-            fill = palette::mix(fill, POINTED, POINTED_FILL * pulse);
-            ring = palette::mix(ring, POINTED, pulse);
+            fill = palette::mix(fill, palette::get().magenta, POINTED_FILL * pulse);
+            ring = palette::mix(ring, palette::get().magenta, pulse);
         }
         if asleep && !current && !hovered {
-            (fill, ring, color) = (SIDEBAR, palette::LIGHTER_BACKGROUND, MUTED);
+            (fill, ring, color) = (
+                palette::get().dark_background,
+                palette::get().lighter_background,
+                palette::get().muted,
+            );
         }
         let radius = self.scaled(TILE_RADIUS);
         scene.rounded(left, top, (size, size), radius, fill, ring);
@@ -1433,10 +1535,23 @@ impl Frame {
         if !asleep && dot.is_none() {
             return;
         }
-        scene.rounded(x, y, (outer, outer), outer / 2, SIDEBAR, SIDEBAR);
+        scene.rounded(
+            x,
+            y,
+            (outer, outer),
+            outer / 2,
+            palette::get().dark_background,
+            palette::get().dark_background,
+        );
         if asleep {
             let (z_x, z_y) = (x + (outer - cell_width) / 2, y + (outer - cell_height) / 2);
-            scene.text_px(z_x, z_y, "z", Face::ChromeBold, DIM);
+            scene.text_px(
+                z_x,
+                z_y,
+                "z",
+                Face::ChromeBold,
+                palette::get().light_foreground,
+            );
             return;
         }
         let Some(dot) = dot else {
@@ -1472,23 +1587,41 @@ impl Frame {
         let branch = entry.branch.as_deref().map(|branch| fit(branch, room / 2));
         let branch_width = branch.as_ref().map_or(0, |b| b.chars().count());
         let name = fit(&entry.name, room.saturating_sub(branch_width + 1));
-        scene.text_px(x, line(0), &name, Face::ChromeBold, TEXT);
+        scene.text_px(
+            x,
+            line(0),
+            &name,
+            Face::ChromeBold,
+            palette::get().foreground,
+        );
         if let Some(branch) = branch {
             let branch_x = right - branch_width as i32 * cell_width;
-            scene.text_px(branch_x, line(0), &branch, Face::Chrome, palette::CYAN);
+            scene.text_px(
+                branch_x,
+                line(0),
+                &branch,
+                Face::Chrome,
+                palette::get().cyan,
+            );
         }
 
         let path = tail(&entry.path, room);
-        scene.text_px(x, line(1), &path, Face::Chrome, DIM);
+        scene.text_px(
+            x,
+            line(1),
+            &path,
+            Face::Chrome,
+            palette::get().light_foreground,
+        );
 
         let mut next = 2;
         if entry.asleep {
             let state = fit(&format!("{SLEEP_MARK} asleep"), room);
-            scene.text_px(x, line(next), &state, Face::Chrome, MUTED);
+            scene.text_px(x, line(next), &state, Face::Chrome, palette::get().muted);
             next += 2;
         } else if entry.agents.is_empty() {
             let state = fit(&state_line(None, 0), room);
-            scene.text_px(x, line(next), &state, Face::Chrome, MUTED);
+            scene.text_px(x, line(next), &state, Face::Chrome, palette::get().muted);
             next += 2;
         }
         for agent in &entry.agents {
@@ -1496,7 +1629,7 @@ impl Frame {
             scene.text_px(x, line(next), &state, Face::Chrome, agent_tint(Some(agent)));
             if let Some(message) = &agent.message {
                 let message = fit(message, room.saturating_sub(2));
-                let color = palette::FADED_FOREGROUND;
+                let color = palette::get().faded_foreground;
                 scene.text_px(
                     x + 2 * cell_width,
                     line(next + 1),
@@ -1507,7 +1640,13 @@ impl Frame {
             }
             next += 2;
         }
-        scene.text_px(x, line(next), "click to show", Face::Chrome, DIM);
+        scene.text_px(
+            x,
+            line(next),
+            "click to show",
+            Face::Chrome,
+            palette::get().light_foreground,
+        );
     }
 
     /// The name of the card or header `hit` in a pill beside the pointer at
@@ -1534,8 +1673,21 @@ impl Frame {
         );
         let (x, y) = (at.0 + cell_width, at.1 - size.1 / 2);
         let radius = self.scaled(CARD_RADIUS);
-        scene.rounded(x, y, size, radius, BAR, palette::ACCENT);
-        scene.text_px(x + cell_width, y + padding, &name, Face::ChromeBold, TEXT);
+        scene.rounded(
+            x,
+            y,
+            size,
+            radius,
+            palette::get().lighter_background,
+            palette::get().accent,
+        );
+        scene.text_px(
+            x + cell_width,
+            y + padding,
+            &name,
+            Face::ChromeBold,
+            palette::get().foreground,
+        );
     }
 }
 
@@ -1844,21 +1996,24 @@ mod tests {
         assert_eq!(checks(&on_card), 2);
         assert_eq!(
             card_fill(&on_card, 90),
-            Some(bytes(palette::LIGHTER_BACKGROUND))
+            Some(bytes(palette::get().lighter_background))
         );
     }
 
     #[test]
     fn cards_needing_the_person_or_done_breathe_toward_their_tint_unless_hovered() {
         let peak = drawn(None, 1.0);
-        assert_eq!(card_fill(&peak, 90), Some(bytes(palette::DARK_RED)));
-        assert_eq!(card_fill(&peak, 194), Some(bytes(palette::DARK_GREEN)));
+        assert_eq!(card_fill(&peak, 90), Some(bytes(palette::get().dark_red)));
+        assert_eq!(
+            card_fill(&peak, 194),
+            Some(bytes(palette::get().dark_green))
+        );
         assert_eq!(card_fill(&peak, 402), None);
-        assert_eq!(card_fill(&peak, 506), Some(bytes(CURRENT)));
+        assert_eq!(card_fill(&peak, 506), Some(bytes(palette::get().selection)));
         let hovered = drawn(Some(Hit::Show(2)), 1.0);
         assert_eq!(
             card_fill(&hovered, 90),
-            Some(bytes(palette::LIGHTER_BACKGROUND))
+            Some(bytes(palette::get().lighter_background))
         );
     }
 
@@ -1992,7 +2147,7 @@ mod tests {
         assert_eq!(
             texts,
             [
-                (" 1 coax ", Some(palette::YELLOW)),
+                (" 1 coax ", Some(palette::get().yellow)),
                 (" 2 cargo ", None),
                 (" + ", None)
             ]
@@ -2118,9 +2273,9 @@ mod tests {
         assert_eq!(state_text(Some(&done), 1), "coax done · 4m +1");
         let gone = dim(done, Dim::Disconnected);
         assert_eq!(state_text(Some(&gone), 0), "coax disconnected · 4m");
-        assert_eq!(glyph(Some(&gone)), (DIM_MARK, MUTED));
+        assert_eq!(glyph(Some(&gone)), (DIM_MARK, palette::get().muted));
         assert_eq!(state_text(None, 0), "no agent");
-        assert_eq!(glyph(None), ('·', MUTED));
+        assert_eq!(glyph(None), ('·', palette::get().muted));
     }
 
     #[test]
@@ -2130,8 +2285,8 @@ mod tests {
         assert_eq!(state_line(Some(&gone), 0), "○ coax disconnected · 4m");
         let paneless = dim(working(), Dim::NoPane);
         assert_eq!(state_line(Some(&paneless), 1), "○ coax no pane +1");
-        assert_eq!(agent_tint(Some(&gone)), MUTED);
-        assert_eq!(agent_tint(Some(&working())), palette::LIGHT_YELLOW);
+        assert_eq!(agent_tint(Some(&gone)), palette::get().muted);
+        assert_eq!(agent_tint(Some(&working())), palette::get().light_yellow);
     }
 
     /// The text of `spans`, joined.
@@ -2157,7 +2312,13 @@ mod tests {
         let colors: Vec<_> = spans.iter().map(|&(_, color)| color).collect();
         assert_eq!(
             colors,
-            [DIM, MUTED, palette::YELLOW, MUTED, DIM],
+            [
+                palette::get().light_foreground,
+                palette::get().muted,
+                palette::get().yellow,
+                palette::get().muted,
+                palette::get().light_foreground
+            ],
             "the model and tokens are dim, the separators muted"
         );
     }
@@ -2165,7 +2326,11 @@ mod tests {
     #[test]
     fn the_context_percent_is_green_under_half_yellow_to_eighty_and_red_above() {
         let colors = [0.0, 49.0, 50.0, 80.0, 81.0, 100.0].map(context_color);
-        let (green, yellow, red) = (palette::GREEN, palette::YELLOW, palette::RED);
+        let (green, yellow, red) = (
+            palette::get().green,
+            palette::get().yellow,
+            palette::get().red,
+        );
         assert_eq!(colors, [green, green, yellow, yellow, red, red]);
     }
 
@@ -2196,7 +2361,7 @@ mod tests {
         assert_eq!(text(&usage(&coax, 20)), "10% ctx · 18.4k tok");
         let cut = usage(&coax, 9);
         assert_eq!(text(&cut), "10% ctx …");
-        assert_eq!(cut.last(), Some(&(" …".to_string(), MUTED)));
+        assert_eq!(cut.last(), Some(&(" …".to_string(), palette::get().muted)));
         coax.context = None;
         coax.tokens = None;
         assert_eq!(text(&usage(&coax, 6)).chars().count(), 6);
@@ -2445,14 +2610,14 @@ mod tests {
         frame.breath = 1.0;
         assert_eq!(
             bytes(frame.header_background(1)),
-            bytes(palette::DARK_GREEN)
+            bytes(palette::get().dark_green)
         );
-        assert_eq!(frame.header_background(0), SIDEBAR);
+        assert_eq!(frame.header_background(0), palette::get().dark_background);
         frame.breath = 0.0;
-        assert_eq!(frame.header_background(1), SIDEBAR);
+        assert_eq!(frame.header_background(1), palette::get().dark_background);
         frame.breath = 1.0;
         frame.groups[1].folded = false;
-        assert_eq!(frame.header_background(1), SIDEBAR);
+        assert_eq!(frame.header_background(1), palette::get().dark_background);
     }
 
     #[test]
@@ -2474,7 +2639,9 @@ mod tests {
             let mut scene = Scene::new(&decade_ui::Font::load(14.0));
             frame.draw(&mut scene);
             scene.shapes.iter().find_map(|shape| match shape {
-                Shape::Rounded { at, size, fill, .. } if bytes(*fill) == bytes(palette::ACCENT) => {
+                Shape::Rounded { at, size, fill, .. }
+                    if bytes(*fill) == bytes(palette::get().accent) =>
+                {
                     Some((at.y, at.y + size.height))
                 }
                 _ => None,

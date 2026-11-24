@@ -3,24 +3,6 @@ use std::time::Instant;
 use crate::palette::{self, Rgba};
 use crate::{CellRect, Face, Point, Scene, Shape, Size, fit};
 
-const BACKGROUND: Rgba = palette::BACKGROUND;
-const FOREGROUND: Rgba = palette::FOREGROUND;
-const PANE: Rgba = palette::DARK_BACKGROUND;
-const OUTLINE: Rgba = palette::MUTED;
-const FOCUS: Rgba = palette::CYAN;
-const PULSE: Rgba = palette::MAGENTA;
-const DROP: Rgba = palette::ACCENT;
-const BAR: Rgba = palette::LIGHTER_BACKGROUND;
-const BUTTON: Rgba = palette::ACCENT;
-const BUTTON_TEXT: Rgba = palette::DARK_BACKGROUND;
-const HOVER: Rgba = palette::SELECTION;
-const CLOSE_HOVER: Rgba = palette::DARK_RED;
-const CLOSE_HOVER_ICON: Rgba = palette::LIGHT_RED;
-const SHOWN_TAB: Rgba = palette::SELECTION;
-const TAG_TEXT: Rgba = palette::DARK_BACKGROUND;
-const MUTED: Rgba = palette::MUTED;
-const DIM: Rgba = palette::LIGHT_FOREGROUND;
-
 const MIN_PANE: u32 = 4;
 const EDGE_BAND: u32 = 2;
 const BUTTON_WIDTH: u32 = 4;
@@ -804,9 +786,9 @@ impl<A: Copy + PartialEq> Layout<A> {
                 continue;
             }
             let outline = if pane.id == self.focused {
-                FOCUS
+                palette::get().cyan
             } else {
-                OUTLINE
+                palette::get().muted
             };
             let pulse = chrome.pulse.filter(|pulse| pulse.pane == pane.id);
             let flash = (chrome.flash)
@@ -855,10 +837,10 @@ impl<A: Copy + PartialEq> Layout<A> {
         );
         let bottom = inset(rect.row + rect.rows == area.row + area.rows, cell_height);
         let strength = pulse.map_or(0.0, |pulse| pulse.strength);
-        let color = palette::mix(color, PULSE, strength);
+        let color = palette::mix(color, palette::get().magenta, strength);
         scene.outline(rect, [left, top, right, bottom], color);
         if pulse.is_some() {
-            let [r, g, b, _] = PULSE;
+            let [r, g, b, _] = palette::get().magenta;
             let inner = [left + line, top + line, right + line, bottom + line];
             scene.outline(rect, inner, [r, g, b, strength]);
         }
@@ -881,10 +863,16 @@ impl<A: Copy + PartialEq> Layout<A> {
             && left_fits
         {
             let size = (cell_width + padding * 2, height);
-            let fill = palette::mix(color, palette::FOREGROUND, flash);
+            let fill = palette::mix(color, palette::get().foreground, flash);
             scene.rounded(left_tag - padding, pill_y, size, radius, fill, fill);
             let icon = icon.to_string();
-            scene.text_px(left_tag, text_y, &icon, Face::Icon, TAG_TEXT);
+            scene.text_px(
+                left_tag,
+                text_y,
+                &icon,
+                Face::Icon,
+                palette::get().dark_background,
+            );
             limit = left_end + padding + scene.scaled(TAG_GAP);
         }
         let mut end = x + width - right - cell_width * 2;
@@ -900,7 +888,7 @@ impl<A: Copy + PartialEq> Layout<A> {
             }
             let size = (end - start + padding * 2, height);
             scene.rounded(start - padding, pill_y, size, radius, color, color);
-            scene.text_px(start, text_y, &text, face, TAG_TEXT);
+            scene.text_px(start, text_y, &text, face, palette::get().dark_background);
             end = start - padding * 2 - scene.scaled(TAG_GAP);
         }
         let Some(note) = pulse.and_then(|pulse| pulse.note) else {
@@ -913,8 +901,21 @@ impl<A: Copy + PartialEq> Layout<A> {
         let note = fit(note, room as usize);
         let start = end - note.chars().count() as i32 * cell_width;
         let size = (end - start + padding * 2, height);
-        scene.rounded(start - padding, pill_y, size, radius, PULSE, PULSE);
-        scene.text_px(start, text_y, &note, Face::Chrome, TAG_TEXT);
+        scene.rounded(
+            start - padding,
+            pill_y,
+            size,
+            radius,
+            palette::get().magenta,
+            palette::get().magenta,
+        );
+        scene.text_px(
+            start,
+            text_y,
+            &note,
+            Face::Chrome,
+            palette::get().dark_background,
+        );
     }
 
     pub fn draw_bars(&self, scene: &mut Scene, chrome: Chrome<A>) {
@@ -953,11 +954,14 @@ impl<A: Copy + PartialEq> Layout<A> {
         let (start, row, width) = (inner.column, inner.row, inner.columns);
         let focused = pane.id == self.focused;
         let (fg, face) = if focused {
-            (FOREGROUND, Face::ChromeBold)
+            (palette::get().foreground, Face::ChromeBold)
         } else {
-            (DIM, Face::Chrome)
+            (palette::get().light_foreground, Face::Chrome)
         };
-        scene.fill(CellRect { rows: 1, ..inner }, BAR);
+        scene.fill(
+            CellRect { rows: 1, ..inner },
+            palette::get().lighter_background,
+        );
         let buttons = bar_buttons(pane, start, width);
         let room = buttons[0].1.saturating_sub(start + 2) as usize;
         let (name_x, y) = scene.px(start + 1, row);
@@ -967,7 +971,14 @@ impl<A: Copy + PartialEq> Layout<A> {
             let (icon, color) = match button {
                 BarButton::Action(_) => {
                     let Button { icon, on, .. } = pane.marks.buttons[index];
-                    (icon, if focused || on { FOREGROUND } else { MUTED })
+                    (
+                        icon,
+                        if focused || on {
+                            palette::get().foreground
+                        } else {
+                            palette::get().muted
+                        },
+                    )
                 }
                 BarButton::Zoom if zoomed => (UNZOOM_ICON, fg),
                 BarButton::Zoom => (ZOOM_ICON, fg),
@@ -976,15 +987,15 @@ impl<A: Copy + PartialEq> Layout<A> {
             };
             let hovered = chrome.hover == Some((pane.id, button));
             let color = match button {
-                BarButton::Close if hovered => CLOSE_HOVER_ICON,
-                _ if hovered => FOREGROUND,
+                BarButton::Close if hovered => palette::get().light_red,
+                _ if hovered => palette::get().foreground,
                 _ => color,
             };
             if hovered {
                 let background = if button == BarButton::Close {
-                    CLOSE_HOVER
+                    palette::get().dark_red
                 } else {
-                    HOVER
+                    palette::get().selection
                 };
                 draw_button_hover(scene, x + 1, row, background);
             }
@@ -1014,7 +1025,10 @@ fn draw_strip<A>(
     if pane.tabs.len() < 2 || inner.is_empty() {
         return;
     }
-    scene.fill(CellRect { rows: 1, ..inner }, BAR);
+    scene.fill(
+        CellRect { rows: 1, ..inner },
+        palette::get().lighter_background,
+    );
     let pills = pane.tab_pills(inner);
     let (cell_width, cell_height) = scene.cell();
     let radius = scene.scaled(PILL_RADIUS);
@@ -1023,12 +1037,19 @@ fn draw_strip<A>(
         let (x, y) = scene.px(column, inner.row);
         if shown || hover == Some(index) {
             let size = (width as i32 * cell_width, cell_height);
-            scene.rounded(x, y, size, radius, SHOWN_TAB, SHOWN_TAB);
+            scene.rounded(
+                x,
+                y,
+                size,
+                radius,
+                palette::get().selection,
+                palette::get().selection,
+            );
         }
         let (color, face) = match (shown, focused) {
-            (true, true) => (FOREGROUND, Face::ChromeBold),
-            (true, false) => (FOREGROUND, Face::Chrome),
-            (false, _) => (DIM, Face::Chrome),
+            (true, true) => (palette::get().foreground, Face::ChromeBold),
+            (true, false) => (palette::get().foreground, Face::Chrome),
+            (false, _) => (palette::get().light_foreground, Face::Chrome),
         };
         if width > 2 {
             let label = fit(&tab.label, width as usize - 2);
@@ -1155,12 +1176,12 @@ fn draw_placeholder<A>(scene: &mut Scene, pane: &Pane<A>, inner: CellRect) {
     let count = lines.len() as u32;
     let centered = |text: &str| inner.column + inner.columns.saturating_sub(text.len() as u32) / 2;
     if let Some((label, _)) = button {
-        scene.fill(inner, BACKGROUND);
+        scene.fill(inner, palette::get().background);
 
         // the lines, a blank row, then a button three rows tall
         let top = inner.row + inner.rows.saturating_sub(count + 4) / 2;
         for (row, line) in (top..).zip(lines) {
-            scene.text(centered(line), row, line, FOREGROUND);
+            scene.text(centered(line), row, line, palette::get().foreground);
         }
         let button = format!("  {label}  ");
         let column = centered(&button);
@@ -1170,14 +1191,23 @@ fn draw_placeholder<A>(scene: &mut Scene, pane: &Pane<A>, inner: CellRect) {
             columns: button.len() as u32,
             rows: 3,
         };
-        scene.fill(rect, BUTTON);
-        scene.text(column, top + count + 2, &button, BUTTON_TEXT);
+        scene.fill(rect, palette::get().accent);
+        scene.text(
+            column,
+            top + count + 2,
+            &button,
+            palette::get().dark_background,
+        );
         return;
     }
-    scene.fill(inner, PANE);
+    scene.fill(inner, palette::get().dark_background);
     let top = (inner.row + inner.rows / 2).saturating_sub(count.saturating_sub(1));
     for (index, line) in lines.iter().enumerate() {
-        let color = if index == 0 { DIM } else { MUTED };
+        let color = if index == 0 {
+            palette::get().light_foreground
+        } else {
+            palette::get().muted
+        };
         scene.text(centered(line), top + index as u32, line, color);
     }
 }
@@ -1381,9 +1411,17 @@ fn edge_strips(area: CellRect) -> [(Side, CellRect); 4] {
 
 fn draw_zone(scene: &mut Scene, zone: CellRect, active: bool) {
     if active {
-        scene.fill(zone, [DROP[0], DROP[1], DROP[2], 0.35]);
+        scene.fill(
+            zone,
+            [
+                palette::get().accent[0],
+                palette::get().accent[1],
+                palette::get().accent[2],
+                0.35,
+            ],
+        );
     }
-    scene.frame(zone, DROP);
+    scene.frame(zone, palette::get().accent);
 }
 
 fn dropped(root: Node, dragged: usize, drop: Drop) -> Node {
@@ -2167,7 +2205,7 @@ mod tests {
         let [(x, y, width, height, fill)] = rounded(&scene)[..] else {
             panic!("one hover square");
         };
-        assert_eq!(fill, CLOSE_HOVER);
+        assert_eq!(fill, palette::get().dark_red);
         assert_eq!(width, height);
         assert!(height < cell_height);
         let (left, top) = scene.px(close, inner.row);
@@ -2198,7 +2236,7 @@ mod tests {
         let (_, cell_height) = scene.cell();
         let line_y = cell_height / 2;
         for (_, y, _, height, fill) in tags {
-            assert_eq!(fill, FOCUS);
+            assert_eq!(fill, palette::get().cyan);
             assert!(y < line_y && y + height > line_y);
         }
     }
@@ -2245,12 +2283,12 @@ mod tests {
         };
         let (cell_width, _) = Scene::new(&font).cell();
         assert!(x < 4 * cell_width);
-        assert_eq!(fill, FOCUS);
+        assert_eq!(fill, palette::get().cyan);
         let [(_, _, _, _, flashed)] = tags(Some((0, 1.0)))[..] else {
             panic!("one tag");
         };
-        assert_eq!(flashed, FOREGROUND);
-        assert_eq!(tags(Some((1, 1.0)))[0].4, FOCUS);
+        assert_eq!(flashed, palette::get().foreground);
+        assert_eq!(tags(Some((1, 1.0)))[0].4, palette::get().cyan);
     }
 
     #[test]
@@ -2290,7 +2328,7 @@ mod tests {
         let [(mark, ..), (note, _, _, _, fill)] = rounded(&scene)[..] else {
             panic!("two tags");
         };
-        assert_eq!(fill, PULSE);
+        assert_eq!(fill, palette::get().magenta);
         assert!(note < mark);
         assert!(texts(&scene).contains(&"look".to_string()));
     }
@@ -2319,13 +2357,17 @@ mod tests {
         assert_eq!(
             text_rows,
             [
-                ("stopped".to_string(), row(top), FOREGROUND),
-                ("  again  ".to_string(), row(top + 3), BUTTON_TEXT),
+                ("stopped".to_string(), row(top), palette::get().foreground),
+                (
+                    "  again  ".to_string(),
+                    row(top + 3),
+                    palette::get().dark_background
+                ),
             ]
         );
         assert!(scene.shapes.iter().any(|shape| matches!(
             shape,
-            crate::Shape::Rect { color, .. } if *color == BUTTON
+            crate::Shape::Rect { color, .. } if *color == palette::get().accent
         )));
         assert_eq!(layout.placeholder_action(0), Some(7));
         layout.panes[0].add_tab(
@@ -2359,8 +2401,12 @@ mod tests {
         assert_eq!(
             lines,
             [
-                ("title".to_string(), row(middle - 1), DIM),
-                ("hint".to_string(), row(middle), MUTED),
+                (
+                    "title".to_string(),
+                    row(middle - 1),
+                    palette::get().light_foreground
+                ),
+                ("hint".to_string(), row(middle), palette::get().muted),
             ]
         );
         assert_eq!(layout.placeholder_action(0), None);
@@ -2396,7 +2442,14 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!(colours(0), [MUTED, FOREGROUND, MUTED]);
-        assert_eq!(colours(1), [FOREGROUND; 3]);
+        assert_eq!(
+            colours(0),
+            [
+                palette::get().muted,
+                palette::get().foreground,
+                palette::get().muted
+            ]
+        );
+        assert_eq!(colours(1), [palette::get().foreground; 3]);
     }
 }

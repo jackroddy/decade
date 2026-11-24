@@ -11,3 +11,4 @@ repository.workspace = true
 [dependencies]
 fontdb = "0.24.0"
 swash = "0.2.10"
+toml = { version = "0.9", default-features = false, features = ["std", "parse", "serde"] }

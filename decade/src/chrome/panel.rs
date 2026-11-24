@@ -116,9 +116,9 @@ impl Panel {
             list.draw_row(scene, i, &row, selected);
             let y = list.text_y(i);
             let (chevron, pill) = if selected {
-                (palette::ACCENT, palette::BACKGROUND)
+                (palette::get().accent, palette::get().background)
             } else {
-                (palette::MUTED, palette::DARK_BACKGROUND)
+                (palette::get().muted, palette::get().dark_background)
             };
             scene.text_px(pill_x - 2 * cell_width, y, "‹", LARGE.face, chevron);
             scene.text_px(list.right() - cell_width, y, "›", LARGE.face, chevron);
@@ -127,7 +127,7 @@ impl Panel {
             scene.rounded(pill_x, pill_y, size, pill_height / 2, pill, pill);
             let value = fit(&knob.show(settings), VALUE_WIDTH as usize - 2);
             let value_x = pill_x + (pill_width - value.chars().count() as i32 * cell_width) / 2;
-            scene.text_px(value_x, y, &value, LARGE.face, palette::FOREGROUND);
+            scene.text_px(value_x, y, &value, LARGE.face, palette::get().foreground);
         }
     }
 }

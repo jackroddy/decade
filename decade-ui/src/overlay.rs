@@ -170,8 +170,15 @@ pub fn draw_box(scene: &mut Scene, size: &Size, at: (i32, i32), (width, height):
     let offset = size.px(size.shadow, cell_height);
     let shadow = palette::SHADOW;
     scene.rounded(at.0, at.1 + offset, (width, height), radius, shadow, shadow);
-    let fill = palette::LIGHTER_BACKGROUND;
-    scene.rounded(at.0, at.1, (width, height), radius, fill, palette::BORDER);
+    let fill = palette::get().lighter_background;
+    scene.rounded(
+        at.0,
+        at.1,
+        (width, height),
+        radius,
+        fill,
+        palette::get().border,
+    );
 }
 
 /// Where each part of a box goes, built top to bottom by adding parts in
@@ -343,10 +350,16 @@ impl Layout {
             return;
         };
         let (x, y) = (self.text_left(), self.at.1 + top);
-        scene.text_px(x, y, title, self.size.bold, palette::FOREGROUND);
+        scene.text_px(x, y, title, self.size.bold, palette::get().foreground);
         if let Some(second) = second {
             let y = y + self.cell.1 + self.px(self.size.header_gap);
-            scene.text_px(x, y, second, self.size.face, palette::LIGHT_FOREGROUND);
+            scene.text_px(
+                x,
+                y,
+                second,
+                self.size.face,
+                palette::get().light_foreground,
+            );
         }
     }
 
@@ -371,19 +384,19 @@ impl Layout {
         let x = self.text_left();
         let shown = if text.is_empty() { placeholder } else { text };
         let width = shown.chars().count() as i32 * cell_width;
-        scene.text_px(x, y, "›", face, palette::ACCENT);
+        scene.text_px(x, y, "›", face, palette::get().accent);
         if text.is_empty() {
-            scene.text_px(text_x, y, placeholder, face, palette::MUTED);
+            scene.text_px(text_x, y, placeholder, face, palette::get().muted);
         } else if marked {
-            scene.rect(text_x, y, width, cell_height, palette::SELECTION);
+            scene.rect(text_x, y, width, cell_height, palette::get().selection);
         }
-        scene.text_px(text_x, y, text, face, palette::FOREGROUND);
+        scene.text_px(text_x, y, text, face, palette::get().foreground);
         let caret = if text.is_empty() {
             width
         } else {
             cursor as i32 * cell_width
         };
-        scene.text_px(text_x + caret, y, "▏", face, palette::ACCENT);
+        scene.text_px(text_x + caret, y, "▏", face, palette::get().accent);
         if let Some(rule) = self.field_rule {
             self.draw_rule(scene, rule);
         }
@@ -397,7 +410,7 @@ impl Layout {
             self.at.1 + top,
             width,
             line,
-            palette::SELECTION,
+            palette::get().selection,
         );
     }
 
@@ -410,12 +423,18 @@ impl Layout {
         let row = self.px(self.size.row);
         let size = (self.width - 2 * padding, row);
         let radius = self.px(self.size.row_radius);
-        let fill = palette::DARK_RED;
+        let fill = palette::get().dark_red;
         let y = self.at.1 + top;
         scene.rounded(self.at.0 + padding, y, size, radius, fill, fill);
         let text_y = y + (row - self.cell.1) / 2;
         let face = self.size.face;
-        scene.text_px(self.text_left(), text_y, error, face, palette::LIGHT_RED);
+        scene.text_px(
+            self.text_left(),
+            text_y,
+            error,
+            face,
+            palette::get().light_red,
+        );
     }
 
     pub fn draw_hint(&self, scene: &mut Scene, hint: &[(&str, &str)]) {
@@ -465,12 +484,12 @@ pub struct RowStyle {
 
 impl RowStyle {
     pub fn new(size: &Size, row: &Row, selected: bool) -> RowStyle {
-        let red = row.destructive.then_some(palette::DARK_RED);
+        let red = row.destructive.then_some(palette::get().dark_red);
         if !row.available {
             return RowStyle {
                 fill: red,
-                text: palette::MUTED,
-                icon: palette::MUTED,
+                text: palette::get().muted,
+                icon: palette::get().muted,
                 face: size.face,
             };
         }
@@ -478,24 +497,24 @@ impl RowStyle {
         match (selected, row.destructive) {
             (_, true) => RowStyle {
                 fill: Some(if selected {
-                    palette::MID_RED
+                    palette::get().mid_red
                 } else {
-                    palette::DARK_RED
+                    palette::get().dark_red
                 }),
-                text: palette::LIGHT_RED,
-                icon: palette::LIGHT_RED,
+                text: palette::get().light_red,
+                icon: palette::get().light_red,
                 face,
             },
             (true, false) => RowStyle {
-                fill: Some(palette::SELECTION),
-                text: palette::FOREGROUND,
-                icon: palette::ACCENT,
+                fill: Some(palette::get().selection),
+                text: palette::get().foreground,
+                icon: palette::get().accent,
                 face,
             },
             (false, false) => RowStyle {
                 fill: None,
-                text: palette::FOREGROUND,
-                icon: palette::LIGHT_FOREGROUND,
+                text: palette::get().foreground,
+                icon: palette::get().light_foreground,
                 face,
             },
         }
@@ -704,13 +723,17 @@ fn draw_key(
     let padding = size.px(size.key_padding, cell_height);
     let cap = (key_width(size, key, cell), cell_height + 2 * rise);
     let (edge, text) = if available {
-        (palette::BORDER, palette::LIGHT_FOREGROUND)
+        (palette::get().border, palette::get().light_foreground)
     } else {
-        let edge = palette::mix(palette::BORDER, palette::LIGHTER_BACKGROUND, 0.5);
-        (edge, palette::MUTED)
+        let edge = palette::mix(
+            palette::get().border,
+            palette::get().lighter_background,
+            0.5,
+        );
+        (edge, palette::get().muted)
     };
     scene.rounded(x, y - rise + drop, cap, radius, edge, edge);
-    let fill = palette::DARK_BACKGROUND;
+    let fill = palette::get().dark_background;
     scene.rounded(x, y - rise, cap, radius, fill, edge);
     scene.text_px(x + padding, y, key, size.face, text);
 }
@@ -753,7 +776,7 @@ pub fn draw_hint(
     let (spots, _) = hint_layout(size, hint, cell);
     for ((key, action), (cap, action_x)) in hint.iter().zip(spots) {
         draw_key(scene, size, (x + cap, y), key, cell, true);
-        scene.text_px(x + action_x, y, action, size.face, palette::MUTED);
+        scene.text_px(x + action_x, y, action, size.face, palette::get().muted);
     }
 }
 
@@ -875,16 +898,16 @@ mod tests {
     fn a_destructive_row_is_red_selected_or_not_and_an_unavailable_row_is_grey() {
         let deny = rows()[3];
         let red = RowStyle::new(&LARGE, &deny, false);
-        assert_eq!(red.fill, Some(palette::DARK_RED));
-        assert_eq!((red.text, red.face), (palette::LIGHT_RED, Face::Menu));
+        assert_eq!(red.fill, Some(palette::get().dark_red));
+        assert_eq!((red.text, red.face), (palette::get().light_red, Face::Menu));
         let selected = RowStyle::new(&LARGE, &deny, true);
-        assert_eq!(selected.fill, Some(palette::MID_RED));
+        assert_eq!(selected.fill, Some(palette::get().mid_red));
         assert_eq!(selected.face, Face::MenuBold);
         let grey = RowStyle::new(&SMALL, &rows()[1], true);
-        assert_eq!((grey.fill, grey.text), (None, palette::MUTED));
+        assert_eq!((grey.fill, grey.text), (None, palette::get().muted));
         assert_eq!(grey.face, Face::Chrome);
         let plain = RowStyle::new(&SMALL, &rows()[2], true);
-        assert_eq!(plain.fill, Some(palette::SELECTION));
+        assert_eq!(plain.fill, Some(palette::get().selection));
         assert_eq!(plain.face, Face::ChromeBold);
         assert_eq!(RowStyle::new(&SMALL, &rows()[2], false).fill, None);
     }

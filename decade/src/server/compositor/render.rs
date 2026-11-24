@@ -11,7 +11,7 @@ use smithay::backend::renderer::utils::draw_render_elements;
 use smithay::backend::renderer::{Bind, Color32F, Frame, Renderer};
 use smithay::utils::{Physical, Point, Rectangle, Transform};
 
-use decade_ui::palette::{ACCENT, BACKGROUND, Rgba};
+use decade_ui::palette::{self, Rgba};
 use decade_ui::{Chrome, Pulse, Scene, Shape};
 
 use crate::chrome::frame;
@@ -209,11 +209,9 @@ impl State {
             .renderer
             .render(&mut framebuffer, size, Transform::Normal)
             .map_err(|error| error.to_string())?;
+        let [red, green, blue, _] = palette::get().background;
         frame
-            .clear(
-                Color32F::new(BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 1.0),
-                &[damage],
-            )
+            .clear(Color32F::new(red, green, blue, 1.0), &[damage])
             .map_err(|error| error.to_string())?;
         draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &elements, &[damage])
             .map_err(|error| error.to_string())?;
@@ -385,7 +383,7 @@ fn paint_ghost(
         start.y,
         end.x - start.x + line,
         end.y - start.y + line,
-        ACCENT,
+        palette::get().accent,
     );
     paint.scene(elements, &outline, Point::default(), None);
     let mut ghost = Scene::new(&paint.text.fonts.chrome);

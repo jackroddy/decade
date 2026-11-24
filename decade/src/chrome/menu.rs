@@ -382,7 +382,7 @@ impl Menu {
                 "no matches"
             };
             let (x, y) = (list.left(), list.text_y(0));
-            scene.text_px(x, y, empty, LARGE.face, palette::MUTED);
+            scene.text_px(x, y, empty, LARGE.face, palette::get().muted);
         }
         let (cell_width, _) = scene.cell();
         let top = self.cursor.top;

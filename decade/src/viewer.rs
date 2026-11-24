@@ -52,7 +52,7 @@ use wayland_protocols::wp::viewporter::client::{
     wp_viewport::WpViewport, wp_viewporter::WpViewporter,
 };
 
-use decade_ui::palette::BACKGROUND;
+use decade_ui::palette;
 
 use crate::control::connect_or_start;
 use crate::lines::Lines;
@@ -181,7 +181,9 @@ fn background(globals: &GlobalList, qh: &QueueHandle<Viewer>) -> WlBuffer {
     let manager: WpSinglePixelBufferManagerV1 = globals
         .bind(qh, 1..=1, ())
         .unwrap_or_else(|_| missing("wp_single_pixel_buffer_manager_v1"));
-    let [red, green, blue, alpha] = BACKGROUND.map(|c| (c as f64 * u32::MAX as f64) as u32);
+    let [red, green, blue, alpha] = palette::get()
+        .background
+        .map(|c| (c as f64 * u32::MAX as f64) as u32);
     let buffer = manager.create_u32_rgba_buffer(red, green, blue, alpha, qh, ());
     manager.destroy();
     buffer

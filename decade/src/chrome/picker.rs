@@ -1,6 +1,6 @@
 use decade_channel::AgentState;
 use decade_ui::overlay::{LARGE, MenuKey, draw_hint, hint_width};
-use decade_ui::palette::{self, ACCENT};
+use decade_ui::palette;
 use decade_ui::{Face, Fonts, Point, Scene, Size, fit};
 
 use crate::chrome::frame::mark;
@@ -255,18 +255,18 @@ impl Picker {
             let red = confirming || workspace.is_some_and(|w| w.closing);
             let thick = if self.selected == i { line * 2 } else { line };
             let (ring, stroke) = if drop_target == Some(i) {
-                (palette::CYAN, line)
+                (palette::get().cyan, line)
             } else if red {
-                (palette::RED, thick)
+                (palette::get().red, thick)
             } else if self.selected == i {
-                (ACCENT, thick)
+                (palette::get().accent, thick)
             } else {
-                (palette::MUTED, line)
+                (palette::get().muted, line)
             };
             let gap = LARGE.px(FRAME_GAP, menu_height) + stroke;
             let (x, y) = (cell.at.x - gap, cell.at.y - gap);
             let (w, h) = (cell.size.width + gap * 2, cell.size.height + gap * 2);
-            let inside = palette::DARK_BACKGROUND;
+            let inside = palette::get().dark_background;
             under.rounded(x, y, (w, h), radius, ring, ring);
             let inner = (w - stroke * 2, h - stroke * 2);
             under.rounded(
@@ -284,36 +284,40 @@ impl Picker {
                 let text = fit("+ New workspace", room);
                 let x = cell.at.x + (cell.size.width - label_width(&text)) / 2;
                 let y = cell.at.y + (cell.size.height - menu_height) / 2;
-                over.text_px(x, y, &text, Face::Menu, palette::FOREGROUND);
+                over.text_px(x, y, &text, Face::Menu, palette::get().foreground);
                 continue;
             };
             let (glyph, glyph_color) = mark(workspace.state);
             let (label, color, face) = if confirming {
                 let label = format!("{} — enter to close", workspace.name);
-                (label, palette::LIGHT_RED, Face::Menu)
+                (label, palette::get().light_red, Face::Menu)
             } else if red {
                 let label = format!("{} closing", workspace.name);
-                (label, palette::LIGHT_RED, Face::Menu)
+                (label, palette::get().light_red, Face::Menu)
             } else if i == current {
                 (
                     workspace.name.to_string(),
-                    palette::FOREGROUND,
+                    palette::get().foreground,
                     Face::MenuBold,
                 )
             } else {
                 let label = workspace.name.to_string();
-                (label, palette::FADED_FOREGROUND, Face::Menu)
+                (label, palette::get().faded_foreground, Face::Menu)
             };
-            let glyph_color = if red { palette::LIGHT_RED } else { glyph_color };
+            let glyph_color = if red {
+                palette::get().light_red
+            } else {
+                glyph_color
+            };
             let label = fit(&label, room.saturating_sub(2).max(1));
             let x = cell.at.x + (cell.size.width - label_width(&label) - 2 * menu_width) / 2;
             over.text_px(x, label_y, &glyph.to_string(), Face::Menu, glyph_color);
             over.text_px(x + 2 * menu_width, label_y, &label, face, color);
             let button = grid.close_button(i);
             let icon_color = if confirming {
-                palette::LIGHT_RED
+                palette::get().light_red
             } else {
-                palette::LIGHT_FOREGROUND
+                palette::get().light_foreground
             };
             let icon_x = button.at.x + (button.size.width - menu_width) / 2;
             let icon_y = button.at.y + (button.size.height - menu_height) / 2;
