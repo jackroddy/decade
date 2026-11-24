@@ -1,7 +1,7 @@
 {
   "id": "decade-092b41",
   "title": "An agent can rename a pane through decade's MCP tools",
-  "body": "The user can rename a pane from decade's chrome, and `Workspace::rename_pane` in `decade/src/server/workspace.rs` does the work. It refuses a name another pane answers to or one holding `&`, `=` or a space. The old name stays an alias, and the router, the scratch pane and the point follow the new name. decade's MCP tools offer no way to rename a pane, so an agent cannot name the scratch panes it shows things in.\n\n## Proposal\n\nAn MCP tool `rename` takes a pane's current name and a new one, and calls `Workspace::rename_pane`. Any agent in the workspace may rename any pane in it. A refused name comes back as the tool's error.\n\n## Cost\n\nA new MCP tool adds to the socket protocol, which moves `decade`'s patch version.\n\n## Open\n\n- Whether an agent may rename only scratch panes, or any pane, including the user's terminals.",
+  "body": "The user can rename a pane from decade's chrome, and `Workspace::rename_pane` in `decade/src/server/workspace.rs` does the work. It refuses a name another pane answers to or one holding `&`, `=` or a space. The old name stays an alias, and the router, the scratch pane and the point follow the new name. decade's MCP tools offer no way to rename a pane, so an agent cannot name the scratch panes it shows things in.\n\n## Proposal\n\nAn MCP tool `rename` takes a pane's current name and a new one, and calls `Workspace::rename_pane`. Any agent in the workspace may rename any scratch pane in it, and no other pane, so the user's terminals keep the names the user gave them. A refused name comes back as the tool's error.\n\n## Cost\n\nA new MCP tool adds to the socket protocol, which moves `decade`'s patch version.",
   "type": "feature",
   "status": "open",
   "priority": 2,
@@ -15,7 +15,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-24T22:38:58.272281837Z",
-  "updated_at": "2026-11-24T22:38:58.272281837Z",
+  "updated_at": "2026-11-24T22:48:38.830002792Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
