@@ -369,7 +369,7 @@ impl Menu {
         };
         let placeholder = fit(&placeholder, LARGE_COLUMNS as usize - 3);
         let query = tail(&self.query, LARGE_COLUMNS as usize - 3);
-        layout.draw_field(scene, &query, &placeholder, false);
+        layout.draw_field(scene, &query, &placeholder, false, query.chars().count());
         layout.draw_hint(scene, self.hint());
         let Some(list) = layout.list_area() else {
             return;

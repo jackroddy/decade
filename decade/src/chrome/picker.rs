@@ -163,7 +163,7 @@ impl Picker {
             MenuKey::Right => self.selected = (self.selected + 1).min(count - 1),
             MenuKey::Up if self.selected >= columns => self.selected -= columns,
             MenuKey::Down => self.selected = (self.selected + columns).min(count - 1),
-            MenuKey::Up | MenuKey::Backspace | MenuKey::Char(_) => {}
+            MenuKey::Up | MenuKey::Home | MenuKey::End | MenuKey::Backspace | MenuKey::Char(_) => {}
         }
         if self.selected != selected {
             self.confirming = None;

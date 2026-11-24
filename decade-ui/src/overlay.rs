@@ -16,6 +16,8 @@ pub enum MenuKey {
     Down,
     Left,
     Right,
+    Home,
+    End,
     Enter,
     Escape,
     Backspace,
@@ -349,8 +351,16 @@ impl Layout {
     }
 
     /// Draw the text field holding `text`, or `placeholder` when it is
-    /// empty, with the text on a selection fill when `marked` is true.
-    pub fn draw_field(&self, scene: &mut Scene, text: &str, placeholder: &str, marked: bool) {
+    /// empty, with the text on a selection fill when `marked` is true and
+    /// the caret before character `cursor`.
+    pub fn draw_field(
+        &self,
+        scene: &mut Scene,
+        text: &str,
+        placeholder: &str,
+        marked: bool,
+        cursor: usize,
+    ) {
         if self.field.is_none() {
             return;
         }
@@ -368,7 +378,12 @@ impl Layout {
             scene.rect(text_x, y, width, cell_height, palette::SELECTION);
         }
         scene.text_px(text_x, y, text, face, palette::FOREGROUND);
-        scene.text_px(text_x + width, y, "▏", face, palette::ACCENT);
+        let caret = if text.is_empty() {
+            width
+        } else {
+            cursor as i32 * cell_width
+        };
+        scene.text_px(text_x + caret, y, "▏", face, palette::ACCENT);
         if let Some(rule) = self.field_rule {
             self.draw_rule(scene, rule);
         }
@@ -620,7 +635,12 @@ impl Cursor {
                 self.selected = index;
                 return Step::Run(index);
             }
-            MenuKey::Left | MenuKey::Right | MenuKey::Backspace | MenuKey::Tab => {
+            MenuKey::Left
+            | MenuKey::Right
+            | MenuKey::Home
+            | MenuKey::End
+            | MenuKey::Backspace
+            | MenuKey::Tab => {
                 return Step::Pass(key);
             }
         }

@@ -12,6 +12,9 @@ pub struct NameField<A> {
     title: String,
     pub text: String,
 
+    /// The caret's place in the text, in characters.
+    cursor: usize,
+
     /// Whether the text is still the old name, which the first key
     /// replaces.
     fresh: bool,
@@ -45,6 +48,7 @@ impl<A: Clone> NameField<A> {
     ) -> NameField<A> {
         NameField {
             title,
+            cursor: name.chars().count(),
             text: name,
             fresh: true,
             error: None,
@@ -63,20 +67,36 @@ impl<A: Clone> NameField<A> {
             MenuKey::Char(ch) => {
                 if self.fresh {
                     self.text.clear();
+                    self.cursor = 0;
                 }
-                self.text.push(ch);
+                self.text.insert(self.byte_at(self.cursor), ch);
+                self.cursor += 1;
             }
-            MenuKey::Backspace if self.fresh => self.text.clear(),
+            MenuKey::Backspace if self.fresh => {
+                self.text.clear();
+                self.cursor = 0;
+            }
             MenuKey::Backspace => {
-                self.text.pop();
+                if self.cursor > 0 {
+                    self.cursor -= 1;
+                    self.text.remove(self.byte_at(self.cursor));
+                }
             }
-            MenuKey::Up | MenuKey::Down | MenuKey::Left | MenuKey::Right | MenuKey::Tab => {
-                return Outcome::Open;
-            }
+            MenuKey::Left => self.cursor = self.cursor.saturating_sub(1),
+            MenuKey::Right => self.cursor = (self.cursor + 1).min(self.text.chars().count()),
+            MenuKey::Home => self.cursor = 0,
+            MenuKey::End => self.cursor = self.text.chars().count(),
+            MenuKey::Up | MenuKey::Down | MenuKey::Tab => return Outcome::Open,
         }
         self.fresh = false;
         self.error = None;
         Outcome::Open
+    }
+
+    fn byte_at(&self, chars: usize) -> usize {
+        (self.text.char_indices())
+            .nth(chars)
+            .map_or(self.text.len(), |(byte, _)| byte)
     }
 
     /// The box, placed so the field's text starts where the name does
@@ -111,7 +131,7 @@ impl<A: Clone> NameField<A> {
         let layout = self.layout();
         layout.draw_box(scene);
         layout.draw_header(scene, &self.title, None);
-        layout.draw_field(scene, &self.text, "name", self.fresh);
+        layout.draw_field(scene, &self.text, "name", self.fresh, self.cursor);
         if let Some(error) = &self.error {
             layout.draw_error(scene, error);
         }
@@ -154,11 +174,41 @@ mod tests {
     }
 
     #[test]
+    fn movement_keys_move_the_caret_and_typing_and_backspace_act_at_it() {
+        let mut field = field();
+        field.key(MenuKey::Home);
+        assert_eq!(field.text, "terminal");
+        field.key(MenuKey::Char('x'));
+        assert_eq!(field.text, "xterminal");
+        field.key(MenuKey::Right);
+        field.key(MenuKey::Backspace);
+        assert_eq!(field.text, "xerminal");
+        field.key(MenuKey::Backspace);
+        field.key(MenuKey::Backspace);
+        assert_eq!(field.text, "erminal");
+        field.key(MenuKey::End);
+        field.key(MenuKey::Right);
+        field.key(MenuKey::Char('é'));
+        field.key(MenuKey::Left);
+        field.key(MenuKey::Left);
+        field.key(MenuKey::Backspace);
+        assert_eq!(field.text, "erminl\u{e9}");
+    }
+
+    #[test]
+    fn a_movement_key_first_keeps_the_old_name_and_left_starts_from_its_end() {
+        let mut field = field();
+        field.key(MenuKey::Left);
+        field.key(MenuKey::Char('X'));
+        assert_eq!(field.text, "terminaXl");
+    }
+
+    #[test]
     fn enter_asks_to_apply_the_name_escape_cancels_and_a_key_clears_the_error() {
         let mut field = field();
         assert_eq!(field.key(MenuKey::Enter), Outcome::Apply(7));
         field.error = Some("terminal is taken".into());
-        field.key(MenuKey::Left);
+        field.key(MenuKey::Up);
         assert!(field.error.is_some());
         field.key(MenuKey::Char('2'));
         assert_eq!(field.error, None);

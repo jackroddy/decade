@@ -12,6 +12,9 @@ command line and what the tool writes.
 
 ### Added
 
+- The name field that rename and new group open has a caret. Left, Right,
+  Home and End move it, and typing and Backspace act at it. The first key
+  still replaces the old name unless it is a movement key.
 - `decade script` has `down` and `up`, which press and release the left
   button where the pointer is. A script can `move`, `down`, `move`, `shot`
   and `up` to capture a pane drag in progress.

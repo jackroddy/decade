@@ -1042,6 +1042,8 @@ fn menu_key(pressed: bool, modifiers: &ModifiersState, sym: Keysym) -> Option<Ke
         keysyms::KEY_Down => MenuKey::Down,
         keysyms::KEY_Left => MenuKey::Left,
         keysyms::KEY_Right => MenuKey::Right,
+        keysyms::KEY_Home => MenuKey::Home,
+        keysyms::KEY_End => MenuKey::End,
         keysyms::KEY_h if ctrl => MenuKey::Left,
         keysyms::KEY_l if ctrl => MenuKey::Right,
         keysyms::KEY_k if ctrl => MenuKey::Up,
