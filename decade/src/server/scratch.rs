@@ -25,10 +25,7 @@ const STDERR_LINES: usize = 20;
 /// How many characters of a stderr line decade keeps.
 const STDERR_LINE_CHARS: usize = 500;
 
-/// The answer to `scratch.status` when no program has been started.
-pub const NOT_STARTED: &str = "no program has been started with scratch.open in this workspace";
-
-/// The pane agents show programs in, one per workspace at most.
+/// A pane agents show programs in.
 pub struct Scratch {
     pub pane: String,
 
@@ -106,7 +103,10 @@ impl Scratch {
     pub fn status(&self) -> String {
         match &self.started {
             Some(started) => started.status(),
-            None => NOT_STARTED.to_string(),
+            None => format!(
+                "no program has been started with scratch.open in pane {}",
+                self.pane
+            ),
         }
     }
 }
@@ -340,7 +340,10 @@ mod tests {
     #[test]
     fn the_status_says_a_program_runs_or_gives_its_exit_and_last_stderr_lines() {
         let mut scratch = Scratch::new("scratch".into());
-        assert_eq!(scratch.status(), NOT_STARTED);
+        assert_eq!(
+            scratch.status(),
+            "no program has been started with scratch.open in pane scratch"
+        );
         scratch.started = Some(Started::new("acre-gui".into(), 123, false));
         assert_eq!(scratch.status(), "acre-gui (pid 123) is running");
         let started = scratch.started.as_mut().unwrap();

@@ -113,7 +113,7 @@ impl Router {
         id: usize,
         line: &str,
         panes: &PaneNames,
-        scratch: Option<&str>,
+        scratch: &[&str],
     ) -> Vec<Out> {
         let value: Value = match serde_json::from_str(line) {
             Ok(value) => value,
@@ -159,7 +159,7 @@ impl Router {
         payload: Value,
         value: Value,
         panes: &PaneNames,
-        scratch: Option<&str>,
+        scratch: &[&str],
     ) -> Vec<Out> {
         let malformed = |error: serde_json::Error| {
             vec![error_line(
@@ -217,8 +217,8 @@ impl Router {
     }
 
     /// Every pane and the name of the client occupying it, marking the
-    /// scratch pane and the pane `you`.
-    pub fn panes(&self, panes: &PaneNames, scratch: Option<&str>, you: Option<&str>) -> Vec<Pane> {
+    /// scratch panes and the pane `you`.
+    pub fn panes(&self, panes: &PaneNames, scratch: &[&str], you: Option<&str>) -> Vec<Pane> {
         (panes.current.iter())
             .map(|name| {
                 let occupant = self.occupant(name).map(|(_, c)| c);
@@ -227,7 +227,7 @@ impl Router {
                     client: occupant.map(|c| c.name.clone()),
                     shows: occupant.map(|c| c.shows.clone()).unwrap_or_default(),
                     accepts: occupant.map(|c| c.accepts.clone()).unwrap_or_default(),
-                    scratch: scratch == Some(*name),
+                    scratch: scratch.contains(name),
                     you: you == Some(*name),
                 }
             })
@@ -247,7 +247,7 @@ impl Router {
                 .map(str::to_string)
                 .ok_or_else(|| format!("no pane named {pane}"));
         }
-        let list = self.panes(panes, None, None);
+        let list = self.panes(panes, &[], None);
         let showing: Vec<&str> = list
             .iter()
             .filter(|pane| pane.shows.iter().any(|shows| shows.kind == kind))
@@ -442,7 +442,7 @@ mod tests {
             1,
             r#"{"hello": {"name": "code-pane", "accepts": ["show"], "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         ));
         assert_eq!(
             out,
@@ -458,13 +458,13 @@ mod tests {
             1,
             r#"{"hello": {"name": "first", "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         );
         let out = lines(r.handle(
             2,
             r#"{"hello": {"name": "second", "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         ));
         assert_eq!(out.len(), 2);
         assert!(
@@ -483,19 +483,19 @@ mod tests {
             1,
             r#"{"hello": {"name": "code-pane", "accepts": ["reload"], "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         );
         r.handle(
             2,
             r#"{"hello": {"name": "coax", "pane": "chat"}}"#,
             &names(),
-            None,
+            &[],
         );
         let out = lines(r.handle(
             2,
             r#"{"to": "code", "reload": {"path": "src/gpu.rs"}}"#,
             &names(),
-            None,
+            &[],
         ));
         assert_eq!(
             out,
@@ -510,12 +510,12 @@ mod tests {
             1,
             r#"{"hello": {"name": "code-pane", "accepts": [{"name": "reload", "description": "Read the file again."}], "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         );
-        r.handle(2, r#"{"hello": {"name": "coax"}}"#, &names(), None);
-        let out = lines(r.handle(2, r#"{"to": "code", "reload": {}}"#, &names(), None));
+        r.handle(2, r#"{"hello": {"name": "coax"}}"#, &names(), &[]);
+        let out = lines(r.handle(2, r#"{"to": "code", "reload": {}}"#, &names(), &[]));
         assert_eq!(out, vec![(1, json!({"reload": {}, "from": "coax"}))]);
-        let out = lines(r.handle(2, r#"{"to": "code", "draw": {}}"#, &names(), None));
+        let out = lines(r.handle(2, r#"{"to": "code", "draw": {}}"#, &names(), &[]));
         assert_eq!(
             out[0].1["error"]["reason"],
             "pane code does not accept draw"
@@ -529,10 +529,10 @@ mod tests {
             1,
             r#"{"hello": {"name": "code-pane", "accepts": ["show"], "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         );
-        r.handle(2, r#"{"hello": {"name": "coax"}}"#, &names(), None);
-        let out = lines(r.handle(2, r#"{"to": "code", "draw": {}}"#, &names(), None));
+        r.handle(2, r#"{"hello": {"name": "coax"}}"#, &names(), &[]);
+        let out = lines(r.handle(2, r#"{"to": "code", "draw": {}}"#, &names(), &[]));
         assert_eq!(
             out[0].1["error"]["reason"],
             "pane code does not accept draw"
@@ -542,9 +542,9 @@ mod tests {
     #[test]
     fn messages_before_hello_and_bad_json_get_errors_back() {
         let mut r = Router::default();
-        let out = lines(r.handle(1, r#"{"to": "code", "show": {}}"#, &names(), None));
+        let out = lines(r.handle(1, r#"{"to": "code", "show": {}}"#, &names(), &[]));
         assert_eq!(out[0].1["error"]["reason"], "say hello first");
-        let out = lines(r.handle(1, "not json", &names(), None));
+        let out = lines(r.handle(1, "not json", &names(), &[]));
         assert!(
             out[0].1["error"]["reason"]
                 .as_str()
@@ -555,15 +555,15 @@ mod tests {
     }
 
     #[test]
-    fn panes_lists_every_pane_its_occupant_the_scratch_pane_and_the_caller() {
+    fn panes_lists_every_pane_its_occupant_the_scratch_panes_and_the_caller() {
         let mut r = Router::default();
         r.handle(
             1,
             r#"{"hello": {"name": "coax", "pane": "chat", "accepts": ["ping", {"name": "ask", "description": "Put a question to the agent."}]}}"#,
             &names(),
-            None,
+            &[],
         );
-        let out = lines(r.handle(1, r#"{"panes": {}}"#, &names(), Some("code")));
+        let out = lines(r.handle(1, r#"{"panes": {}}"#, &names(), &["code"]));
         let accepts =
             json!(["ping", {"name": "ask", "description": "Put a question to the agent."}]);
         assert_eq!(
@@ -583,17 +583,17 @@ mod tests {
             1,
             r#"{"hello": {"name": "code-pane", "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         );
         r.handle(
             2,
             r#"{"hello": {"name": "coax", "pane": "chat"}}"#,
             &names(),
-            None,
+            &[],
         );
         for verb in ["agent", "ended", "error", "from"] {
             let line = format!(r#"{{"to": "code", "{verb}": {{"pane": "chat"}}}}"#);
-            let out = lines(r.handle(2, &line, &names(), None));
+            let out = lines(r.handle(2, &line, &names(), &[]));
             assert_eq!(out.len(), 1);
             assert_eq!(out[0].0, 2);
             assert_eq!(out[0].1["error"]["reason"], format!("{verb} is reserved"));
@@ -607,30 +607,30 @@ mod tests {
             1,
             r#"{"hello": {"name": "list", "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         );
         r.handle(
             2,
             r#"{"hello": {"name": "coax", "pane": "chat"}}"#,
             &names(),
-            None,
+            &[],
         );
-        let out = lines(r.handle(2, r#"{"focus": {"pane": "code"}}"#, &names(), None));
+        let out = lines(r.handle(2, r#"{"focus": {"pane": "code"}}"#, &names(), &[]));
         assert!(
             out[0].1["error"]["reason"]
                 .as_str()
                 .unwrap()
                 .starts_with("a message needs \"to\"")
         );
-        let out = lines(r.handle(2, r#"{"to": "code", "focus": {"row": 3}}"#, &names(), None));
+        let out = lines(r.handle(2, r#"{"to": "code", "focus": {"row": 3}}"#, &names(), &[]));
         assert_eq!(out, vec![(1, json!({"focus": {"row": 3}, "from": "coax"}))]);
     }
 
     #[test]
     fn a_message_without_to_must_be_one_of_decades_verbs() {
         let mut r = Router::default();
-        r.handle(1, r#"{"hello": {"name": "coax"}}"#, &names(), None);
-        let out = lines(r.handle(1, r#"{"show": {}}"#, &names(), None));
+        r.handle(1, r#"{"hello": {"name": "coax"}}"#, &names(), &[]);
+        let out = lines(r.handle(1, r#"{"show": {}}"#, &names(), &[]));
         assert!(
             out[0].1["error"]["reason"]
                 .as_str()
@@ -641,7 +641,7 @@ mod tests {
             1,
             r#"{"agent": {"state": "idle"}, "panes": {}}"#,
             &names(),
-            None,
+            &[],
         ));
         assert_eq!(
             out[0].1["error"]["reason"],
@@ -656,18 +656,18 @@ mod tests {
             1,
             r#"{"hello": {"name": "first", "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         );
         let out = lines(r.handle(
             1,
             r#"{"hello": {"name": "second", "pane": "chat"}}"#,
             &names(),
-            None,
+            &[],
         ));
         assert_eq!(out[0].1["welcome"]["pane"], "chat");
         assert!(r.occupant("code").is_none());
         assert_eq!(r.occupant("chat").unwrap().1.name, "second");
-        r.handle(1, r#"{"hello": {"name": "third"}}"#, &names(), None);
+        r.handle(1, r#"{"hello": {"name": "third"}}"#, &names(), &[]);
         assert!(r.occupant("chat").is_none());
     }
 
@@ -678,7 +678,7 @@ mod tests {
             1,
             r#"{"hello": {"name": "coax", "pane": "chat"}}"#,
             &names(),
-            None,
+            &[],
         );
         r.clients.remove(&1);
         assert!(r.occupant("chat").is_none());
@@ -705,7 +705,7 @@ mod tests {
     #[test]
     fn a_hello_with_an_agent_block_records_the_agent_and_one_without_does_not() {
         let mut r = Router::default();
-        let out = lines(r.handle(1, COAX, &names(), None));
+        let out = lines(r.handle(1, COAX, &names(), &[]));
         assert_eq!(out[0].1["welcome"]["pane"], "chat");
         assert_eq!(r.clients[&1].session.as_deref(), Some("s1"));
         let agent = &r.agents.list[0];
@@ -719,7 +719,7 @@ mod tests {
         );
         assert_eq!(agent.pane.as_deref(), Some("chat"));
         assert!(agent.connected);
-        r.handle(2, r#"{"hello": {"name": "tool"}}"#, &names(), None);
+        r.handle(2, r#"{"hello": {"name": "tool"}}"#, &names(), &[]);
         assert!(r.clients[&2].session.is_none());
         assert_eq!(r.agents.list.len(), 1);
     }
@@ -727,18 +727,18 @@ mod tests {
     #[test]
     fn agent_updates_merge_and_leave_absent_fields_as_they_were() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
         r.handle(
             1,
             r#"{"agent": {"state": "working", "activity": "cargo test", "model": "opus", "context": {"used": 10, "limit": 100}}}"#,
             &names(),
-            None,
+            &[],
         );
         r.handle(
             1,
             r#"{"agent": {"tokens": {"input": 5, "output": 7}, "cost": 0.25}}"#,
             &names(),
-            None,
+            &[],
         );
         let report = report(&r);
         assert_eq!(report.state, Some(AgentState::Working));
@@ -765,15 +765,15 @@ mod tests {
     #[test]
     fn a_null_field_clears_it_and_the_question_is_shown_over_the_activity_while_set() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
         r.handle(
             1,
             r#"{"agent": {"activity": "reading", "question": "which branch?"}}"#,
             &names(),
-            None,
+            &[],
         );
         assert_eq!(report(&r).message(), Some("which branch?"));
-        r.handle(1, r#"{"agent": {"question": null}}"#, &names(), None);
+        r.handle(1, r#"{"agent": {"question": null}}"#, &names(), &[]);
         assert_eq!(report(&r).question, None);
         assert_eq!(report(&r).message(), Some("reading"));
     }
@@ -781,23 +781,23 @@ mod tests {
     #[test]
     fn entering_attention_raises_with_the_question_and_staying_there_does_not() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
         let out = r.handle(
             1,
             r#"{"agent": {"state": "attention", "question": "which branch?"}}"#,
             &names(),
-            None,
+            &[],
         );
         assert_eq!(raised(&out), Some("which branch?"));
-        let out = r.handle(1, r#"{"agent": {"activity": "waiting"}}"#, &names(), None);
+        let out = r.handle(1, r#"{"agent": {"activity": "waiting"}}"#, &names(), &[]);
         assert_eq!(raised(&out), None);
         r.handle(
             1,
             r#"{"agent": {"state": "working", "question": null, "activity": null}}"#,
             &names(),
-            None,
+            &[],
         );
-        let out = r.handle(1, r#"{"agent": {"state": "attention"}}"#, &names(), None);
+        let out = r.handle(1, r#"{"agent": {"state": "attention"}}"#, &names(), &[]);
         assert_eq!(raised(&out), Some("the agent in chat"));
         assert_eq!(r.agents.states().max(), Some(AgentState::Attention));
     }
@@ -805,11 +805,11 @@ mod tests {
     #[test]
     fn a_new_state_restarts_the_clients_clock_and_a_repeated_state_keeps_it() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
         let update = |r: &mut Router, line: &str| {
             let past = Instant::now() - Duration::from_secs(60);
             r.agents.list[0].since = past;
-            r.handle(1, line, &names(), None);
+            r.handle(1, line, &names(), &[]);
             r.agents.list[0].since > past
         };
         assert!(update(&mut r, r#"{"agent": {"state": "working"}}"#));
@@ -821,14 +821,14 @@ mod tests {
     #[test]
     fn ended_drops_the_report_and_the_agent_and_later_updates_are_refused() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
-        r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), None);
-        let out = r.handle(1, r#"{"ended": {}}"#, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
+        r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), &[]);
+        let out = r.handle(1, r#"{"ended": {}}"#, &names(), &[]);
         assert_eq!(raised(&out), None);
         assert!(r.agents.list.is_empty());
         assert!(r.clients[&1].session.is_none());
         assert_eq!(r.occupant("chat").unwrap().0, 1);
-        let out = r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), None);
+        let out = r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), &[]);
         assert_eq!(
             reason(out),
             "agent is for a client whose hello named an agent"
@@ -842,12 +842,12 @@ mod tests {
             1,
             r#"{"hello": {"name": "list", "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         );
         for verb in ["agent", "ended"] {
             let line = format!(r#"{{"{verb}": {{}}}}"#);
             assert_eq!(
-                reason(r.handle(1, &line, &names(), None)),
+                reason(r.handle(1, &line, &names(), &[])),
                 format!("{verb} is for a client whose hello named an agent")
             );
         }
@@ -860,37 +860,37 @@ mod tests {
             1,
             r#"{"hello": {"name": "coax", "agent": {"name": "coax", "version": "0.4.0", "session": "s1"}}}"#,
             &names(),
-            None,
+            &[],
         );
-        let out = r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), None);
+        let out = r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), &[]);
         assert!(reason(out).contains("claimed none"));
     }
 
     #[test]
     fn status_is_no_longer_decades_verb_and_goes_to_a_pane_like_any_other() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
         r.handle(
             2,
             r#"{"hello": {"name": "list", "pane": "code"}}"#,
             &names(),
-            None,
+            &[],
         );
-        let out = r.handle(1, r#"{"status": {"state": "working"}}"#, &names(), None);
+        let out = r.handle(1, r#"{"status": {"state": "working"}}"#, &names(), &[]);
         assert!(reason(out).starts_with("a message needs \"to\""));
-        let out = lines(r.handle(1, r#"{"to": "code", "status": {}}"#, &names(), None));
+        let out = lines(r.handle(1, r#"{"to": "code", "status": {}}"#, &names(), &[]));
         assert_eq!(out, vec![(2, json!({"status": {}, "from": "coax"}))]);
     }
 
     #[test]
     fn a_second_hello_with_a_new_session_leaves_the_first_agent_disconnected() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
-        r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), None);
-        r.handle(1, COAX, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
+        r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), &[]);
+        r.handle(1, COAX, &names(), &[]);
         assert_eq!(r.agents.list.len(), 1);
         assert_eq!(report(&r).state, Some(AgentState::Working));
-        r.handle(1, &COAX.replace("s1", "s2"), &names(), None);
+        r.handle(1, &COAX.replace("s1", "s2"), &names(), &[]);
         let sessions: Vec<_> = (r.agents.list.iter())
             .map(|agent| (agent.session.as_str(), agent.connected))
             .collect();
@@ -900,8 +900,8 @@ mod tests {
     #[test]
     fn a_dropped_connection_keeps_the_agent_disconnected_with_its_report() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
-        r.handle(1, r#"{"agent": {"state": "attention"}}"#, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
+        r.handle(1, r#"{"agent": {"state": "attention"}}"#, &names(), &[]);
         let dropped = Instant::now();
         r.disconnect(1, dropped);
         assert!(r.occupant("chat").is_none());
@@ -915,17 +915,17 @@ mod tests {
     #[test]
     fn a_reconnect_with_the_same_session_reattaches_and_keeps_the_history() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
         r.handle(
             1,
             r#"{"agent": {"state": "working", "model": "opus"}}"#,
             &names(),
-            None,
+            &[],
         );
-        r.handle(1, r#"{"agent": {"state": "attention"}}"#, &names(), None);
+        r.handle(1, r#"{"agent": {"state": "attention"}}"#, &names(), &[]);
         r.disconnect(1, Instant::now());
-        r.handle(2, COAX, &names(), None);
-        r.handle(2, r#"{"agent": {"state": "working"}}"#, &names(), None);
+        r.handle(2, COAX, &names(), &[]);
+        r.handle(2, r#"{"agent": {"state": "working"}}"#, &names(), &[]);
         assert_eq!(r.agents.list.len(), 1);
         let agent = &r.agents.list[0];
         assert!(agent.connected);
@@ -944,10 +944,10 @@ mod tests {
     #[test]
     fn a_reconnect_that_claims_another_pane_moves_the_agent_there() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
-        r.handle(1, r#"{"agent": {"state": "done"}}"#, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
+        r.handle(1, r#"{"agent": {"state": "done"}}"#, &names(), &[]);
         r.disconnect(1, Instant::now());
-        r.handle(2, &COAX.replace("\"chat\"", "\"code\""), &names(), None);
+        r.handle(2, &COAX.replace("\"chat\"", "\"code\""), &names(), &[]);
         assert_eq!(r.agents.list.len(), 1);
         assert_eq!(r.agents.list[0].pane.as_deref(), Some("code"));
         assert_eq!(report(&r).state, Some(AgentState::Done));
@@ -957,8 +957,8 @@ mod tests {
     #[test]
     fn a_second_client_naming_a_connected_session_takes_the_agent_over() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
-        r.handle(2, &COAX.replace("\"chat\"", "\"code\""), &names(), None);
+        r.handle(1, COAX, &names(), &[]);
+        r.handle(2, &COAX.replace("\"chat\"", "\"code\""), &names(), &[]);
         assert!(r.clients[&1].session.is_none());
         r.disconnect(1, Instant::now());
         assert!(r.agents.list[0].connected);
@@ -968,8 +968,8 @@ mod tests {
     #[test]
     fn a_pane_that_goes_clears_the_agents_pane_and_keeps_the_agent() {
         let mut r = Router::default();
-        r.handle(1, COAX, &names(), None);
-        r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), None);
+        r.handle(1, COAX, &names(), &[]);
+        r.handle(1, r#"{"agent": {"state": "working"}}"#, &names(), &[]);
         r.release("chat");
         assert_eq!(r.agents.list[0].pane, None);
         assert_eq!(report(&r).state, Some(AgentState::Working));
@@ -980,8 +980,8 @@ mod tests {
     #[test]
     fn panes_lists_the_kinds_each_occupant_declared_at_hello() {
         let mut r = Router::default();
-        r.handle(1, CODE, &names(), None);
-        let out = lines(r.handle(1, r#"{"panes": {}}"#, &names(), None));
+        r.handle(1, CODE, &names(), &[]);
+        let out = lines(r.handle(1, r#"{"panes": {}}"#, &names(), &[]));
         assert_eq!(
             out[0].1["panes"][2],
             json!({"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}], "accepts": ["reload"], "scratch": false, "you": true})
@@ -992,12 +992,12 @@ mod tests {
     #[test]
     fn show_highlight_and_clear_reach_a_pane_that_shows_the_kind_without_being_in_accepts() {
         let mut r = Router::default();
-        r.handle(1, CODE, &names(), None);
+        r.handle(1, CODE, &names(), &[]);
         r.handle(
             2,
             r#"{"hello": {"name": "coax", "pane": "chat"}}"#,
             &names(),
-            None,
+            &[],
         );
         for message in [
             json!({"show": {"kind": "file", "target": "a.rs", "at": 4}}),
@@ -1006,7 +1006,7 @@ mod tests {
         ] {
             let mut sent = message.clone();
             sent["to"] = json!("code");
-            let out = lines(r.handle(2, &sent.to_string(), &names(), None));
+            let out = lines(r.handle(2, &sent.to_string(), &names(), &[]));
             let mut forwarded = message;
             forwarded["from"] = json!("coax");
             assert_eq!(out, vec![(1, forwarded)]);
@@ -1016,15 +1016,15 @@ mod tests {
     #[test]
     fn a_show_is_refused_by_a_pane_that_did_not_declare_its_kind_or_cannot_highlight_it() {
         let mut r = Router::default();
-        r.handle(1, CODE, &names(), None);
+        r.handle(1, CODE, &names(), &[]);
         r.handle(
             2,
             r#"{"hello": {"name": "viewer", "pane": "terminal", "shows": [{"kind": "image"}]}}"#,
             &names(),
-            None,
+            &[],
         );
         let reason = |r: &mut Router, line: &str| {
-            let out = lines(r.handle(1, line, &names(), None));
+            let out = lines(r.handle(1, line, &names(), &[]));
             assert_eq!(out[0].0, 1);
             out[0].1["error"]["reason"].as_str().unwrap().to_string()
         };
@@ -1047,12 +1047,12 @@ mod tests {
     #[test]
     fn a_kind_goes_to_the_one_pane_that_shows_it() {
         let mut r = Router::default();
-        r.handle(1, CODE, &names(), None);
+        r.handle(1, CODE, &names(), &[]);
         r.handle(
             2,
             r#"{"hello": {"name": "coax", "pane": "chat"}}"#,
             &names(),
-            None,
+            &[],
         );
         assert_eq!(r.showing("file", None, &names()), Ok("code".to_string()));
     }
@@ -1060,12 +1060,12 @@ mod tests {
     #[test]
     fn a_kind_several_panes_show_needs_a_pane_named_and_the_named_pane_is_used() {
         let mut r = Router::default();
-        r.handle(1, CODE, &names(), None);
+        r.handle(1, CODE, &names(), &[]);
         r.handle(
             2,
             r#"{"hello": {"name": "other", "pane": "terminal", "shows": [{"kind": "file"}]}}"#,
             &names(),
-            None,
+            &[],
         );
         assert_eq!(
             r.showing("file", None, &names()),
@@ -1080,12 +1080,12 @@ mod tests {
     #[test]
     fn a_named_pane_that_does_not_show_the_kind_is_refused_when_sent_to() {
         let mut r = Router::default();
-        r.handle(1, CODE, &names(), None);
+        r.handle(1, CODE, &names(), &[]);
         r.handle(
             2,
             r#"{"hello": {"name": "coax", "pane": "chat"}}"#,
             &names(),
-            None,
+            &[],
         );
         let to = r.showing("file", Some("chat"), &names()).unwrap();
         let payload = json!({"kind": "file", "target": "a.rs"});
@@ -1104,7 +1104,7 @@ mod tests {
             1,
             r#"{"hello": {"name": "web", "pane": "terminal", "shows": [{"kind": "url"}, {"kind": "image"}]}}"#,
             &names(),
-            None,
+            &[],
         );
         assert_eq!(
             r.showing("file", None, &names()),
@@ -1119,29 +1119,29 @@ mod tests {
             1,
             r#"{"hello": {"name": "viewer", "pane": "code", "shows": [{"kind": "file"}]}}"#,
             &names(),
-            None,
+            &[],
         );
         r.handle(
             2,
             r#"{"hello": {"name": "anything", "pane": "terminal"}}"#,
             &names(),
-            None,
+            &[],
         );
         r.handle(
             3,
             r#"{"hello": {"name": "coax", "pane": "chat"}}"#,
             &names(),
-            None,
+            &[],
         );
-        let out = lines(r.handle(3, r#"{"to": "code", "reload": {}}"#, &names(), None));
+        let out = lines(r.handle(3, r#"{"to": "code", "reload": {}}"#, &names(), &[]));
         assert_eq!(out[0].0, 3);
         assert_eq!(
             out[0].1["error"]["reason"],
             "pane code does not accept reload"
         );
         let show = r#"{"to": "code", "show": {"kind": "file", "target": "a.rs"}}"#;
-        assert_eq!(lines(r.handle(3, show, &names(), None))[0].0, 1);
-        let out = lines(r.handle(3, r#"{"to": "terminal", "reload": {}}"#, &names(), None));
+        assert_eq!(lines(r.handle(3, show, &names(), &[]))[0].0, 1);
+        let out = lines(r.handle(3, r#"{"to": "terminal", "reload": {}}"#, &names(), &[]));
         assert_eq!(out, vec![(2, json!({"reload": {}, "from": "coax"}))]);
     }
 
@@ -1156,14 +1156,14 @@ mod tests {
             1,
             r#"{"hello": {"name": "shell", "accepts": ["reload"], "pane": "terminal"}}"#,
             &renamed,
-            None,
+            &[],
         ));
         assert_eq!(out[0].1["welcome"]["pane"], "build");
         assert_eq!(r.clients[&1].pane.as_deref(), Some("build"));
-        r.handle(2, r#"{"hello": {"name": "coax"}}"#, &renamed, None);
-        let out = lines(r.handle(2, r#"{"to": "terminal", "reload": {}}"#, &renamed, None));
+        r.handle(2, r#"{"hello": {"name": "coax"}}"#, &renamed, &[]);
+        let out = lines(r.handle(2, r#"{"to": "terminal", "reload": {}}"#, &renamed, &[]));
         assert_eq!(out, vec![(1, json!({"reload": {}, "from": "coax"}))]);
-        let listed: Vec<String> = (r.panes(&renamed, None, None).into_iter())
+        let listed: Vec<String> = (r.panes(&renamed, &[], None).into_iter())
             .map(|pane| pane.name)
             .collect();
         assert_eq!(listed, ["chat", "build"]);

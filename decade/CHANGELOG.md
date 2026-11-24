@@ -39,19 +39,29 @@ command line and what the tool writes.
   coax's directory and types `coax <flags> --session <id>` into its
   shell. When coax exits, the shell stays at its prompt. A coax that has
   quit is not in the next save.
-- An MCP tool `scratch.status`, with no arguments. Its answer says
-  whether the program `scratch.open` last started in the workspace is
-  still running. Once that program has exited, the answer gives its exit
-  status and the last 20 lines of its stderr. For a program started in a
-  terminal, the answer gives the terminal's state and no stderr lines.
-  decade forgets the program when the workspace sleeps or closes, and
-  when the person unmarks or closes the scratch pane.
+- An MCP tool `scratch.status`. Its answer says whether the program
+  `scratch.open` last started in a scratch pane is still running. Once
+  that program has exited, the answer gives its exit status and the last
+  20 lines of its stderr. For a program started in a terminal, the
+  answer gives the terminal's state and no stderr lines. decade forgets
+  the program when the workspace sleeps or closes, and when the person
+  unmarks or closes its scratch pane.
 
 ### Changed
 
-- decade saves workspaces at version 6 of its file. It saves whether
-  each workspace is asleep and the coax session running in each
-  terminal. decade still reads the files of earlier versions.
+- decade saves workspaces at version 7 of its file. It saves whether
+  each workspace is asleep, the coax session running in each terminal,
+  and every scratch pane of each workspace. decade still reads the
+  files of earlier versions. A version 6 file's one scratch pane reads
+  as a list of one.
+- A workspace can have any number of scratch panes. Marking a pane as
+  scratch leaves the others marked. `scratch.open`, `scratch.send` and
+  `scratch.status` take an optional `pane`, the name of a scratch pane.
+  The name may be left out when the workspace has one scratch pane. A
+  call that leaves it out while there are several, or that names a pane
+  that is not a scratch pane, fails with a list of the scratch panes.
+  Each scratch pane keeps its own program, waiting call and stderr.
+  Before, marking a pane as scratch unmarked the one marked before it.
 - The instructions decade's MCP server gives an agent end by naming the
   workspace the agent runs in, and its pane when the address names one.
 - A pane whose program exits while the pane is being dragged ends the

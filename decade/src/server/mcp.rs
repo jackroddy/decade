@@ -49,8 +49,10 @@ pub enum Call {
         payload: Value,
     },
 
-    /// A pane verb for the program in the scratch pane.
+    /// A pane verb for the program in scratch pane `pane`, or in the only
+    /// scratch pane.
     ScratchSend {
+        pane: Option<String>,
         verb: String,
         payload: Value,
     },
@@ -62,8 +64,13 @@ pub enum Call {
     },
     Panes,
     Agents,
-    ScratchOpen(Launch),
-    ScratchStatus,
+    ScratchOpen {
+        pane: Option<String>,
+        launch: Launch,
+    },
+    ScratchStatus {
+        pane: Option<String>,
+    },
 
     /// The name of the workspace the address names.
     Workspace,
@@ -127,6 +134,7 @@ fn tools() -> Vec<Tool> {
     let kind = json!({"type": "string", "description": "a kind of thing to show, as panes lists them, such as file"});
     let target = json!({"type": "string", "description": "what to show, in the form the kind takes: a path for file"});
     let pane = json!({"type": "string", "description": "the pane to use, needed only when several panes show the kind"});
+    let scratch_pane = json!({"type": "string", "description": "a scratch pane's name, needed only when the workspace has several"});
     vec![
         Tool::new(
             "show",
@@ -189,10 +197,11 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "scratch.open",
-            "Start a program in the scratch pane, closing the program there first. The program runs in the workspace's directory with decade's environment. With terminal false, decade puts the first window of the program, or of a process under it, in the scratch pane, and the call waits for that window, for the program to exit, or for the wait to pass. decade answers with which of these happened. After an exit, the answer gives the exit status and the last 20 lines of the program's stderr. When the program is still running at the end of the wait, decade puts its window in the scratch pane once the window opens. With terminal true, decade answers only that the terminal started",
+            "Start a program in a scratch pane, closing the program there first. The program runs in the workspace's directory with decade's environment. With terminal false, decade puts the first window of the program, or of a process under it, in the scratch pane, and the call waits for that window, for the program to exit, or for the wait to pass. decade answers with which of these happened. After an exit, the answer gives the exit status and the last 20 lines of the program's stderr. When the program is still running at the end of the wait, decade puts its window in the scratch pane once the window opens. With terminal true, decade answers only that the terminal started",
             schema(json!({
                 "type": "object",
                 "properties": {
+                    "pane": scratch_pane,
                     "program": {"type": "string", "description": "a program on decade's PATH, or a path relative to the workspace's directory"},
                     "args": {"type": "array", "items": {"type": "string"}, "description": "the program's arguments"},
                     "terminal": {"type": "boolean", "description": "run it in a terminal, the default, or as its own window"},
@@ -203,8 +212,8 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "scratch.status",
-            "Tell whether the program scratch.open last started in this workspace is still running. Once it has exited, the answer gives its exit status and the last 20 lines of its stderr. For a program started with terminal true, the answer is about the terminal and has no stderr lines",
-            schema(json!({"type": "object", "properties": {}})),
+            "Tell whether the program scratch.open last started in a scratch pane is still running. Once it has exited, the answer gives its exit status and the last 20 lines of its stderr. For a program started with terminal true, the answer is about the terminal and has no stderr lines",
+            schema(json!({"type": "object", "properties": {"pane": scratch_pane}})),
         ),
         Tool::new(
             "screenshot",
@@ -219,10 +228,11 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "scratch.send",
-            "Send a message to the program in the scratch pane. panes lists the verbs that program accepts under accepts, each a name or a name with a description of what it does",
+            "Send a message to the program in a scratch pane. panes lists the verbs that program accepts under accepts, each a name or a name with a description of what it does",
             schema(json!({
                 "type": "object",
                 "properties": {
+                    "pane": scratch_pane,
                     "verb": {"type": "string", "description": "the message's verb"},
                     "payload": {"type": "object", "description": "the message's payload"}
                 },
@@ -250,10 +260,10 @@ struct Point {
     note: Option<String>,
 }
 
-/// The arguments of `show`, `highlight` and `clear`: the verb's payload
-/// and an optional pane.
+/// The arguments of `show`, `highlight`, `clear` and `scratch.open`: the
+/// call's payload and an optional pane.
 #[derive(Deserialize)]
-struct ToKind<T> {
+struct ToPane<T> {
     pane: Option<String>,
     #[serde(flatten)]
     payload: T,
@@ -265,9 +275,16 @@ struct Screenshot {
     pane: String,
 }
 
+/// The arguments of `scratch.status`.
+#[derive(Deserialize)]
+struct ScratchStatus {
+    pane: Option<String>,
+}
+
 /// The arguments of `scratch.send`.
 #[derive(Deserialize)]
 struct ScratchSend {
+    pane: Option<String>,
     verb: String,
     payload: Map<String, Value>,
 }
@@ -275,15 +292,15 @@ struct ScratchSend {
 fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
     match name {
         "show" => {
-            let ToKind { pane, payload } = parse::<ToKind<Show>>(name, arguments)?;
+            let ToPane { pane, payload } = parse::<ToPane<Show>>(name, arguments)?;
             Ok(kind_call("show", pane, payload.kind.clone(), payload))
         }
         "highlight" => {
-            let ToKind { pane, payload } = parse::<ToKind<Highlight>>(name, arguments)?;
+            let ToPane { pane, payload } = parse::<ToPane<Highlight>>(name, arguments)?;
             Ok(kind_call("highlight", pane, payload.kind.clone(), payload))
         }
         "clear" => {
-            let ToKind { pane, payload } = parse::<ToKind<Clear>>(name, arguments)?;
+            let ToPane { pane, payload } = parse::<ToPane<Clear>>(name, arguments)?;
             Ok(kind_call("clear", pane, payload.kind.clone(), payload))
         }
         "panes" => Ok(Call::Panes),
@@ -292,15 +309,29 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
             let Point { pane, note } = parse(name, arguments)?;
             Ok(Call::Point { pane, note })
         }
-        "scratch.open" => parse(name, arguments).map(Call::ScratchOpen),
-        "scratch.status" => Ok(Call::ScratchStatus),
+        "scratch.open" => {
+            let ToPane { pane, payload } = parse(name, arguments)?;
+            Ok(Call::ScratchOpen {
+                pane,
+                launch: payload,
+            })
+        }
+        "scratch.status" => {
+            let ScratchStatus { pane } = parse(name, arguments)?;
+            Ok(Call::ScratchStatus { pane })
+        }
         "screenshot" => {
             let Screenshot { pane } = parse(name, arguments)?;
             Ok(Call::Screenshot { pane })
         }
         "scratch.send" => {
-            let ScratchSend { verb, payload } = parse(name, arguments)?;
+            let ScratchSend {
+                pane,
+                verb,
+                payload,
+            } = parse(name, arguments)?;
             Ok(Call::ScratchSend {
+                pane,
                 verb,
                 payload: Value::Object(payload),
             })
@@ -355,11 +386,14 @@ impl ServerHandler for Decade {
                  kind into view, highlight marks parts of it, and clear removes the marks. Each \
                  goes to the pane whose program shows that kind; name the pane when several \
                  do. For file the target is a path, at is a line and ranges are [from, to] \
-                 line pairs. The user may mark one pane as the scratch pane, where agents \
-                 show things. scratch.open starts a program in it, \
-                 replacing the program there, and scratch.send sends that program a message. \
-                 Both fail when the workspace has no scratch pane. scratch.status tells \
-                 whether the program scratch.open last started still runs, or how it exited. \
+                 line pairs. The user may mark any number of panes as scratch panes, where \
+                 agents show things, and panes lists them with scratch true. scratch.open \
+                 starts a program in one, replacing the program there, and scratch.send \
+                 sends that program a message. scratch.status tells whether the program \
+                 scratch.open last started in one still runs, or how it exited. Each takes \
+                 the scratch pane's name, which may be left out when there is only one. \
+                 They fail when the workspace has no scratch pane, or when the name is left \
+                 out while there are several. \
                  point draws the user's eye \
                  to a pane without taking keyboard focus. screenshot returns an image of what \
                  a pane draws, once the user allows it. agents lists the agents in the \
@@ -641,7 +675,7 @@ mod tests {
 
     #[test]
     fn tool_arguments_take_their_defaults_and_wrong_types_are_refused() {
-        let Ok(Call::ScratchOpen(launch)) =
+        let Ok(Call::ScratchOpen { pane: None, launch }) =
             call_for("scratch.open", schema(json!({"program": "decade-code"})))
         else {
             panic!("scratch.open with a program is a launch");
@@ -655,11 +689,12 @@ mod tests {
             panic!("a number is not an argument");
         };
         assert!(reason.starts_with("scratch.open: invalid type: integer"));
-        let windowed =
-            json!({"program": "decade-code", "args": ["a"], "terminal": false, "wait": 30});
-        let Ok(Call::ScratchOpen(launch)) = call_for("scratch.open", schema(windowed)) else {
+        let windowed = json!({"pane": "viewer", "program": "decade-code", "args": ["a"], "terminal": false, "wait": 30});
+        let Ok(Call::ScratchOpen { pane, launch }) = call_for("scratch.open", schema(windowed))
+        else {
             panic!("scratch.open with a program is a launch");
         };
+        assert_eq!(pane.as_deref(), Some("viewer"));
         assert_eq!(launch.args, ["a"]);
         assert!(!launch.terminal);
         assert_eq!(launch.wait, Some(30.0));
@@ -671,8 +706,21 @@ mod tests {
         assert!(matches!(call_for("agents", Map::new()), Ok(Call::Agents)));
         assert!(matches!(
             call_for("scratch.status", Map::new()),
-            Ok(Call::ScratchStatus)
+            Ok(Call::ScratchStatus { pane: None })
         ));
+        let Ok(Call::ScratchStatus { pane }) =
+            call_for("scratch.status", schema(json!({"pane": "viewer"})))
+        else {
+            panic!("scratch.status takes a pane");
+        };
+        assert_eq!(pane.as_deref(), Some("viewer"));
+        let Ok(Call::ScratchSend { pane, .. }) = call_for(
+            "scratch.send",
+            schema(json!({"pane": "viewer", "verb": "reload", "payload": {}})),
+        ) else {
+            panic!("scratch.send takes a pane");
+        };
+        assert_eq!(pane.as_deref(), Some("viewer"));
         let missing = call_for("point", Map::new());
         assert_eq!(missing.err().unwrap(), "point: missing field `pane`");
         assert_eq!(

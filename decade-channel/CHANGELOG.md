@@ -15,6 +15,11 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
   with, so decade can start it again on the same session. A hello
   without `args` reads as empty.
 
+### Changed
+
+- `Pane::scratch` can be true for several panes in one list, since a
+  workspace can now have several scratch panes.
+
 ## [0.1.0] - 2026-11-12
 
 ### Added

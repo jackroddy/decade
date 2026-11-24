@@ -12,12 +12,9 @@ use smithay::wayland::shell::xdg::ToplevelSurface;
 use crate::lines::Lines;
 use crate::server::channel::Out;
 use crate::server::mcp;
-use crate::server::scratch::{self, Launch, Scratch, Started, Waiting};
+use crate::server::scratch::{self, Launch, Started, Waiting};
 
 use super::State;
-
-const NO_SCRATCH: &str =
-    "this workspace has no scratch pane; the person marks one from the Ctrl bar";
 
 impl State {
     pub(super) fn listen(&mut self, workspace: usize) {
@@ -103,7 +100,9 @@ impl State {
         };
         let caller = request.pane.as_deref();
         match request.call {
-            mcp::Call::ScratchOpen(launch) => self.scratch_open(workspace, launch, request.reply),
+            mcp::Call::ScratchOpen { pane, launch } => {
+                self.scratch_open(workspace, pane.as_deref(), launch, request.reply)
+            }
             mcp::Call::Screenshot { pane } => {
                 self.screenshot(workspace, &pane, caller, request.reply)
             }
@@ -132,9 +131,13 @@ impl State {
                 verb.to_string(),
                 payload,
             ),
-            mcp::Call::ScratchSend { verb, payload } => {
-                let to = shown.scratch_pane().ok_or(NO_SCRATCH)?;
-                (to.to_string(), verb, payload)
+            mcp::Call::ScratchSend {
+                pane,
+                verb,
+                payload,
+            } => {
+                let index = shown.find_scratch(pane.as_deref())?;
+                (shown.scratch[index].pane.clone(), verb, payload)
             }
             mcp::Call::Point { pane, note } => {
                 let shown = &mut self.workspaces[workspace];
@@ -148,15 +151,15 @@ impl State {
                 let agents = shown.router.agents.listing(Instant::now());
                 return Ok(agents.to_string());
             }
-            mcp::Call::ScratchStatus => {
-                let status = shown.scratch.as_ref().map(Scratch::status);
-                return Ok(status.unwrap_or_else(|| scratch::NOT_STARTED.to_string()));
+            mcp::Call::ScratchStatus { pane } => {
+                let index = shown.find_scratch(pane.as_deref())?;
+                return Ok(shown.scratch[index].status());
             }
             mcp::Call::Panes => {
                 let panes = Reply::Panes(shown.pane_list(caller));
                 return Ok(serde_json::to_string(&panes).unwrap());
             }
-            mcp::Call::ScratchOpen(_) | mcp::Call::Screenshot { .. } => {
+            mcp::Call::ScratchOpen { .. } | mcp::Call::Screenshot { .. } => {
                 unreachable!("mcp_request answers scratch.open and screenshot")
             }
         };
@@ -166,44 +169,49 @@ impl State {
         Ok(sent)
     }
 
-    /// Start the program in the workspace's scratch pane, or ask the
+    /// Start the program in the scratch pane `pane` names, or ask the
     /// program there to close and start it once it has, and answer once
     /// the program's start is known.
-    fn scratch_open(&mut self, workspace: usize, launch: Launch, reply: mcp::Reply) {
-        let (launch, wait, occupants) = match self.scratch_launch(workspace, launch) {
+    fn scratch_open(
+        &mut self,
+        workspace: usize,
+        pane: Option<&str>,
+        launch: Launch,
+        reply: mcp::Reply,
+    ) {
+        let (index, launch, wait, occupants) = match self.scratch_launch(workspace, pane, launch) {
             Ok(ready) => ready,
             Err(reason) => {
                 let _ = reply.send(Err(reason));
                 return;
             }
         };
-        self.answer_scratch(workspace, None);
-        let Some(scratch) = &mut self.workspaces[workspace].scratch else {
-            return;
-        };
+        self.answer_scratch(workspace, index, None);
+        let scratch = &mut self.workspaces[workspace].scratch[index];
         scratch.waiting = Some(Waiting::new(reply, launch.program.clone(), wait));
-        self.time_scratch(workspace);
+        self.time_scratch(workspace, index);
         if occupants.is_empty() {
-            self.start_scratch(workspace, launch);
+            self.start_scratch(workspace, index, launch);
             return;
         }
         for occupant in &occupants {
             occupant.send_close();
         }
-        if let Some(scratch) = &mut self.workspaces[workspace].scratch {
-            scratch.next = Some(launch);
-        }
+        self.workspaces[workspace].scratch[index].next = Some(launch);
     }
 
-    /// The launch with its program resolved, the time to wait for it, and
-    /// the windows in the scratch pane that must close first.
+    /// The index of the scratch pane `pane` names, the launch with its
+    /// program resolved, the time to wait for it, and the windows in the
+    /// scratch pane that must close first.
     fn scratch_launch(
         &self,
         workspace: usize,
+        pane: Option<&str>,
         mut launch: Launch,
-    ) -> Result<(Launch, Duration, Vec<ToplevelSurface>), String> {
+    ) -> Result<(usize, Launch, Duration, Vec<ToplevelSurface>), String> {
         let shown = &self.workspaces[workspace];
-        let name = shown.scratch_pane().ok_or(NO_SCRATCH)?;
+        let index = shown.find_scratch(pane)?;
+        let name = &shown.scratch[index].pane;
         let wait = scratch::wait_for(launch.wait)?;
         launch.program = scratch::resolve_program(
             &launch.program,
@@ -219,16 +227,14 @@ impl State {
                 Some(toplevels.collect())
             })
             .unwrap_or_default();
-        Ok((launch, wait, occupants))
+        Ok((index, launch, wait, occupants))
     }
 
-    /// Start the program in the scratch pane. A call waiting on it hears at
-    /// once that a terminal started, and otherwise waits on the program.
-    pub(super) fn start_scratch(&mut self, workspace: usize, launch: Launch) {
-        let started = self.spawn_scratch(workspace, &launch);
-        let Some(scratch) = &mut self.workspaces[workspace].scratch else {
-            return;
-        };
+    /// Start the program in scratch pane `index`. A call waiting on it hears
+    /// at once that a terminal started, and otherwise waits on the program.
+    pub(super) fn start_scratch(&mut self, workspace: usize, index: usize, launch: Launch) {
+        let started = self.spawn_scratch(workspace, index, &launch);
+        let scratch = &mut self.workspaces[workspace].scratch[index];
         scratch.started = (started.as_ref().ok())
             .map(|&pid| Started::new(launch.program.clone(), pid, launch.terminal));
         let name = scratch.pane.clone();
@@ -236,29 +242,34 @@ impl State {
             Ok(pid) if !launch.terminal => pid,
             Ok(_) => {
                 let started = format!("started {} in a terminal in pane {name}", launch.program);
-                self.answer_scratch(workspace, Some(Ok(started)));
+                self.answer_scratch(workspace, index, Some(Ok(started)));
                 return;
             }
             Err(error) => {
                 if scratch.waiting.is_none() {
                     eprintln!("decade: {error}");
                 }
-                self.answer_scratch(workspace, Some(Err(error)));
+                self.answer_scratch(workspace, index, Some(Err(error)));
                 return;
             }
         };
         scratch.expected = Some(pid);
         if let Some(waiting) = &mut scratch.waiting {
             waiting.pid = Some(pid);
-            self.time_scratch(workspace);
+            self.time_scratch(workspace, index);
         }
     }
 
-    /// Spawn the program for the scratch pane, reading its stderr when it
-    /// runs as its own window, and return its pid.
-    fn spawn_scratch(&mut self, workspace: usize, launch: &Launch) -> Result<u32, String> {
+    /// Spawn the program for scratch pane `index`, reading its stderr when
+    /// it runs as its own window, and return its pid.
+    fn spawn_scratch(
+        &mut self,
+        workspace: usize,
+        index: usize,
+        launch: &Launch,
+    ) -> Result<u32, String> {
         let shown = &self.workspaces[workspace];
-        let name = shown.scratch_pane().ok_or(NO_SCRATCH)?;
+        let name = shown.scratch[index].pane.as_str();
         if launch.terminal {
             let mut ghostty = self.children.ghostty(shown, name, name, &shown.cwd);
             ghostty.arg("-e").arg(&launch.program).args(&launch.args);
@@ -288,41 +299,45 @@ impl State {
         Ok(pid)
     }
 
-    /// (Re)start the clock on the workspace's waiting `scratch.open`.
-    fn time_scratch(&mut self, workspace: usize) {
+    /// (Re)start the clock on the `scratch.open` waiting on scratch pane
+    /// `index`.
+    fn time_scratch(&mut self, workspace: usize, index: usize) {
         let id = self.workspaces[workspace].id;
-        let Some(waiting) = (self.workspaces[workspace].scratch.as_mut())
-            .and_then(|scratch| scratch.waiting.as_mut())
-        else {
+        let scratch = &mut self.workspaces[workspace].scratch[index];
+        let pane = scratch.pane.clone();
+        let Some(waiting) = &mut scratch.waiting else {
             return;
         };
         if let Some(timer) = waiting.timer.take() {
             self.loop_handle.remove(timer);
         }
         let timer = Timer::from_duration(waiting.wait);
+
+        // the timer finds its scratch pane again by name, since the
+        // index moves when another scratch pane is unmarked, and a
+        // renamed pane still answers to the name
         let inserted = self.loop_handle.insert_source(timer, move |_, _, state| {
             if let Some(workspace) = state.workspace_index(id)
-                && let Some(scratch) = &mut state.workspaces[workspace].scratch
-                && let Some(waiting) = &mut scratch.waiting
+                && let Ok(index) = state.workspaces[workspace].find_scratch(Some(&pane))
+                && let Some(waiting) = &mut state.workspaces[workspace].scratch[index].waiting
             {
                 waiting.timer = None;
-                state.answer_scratch(workspace, None);
+                state.answer_scratch(workspace, index, None);
             }
             TimeoutAction::Drop
         });
         waiting.timer = inserted.ok();
     }
 
-    /// Answer the workspace's waiting `scratch.open` with `answer`, or else
-    /// with what is known of its program so far.
+    /// Answer the `scratch.open` waiting on scratch pane `index` with
+    /// `answer`, or else with what is known of its program so far.
     pub(super) fn answer_scratch(
         &mut self,
         workspace: usize,
+        index: usize,
         answer: Option<Result<String, String>>,
     ) {
-        let Some(scratch) = &mut self.workspaces[workspace].scratch else {
-            return;
-        };
+        let scratch = &mut self.workspaces[workspace].scratch[index];
         let Some(waiting) = scratch.waiting.take() else {
             return;
         };
@@ -334,47 +349,52 @@ impl State {
         let _ = waiting.reply.send(answer.map(mcp::Answer::Text));
     }
 
-    /// The workspace whose `scratch.open` waits on the program `pid`.
-    fn waiting_on(&self, pid: u32) -> Option<usize> {
-        self.workspaces.iter().position(|workspace| {
-            (workspace.scratch.as_ref())
-                .and_then(|scratch| scratch.waiting.as_ref())
-                .is_some_and(|waiting| waiting.pid == Some(pid))
+    /// The workspace and scratch pane whose `scratch.open` waits on the
+    /// program `pid`.
+    fn waiting_on(&self, pid: u32) -> Option<(usize, usize)> {
+        (self.workspaces.iter().enumerate()).find_map(|(workspace, shown)| {
+            let index = shown.scratch.iter().position(|scratch| {
+                (scratch.waiting.as_ref()).is_some_and(|waiting| waiting.pid == Some(pid))
+            })?;
+            Some((workspace, index))
         })
     }
 
-    /// The workspace whose scratch program last started is `pid`, and
-    /// that program.
-    fn started_in(&mut self, pid: u32) -> Option<(usize, &mut Started)> {
+    /// The workspace and scratch pane whose program last started is `pid`,
+    /// and that program.
+    fn started_in(&mut self, pid: u32) -> Option<(usize, usize, &mut Started)> {
         let mut workspaces = self.workspaces.iter_mut().enumerate();
-        workspaces.find_map(|(index, workspace)| {
-            let started = workspace.scratch.as_mut()?.started_as(pid)?;
-            Some((index, started))
+        workspaces.find_map(|(workspace, shown)| {
+            let mut scratches = shown.scratch.iter_mut().enumerate();
+            scratches.find_map(|(index, scratch)| {
+                let started = scratch.started_as(pid)?;
+                Some((workspace, index, started))
+            })
         })
     }
 
     fn scratch_stderr(&mut self, pid: u32, line: &str) {
         eprintln!("{line}");
-        if let Some((_, started)) = self.started_in(pid) {
+        if let Some((_, _, started)) = self.started_in(pid) {
             started.stderr_line(line);
         }
     }
 
     fn scratch_stderr_closed(&mut self, pid: u32) {
-        let Some((workspace, started)) = self.started_in(pid) else {
+        let Some((workspace, index, started)) = self.started_in(pid) else {
             return;
         };
         started.stderr_open = false;
         let exited = started.exited.is_some();
-        if exited && self.waiting_on(pid) == Some(workspace) {
-            self.answer_scratch(workspace, None);
+        if exited && self.waiting_on(pid) == Some((workspace, index)) {
+            self.answer_scratch(workspace, index, None);
         }
     }
 
     /// Note that the child `pid` has exited, and answer a `scratch.open`
     /// waiting on it once its stderr has been read to the end.
     pub(super) fn child_exited(&mut self, pid: u32, status: ExitStatus) {
-        let Some((workspace, started)) = self.started_in(pid) else {
+        let Some((workspace, index, started)) = self.started_in(pid) else {
             return;
         };
 
@@ -385,46 +405,45 @@ impl State {
         }
         started.exited = Some(status);
         let stderr_open = started.stderr_open;
-        if !stderr_open && self.waiting_on(pid) == Some(workspace) {
-            self.answer_scratch(workspace, None);
+        if !stderr_open && self.waiting_on(pid) == Some((workspace, index)) {
+            self.answer_scratch(workspace, index, None);
         }
     }
 
     /// The workspace, tab and id of the empty scratch pane waiting for a
     /// window from a program under `pid`.
     pub(super) fn expecting(&mut self, pid: u32) -> Option<(usize, usize, usize)> {
-        for (index, workspace) in self.workspaces.iter_mut().enumerate() {
-            let Some(scratch) = &mut workspace.scratch else {
-                continue;
-            };
-            let Some(expected) = scratch.expected else {
-                continue;
-            };
-            if !scratch::descends_from(pid, expected) {
-                continue;
+        for (workspace, shown) in self.workspaces.iter_mut().enumerate() {
+            for (index, scratch) in shown.scratch.iter_mut().enumerate() {
+                let Some(expected) = scratch.expected else {
+                    continue;
+                };
+                if !scratch::descends_from(pid, expected) {
+                    continue;
+                }
+                let Some((tab, id)) = shown.tabs.iter().enumerate().find_map(|(tab, entry)| {
+                    let id = entry.layout.by_name(&scratch.pane)?;
+                    Some((tab, id))
+                }) else {
+                    continue;
+                };
+                if !shown.tabs[tab].layout.pane(id)?.tabs.is_empty() {
+                    continue;
+                }
+                scratch.expected = None;
+                let landed = (scratch.waiting.as_ref())
+                    .filter(|waiting| waiting.pid == Some(expected))
+                    .map(|waiting| {
+                        format!(
+                            "started {} in pane {}, and its window is there",
+                            waiting.program, scratch.pane
+                        )
+                    });
+                if let Some(landed) = landed {
+                    self.answer_scratch(workspace, index, Some(Ok(landed)));
+                }
+                return Some((workspace, tab, id));
             }
-            let Some((tab, id)) = workspace.tabs.iter().enumerate().find_map(|(tab, entry)| {
-                let id = entry.layout.by_name(&scratch.pane)?;
-                Some((tab, id))
-            }) else {
-                continue;
-            };
-            if !workspace.tabs[tab].layout.pane(id)?.tabs.is_empty() {
-                continue;
-            }
-            scratch.expected = None;
-            let landed = (scratch.waiting.as_ref())
-                .filter(|waiting| waiting.pid == Some(expected))
-                .map(|waiting| {
-                    format!(
-                        "started {} in pane {}, and its window is there",
-                        waiting.program, scratch.pane
-                    )
-                });
-            if let Some(landed) = landed {
-                self.answer_scratch(index, Some(Ok(landed)));
-            }
-            return Some((index, tab, id));
         }
         None
     }

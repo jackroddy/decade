@@ -63,7 +63,7 @@ pub struct Pane {
     #[serde(default)]
     pub accepts: Vec<Verb>,
 
-    /// Whether the pane is the workspace's scratch pane.
+    /// Whether the pane is one of the workspace's scratch panes.
     #[serde(default)]
     pub scratch: bool,
 

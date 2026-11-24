@@ -797,7 +797,7 @@ impl State {
             id,
             pinned: info.pinned,
             zoomed: layout.zoom == Some(id),
-            scratch: shown.scratch_pane() == Some(pane.name.as_str()),
+            scratch: shown.is_scratch(pane),
             screenshots: info.screenshots,
         })
     }

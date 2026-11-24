@@ -14,7 +14,7 @@ use crate::server::scratch::descends_from;
 use crate::server::workspace::{Layout, Pane, Tab, Workspace};
 use decade_ui::{Axis, Node};
 
-const VERSION: u32 = 6;
+const VERSION: u32 = 7;
 
 #[derive(Serialize, Deserialize)]
 pub struct File {
@@ -42,9 +42,9 @@ pub struct Saved {
     cwd: PathBuf,
     active_tab: usize,
 
-    /// The name of the scratch pane.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    scratch: Option<String>,
+    /// The names of the scratch panes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    scratch: Vec<String>,
 
     /// The name of the group the workspace is in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -169,7 +169,7 @@ fn read(text: &str) -> Result<File, String> {
                     name: old.name,
                     cwd: old.cwd,
                     active_tab: 0,
-                    scratch: None,
+                    scratch: Vec::new(),
                     group: None,
                     sleeping: false,
                     tabs: vec![old.tab],
@@ -184,9 +184,12 @@ fn read(text: &str) -> Result<File, String> {
         }
         // version 3 adds only the optional tab name, version 4 only
         // the optional groups, and version 5 only the sleeping flag
-        2..=5 => {
+        old @ 2..=6 => {
             let mut file: toml::Table = toml::from_str(text).map_err(error)?;
-            terminal_tabs_as_tables(&mut file);
+            if old <= 5 {
+                terminal_tabs_as_tables(&mut file);
+            }
+            scratch_as_list(&mut file);
             let file: File = file.try_into().map_err(error)?;
             Ok(File {
                 version: VERSION,
@@ -212,6 +215,16 @@ fn terminal_tabs_as_tables(file: &mut toml::Table) {
                     *cwd = toml::Value::Table(table);
                 }
             }
+        }
+    }
+}
+
+/// Rewrite each workspace's `scratch` from one pane name, as versions 6
+/// and before hold it, to a list of names.
+fn scratch_as_list(file: &mut toml::Table) {
+    for workspace in tables(file.get_mut("workspace")) {
+        if let Some(scratch) = workspace.get_mut("scratch") {
+            *scratch = toml::Value::Array(vec![scratch.clone()]);
         }
     }
 }
@@ -280,7 +293,9 @@ pub fn saved(workspace: &Workspace, groups: &[Group]) -> Saved {
         name: workspace.name.clone(),
         cwd: workspace.cwd.clone(),
         active_tab: workspace.active_tab,
-        scratch: workspace.scratch_pane().map(str::to_string),
+        scratch: (workspace.scratch_panes().into_iter())
+            .map(str::to_string)
+            .collect(),
         group,
         sleeping: workspace.asleep.is_some(),
         tabs: (workspace.tabs.iter().enumerate())
@@ -443,10 +458,10 @@ impl Saved {
         restored.group = (groups.iter())
             .find(|group| Some(&group.name) == self.group.as_ref())
             .map(|group| group.id);
-        if let Some(name) = &self.scratch
-            && restored.by_name(name).is_some()
-        {
-            restored.toggle_scratch(name);
+        for name in &self.scratch {
+            if restored.by_name(name).is_some() {
+                restored.toggle_scratch(name);
+            }
         }
         let mut tabs = Vec::new();
         for (tab, saved) in self.tabs.iter().enumerate() {
@@ -711,9 +726,10 @@ mod tests {
     }
 
     #[test]
-    fn the_scratch_pane_reads_back_by_name() {
+    fn the_scratch_panes_read_back_by_name() {
         let mut workspace = workspace();
         workspace.toggle_scratch("nautilus");
+        workspace.toggle_scratch("terminal");
         let text = to_text(
             vec![saved(&workspace, &[]), saved(&self::workspace(), &[])],
             &[],
@@ -721,8 +737,25 @@ mod tests {
         )
         .unwrap();
         let file = read(&text).unwrap();
-        assert_eq!(file.workspaces[0].scratch.as_deref(), Some("nautilus"));
-        assert_eq!(file.workspaces[1].scratch, None);
+        assert_eq!(file.workspaces[0].scratch, ["nautilus", "terminal"]);
+        assert!(file.workspaces[1].scratch.is_empty());
+        assert!(!text.contains("scratch = []"));
+        let area = crate::server::workspace::tests::AREA;
+        let (back, _) = file.workspaces[0].workspace(0, area, &[]).unwrap();
+        assert_eq!(back.scratch_panes(), ["nautilus", "terminal"]);
+    }
+
+    #[test]
+    fn a_version_6_file_reads_its_one_scratch_pane_as_a_list() {
+        let mut workspace = workspace();
+        workspace.toggle_scratch("nautilus");
+        let text = to_text(vec![saved(&workspace, &[])], &[], true).unwrap();
+        let old = text
+            .replacen("version = 7", "version = 6", 1)
+            .replace(r#"scratch = ["nautilus"]"#, r#"scratch = "nautilus""#);
+        assert!(old.contains(r#"scratch = "nautilus""#));
+        let file = read(&old).unwrap();
+        assert_eq!(file.workspaces[0].scratch, ["nautilus"]);
     }
 
     #[test]
@@ -816,7 +849,7 @@ cwd = "/tmp"
         workspace.add_tab(crate::server::workspace::tests::AREA);
         workspace.rename_tab(1, "logs").unwrap();
         let text = to_text(vec![saved(&workspace, &[])], &[], true).unwrap();
-        assert!(text.starts_with("version = 6"));
+        assert!(text.starts_with("version = 7"));
         let file = read(&text).unwrap();
         let (back, _) = (file.workspaces[0])
             .workspace(2, crate::server::workspace::tests::AREA, &[])
@@ -824,7 +857,7 @@ cwd = "/tmp"
         let names: Vec<_> = back.tabs.iter().map(|tab| tab.name.as_deref()).collect();
         assert_eq!(names, [None, Some("logs")]);
 
-        let old = text.replacen("version = 6", "version = 2", 1);
+        let old = text.replacen("version = 7", "version = 2", 1);
         let old = old.replace("name = \"logs\"\n", "");
         let file = read(&old).unwrap();
         assert!(file.workspaces[0].tabs.iter().all(|tab| tab.name.is_none()));
@@ -865,7 +898,7 @@ cwd = "/tmp"
     fn a_version_3_file_reads_with_no_groups() {
         let text = to_text(vec![saved(&workspace(), &[])], &[], true).unwrap();
         assert!(!text.contains("[[group]]"));
-        let old = text.replacen("version = 6", "version = 3", 1);
+        let old = text.replacen("version = 7", "version = 3", 1);
         let file = read(&old).unwrap();
         assert!(file.groups().is_empty());
         let area = crate::server::workspace::tests::AREA;
@@ -901,10 +934,10 @@ cwd = "/tmp"
     }
 
     #[test]
-    fn a_sleeping_workspace_reads_back_asleep_at_version_6() {
+    fn a_sleeping_workspace_reads_back_asleep_at_version_7() {
         let asleep = asleep();
         let text = to_text(vec![saved(&asleep, &[])], &[], true).unwrap();
-        assert!(text.starts_with("version = 6"));
+        assert!(text.starts_with("version = 7"));
         assert!(text.contains("sleeping = true"));
         let file = read(&text).unwrap();
         assert_eq!(file.workspaces[0], saved(&asleep, &[]));
@@ -920,7 +953,7 @@ cwd = "/tmp"
     #[test]
     fn a_version_4_file_reads_with_every_workspace_awake() {
         let text = to_text(vec![saved(&workspace(), &[])], &[], true).unwrap();
-        let old = text.replacen("version = 6", "version = 4", 1);
+        let old = text.replacen("version = 7", "version = 4", 1);
         let file = read(&old).unwrap();
         let area = crate::server::workspace::tests::AREA;
         let (back, _) = file.workspaces[0].workspace(0, area, &[]).unwrap();
@@ -961,7 +994,7 @@ cwd = "/tmp"
         assert_eq!(after, before);
         assert_eq!(saved(&workspace, &[]).tabs, record.tabs);
         assert_eq!(workspace.active_tab, second);
-        assert_eq!(workspace.scratch_pane(), Some("code"));
+        assert_eq!(workspace.scratch_panes(), ["code"]);
         assert_eq!(workspace.group, Some(4));
         assert_eq!(workspace.asleep, Some(Vec::new()));
         assert!(workspace.tabs.iter().all(|tab| tab.clients.is_empty()));
@@ -973,9 +1006,9 @@ cwd = "/tmp"
     }
 
     #[test]
-    fn sessions_on_a_main_terminal_and_a_terminal_tab_read_back_at_version_6_to_start_again() {
+    fn sessions_on_a_main_terminal_and_a_terminal_tab_read_back_at_version_7_to_start_again() {
         let text = to_text(vec![with_sessions(false)], &[], true).unwrap();
-        assert!(text.starts_with("version = 6"));
+        assert!(text.starts_with("version = 7"));
         let back = &read(&text).unwrap().workspaces[0];
         assert_eq!(back, &with_sessions(false));
         let area = crate::server::workspace::tests::AREA;

@@ -17,6 +17,9 @@ use serde_json::Value;
 
 const PIN_ICON: char = '\u{f0403}';
 const UNPINNED_ICON: char = '\u{f0931}';
+const NO_SCRATCH: &str =
+    "this workspace has no scratch pane; the person marks one from the Ctrl bar";
+
 const SCRATCH_ICON: char = '\u{f0093}';
 const UNSCRATCHED_ICON: char = '\u{f0096}';
 const SCREENSHOTS_ICON: char = '\u{f0100}';
@@ -45,7 +48,9 @@ pub struct Workspace {
 
     /// The event source accepting connections on this workspace's socket.
     pub listener: Option<RegistrationToken>,
-    pub scratch: Option<Scratch>,
+
+    /// The scratch panes, in the order they were marked.
+    pub scratch: Vec<Scratch>,
 
     /// The git branch checked out at `cwd`, as last read.
     pub branch: Option<String>,
@@ -349,11 +354,11 @@ impl Tab {
     }
 
     /// Set the marks of every pane from what decade keeps about it, with
-    /// the pane named `scratch` as the scratch pane, in a workspace that
+    /// the panes named in `scratch` as scratch panes, in a workspace that
     /// is `asleep` or awake.
-    pub fn mark_panes(&mut self, scratch: Option<&str>, asleep: bool) {
+    pub fn mark_panes(&mut self, scratch: &[&str], asleep: bool) {
         for pane in &mut self.layout.panes {
-            let scratched = scratch == Some(pane.name.as_str());
+            let scratched = scratch.contains(&pane.name.as_str());
             pane.marks = marks(&self.info[&pane.id], scratched, asleep);
         }
     }
@@ -581,7 +586,7 @@ impl Workspace {
             tabs,
             router: Router::default(),
             listener: None,
-            scratch: None,
+            scratch: Vec::new(),
             branch: None,
             branch_read: None,
             point: None,
@@ -659,9 +664,11 @@ impl Workspace {
 
     /// Answer one line from socket client `id`.
     pub fn channel_line(&mut self, id: usize, line: &str) -> Vec<Out> {
-        let scratch = self.scratch.as_ref().map(|scratch| scratch.pane.as_str());
+        let scratch: Vec<&str> = (self.scratch.iter())
+            .map(|scratch| scratch.pane.as_str())
+            .collect();
         self.router
-            .handle(id, line, &pane_names(&self.tabs), scratch)
+            .handle(id, line, &pane_names(&self.tabs), &scratch)
     }
 
     /// The id of the client in pane `to` and the line carrying it a pane
@@ -682,11 +689,11 @@ impl Workspace {
     }
 
     /// Every pane in tab order and the name of the client occupying it,
-    /// marking the scratch pane and the pane `you`.
+    /// marking the scratch panes and the pane `you`.
     pub fn pane_list(&self, you: Option<&str>) -> Vec<decade_channel::Pane> {
         let names = pane_names(&self.tabs);
         let you = you.and_then(|you| names.resolve(you));
-        self.router.panes(&names, self.scratch_pane(), you)
+        self.router.panes(&names, &self.scratch_panes(), you)
     }
 
     /// The layout of the active tab.
@@ -768,9 +775,7 @@ impl Workspace {
             pane.rename(name.to_string());
         }
         self.router.rename(&old, name);
-        if let Some(scratch) = &mut self.scratch
-            && scratch.pane == old
-        {
+        if let Some(scratch) = self.scratch.iter_mut().find(|scratch| scratch.pane == old) {
             scratch.pane = name.to_string();
         }
         if let Some(point) = &mut self.point
@@ -829,9 +834,7 @@ impl Workspace {
     /// client's and agent's claim, its scratch mark and a point at it.
     pub fn forget_pane(&mut self, name: &str) {
         self.router.release(name);
-        if self.scratch_pane() == Some(name) {
-            self.scratch = None;
-        }
+        self.scratch.retain(|scratch| scratch.pane != name);
         self.end_point_at(name);
         self.mark_panes();
     }
@@ -900,7 +903,7 @@ impl Workspace {
     }
 
     /// Whether the pane of tab `tab` stays when it has no client: it is
-    /// pinned, it is the scratch pane, or the workspace is asleep.
+    /// pinned, it is a scratch pane, or the workspace is asleep.
     pub fn keeps_empty(&self, tab: usize, pane: &Pane) -> bool {
         self.asleep.is_some() || self.tabs[tab].info(pane.id).pinned || self.is_scratch(pane)
     }
@@ -919,7 +922,7 @@ impl Workspace {
     }
 
     pub fn is_scratch(&self, pane: &Pane) -> bool {
-        self.scratch_pane() == Some(pane.name.as_str())
+        self.scratch.iter().any(|scratch| scratch.pane == pane.name)
     }
 
     /// Whether a live agent in the workspace is working.
@@ -936,14 +939,16 @@ impl Workspace {
     /// Set the marks of every pane in every tab from what decade keeps
     /// about it.
     pub fn mark_panes(&mut self) {
-        let scratch = self.scratch.as_ref().map(|scratch| scratch.pane.as_str());
+        let scratch: Vec<&str> = (self.scratch.iter())
+            .map(|scratch| scratch.pane.as_str())
+            .collect();
         for tab in &mut self.tabs {
-            tab.mark_panes(scratch, self.asleep.is_some());
+            tab.mark_panes(&scratch, self.asleep.is_some());
         }
     }
 
     /// Put the workspace to sleep as `restored`, the same workspace rebuilt
-    /// from its saved record: take its tabs and scratch pane, drop its
+    /// from its saved record: take its tabs and scratch panes, drop its
     /// agents, point and flash, and keep `tabs` to start on wake.
     pub fn sleep(&mut self, restored: Workspace, tabs: Vec<TerminalTab>) {
         self.tabs = restored.tabs;
@@ -956,18 +961,45 @@ impl Workspace {
         self.mark_panes();
     }
 
-    /// The name of the scratch pane, if the workspace has one.
-    pub fn scratch_pane(&self) -> Option<&str> {
-        self.scratch.as_ref().map(|scratch| scratch.pane.as_str())
+    /// The names of the scratch panes, in the order they were marked.
+    pub fn scratch_panes(&self) -> Vec<&str> {
+        (self.scratch.iter())
+            .map(|scratch| scratch.pane.as_str())
+            .collect()
     }
 
-    /// Mark the pane as the scratch pane, or unmark it if it is already.
-    pub fn toggle_scratch(&mut self, name: &str) {
-        self.scratch = if self.scratch_pane() == Some(name) {
-            None
-        } else {
-            Some(Scratch::new(name.to_string()))
+    /// The index in `scratch` of the scratch pane `pane` names, now or
+    /// formerly, or of the only scratch pane when `pane` is `None`.
+    pub fn find_scratch(&self, pane: Option<&str>) -> Result<usize, String> {
+        let names = self.scratch_panes();
+        let found = match pane {
+            None if names.len() == 1 => Some(0),
+            None => None,
+            Some(pane) => (pane_names(&self.tabs).resolve(pane))
+                .and_then(|pane| names.iter().position(|&name| name == pane)),
         };
+        found.ok_or_else(|| {
+            let listed = names.join(", ");
+            match pane {
+                _ if names.is_empty() => NO_SCRATCH.to_string(),
+                None => format!(
+                    "this workspace has several scratch panes, so name one of them: {listed}"
+                ),
+                Some(pane) => {
+                    format!("{pane} is not a scratch pane; the scratch panes are: {listed}")
+                }
+            }
+        })
+    }
+
+    /// Mark the pane as a scratch pane, or unmark it if it is one.
+    pub fn toggle_scratch(&mut self, name: &str) {
+        match self.scratch.iter().position(|scratch| scratch.pane == name) {
+            Some(index) => {
+                self.scratch.remove(index);
+            }
+            None => self.scratch.push(Scratch::new(name.to_string())),
+        }
         self.mark_panes();
     }
 }
@@ -1219,19 +1251,45 @@ pub(super) mod tests {
         workspace.add_tab(AREA);
         workspace.toggle_scratch("terminal2");
         workspace.remove_tab(1);
-        assert_eq!(workspace.scratch_pane(), None);
+        assert!(workspace.scratch.is_empty());
     }
 
     #[test]
-    fn marking_a_pane_scratch_unmarks_the_one_before_it() {
+    fn marking_a_pane_scratch_leaves_the_others_marked() {
         let mut workspace = at_home();
         workspace.add_tab(AREA);
         workspace.toggle_scratch("terminal");
-        assert_eq!(workspace.scratch_pane(), Some("terminal"));
+        assert_eq!(workspace.scratch_panes(), ["terminal"]);
         workspace.toggle_scratch("terminal2");
-        assert_eq!(workspace.scratch_pane(), Some("terminal2"));
+        assert_eq!(workspace.scratch_panes(), ["terminal", "terminal2"]);
+        workspace.toggle_scratch("terminal");
+        assert_eq!(workspace.scratch_panes(), ["terminal2"]);
+    }
+
+    #[test]
+    fn a_scratch_pane_is_found_by_name_or_alone_and_a_miss_lists_the_scratch_panes() {
+        let mut workspace = at_home();
+        workspace.add_tab(AREA);
+        assert!(
+            (workspace.find_scratch(None).unwrap_err())
+                .starts_with("this workspace has no scratch pane")
+        );
         workspace.toggle_scratch("terminal2");
-        assert_eq!(workspace.scratch_pane(), None);
+        assert_eq!(workspace.find_scratch(None), Ok(0));
+        workspace.toggle_scratch("terminal");
+        assert_eq!(
+            workspace.find_scratch(None),
+            Err("this workspace has several scratch panes, so name one of them: terminal2, terminal".to_string())
+        );
+        assert_eq!(workspace.find_scratch(Some("terminal")), Ok(1));
+        workspace.rename_pane(1, 0, "build").unwrap();
+        assert_eq!(workspace.find_scratch(Some("terminal2")), Ok(0));
+        assert_eq!(workspace.find_scratch(Some("build")), Ok(0));
+        workspace.toggle_scratch("terminal");
+        assert_eq!(
+            workspace.find_scratch(Some("terminal")),
+            Err("terminal is not a scratch pane; the scratch panes are: build".to_string())
+        );
     }
 
     #[test]
@@ -1368,7 +1426,7 @@ pub(super) mod tests {
 
         assert_eq!(workspace.by_name("build"), Some((1, 0)));
         assert_eq!(workspace.by_name("terminal2"), Some((1, 0)));
-        assert_eq!(workspace.scratch_pane(), Some("build"));
+        assert_eq!(workspace.scratch_panes(), ["build"]);
         assert_eq!(workspace.point.as_ref().unwrap().pane, "build");
         assert_eq!(
             workspace.router.agents.list[0].pane.as_deref(),
@@ -1447,7 +1505,7 @@ pub(super) mod tests {
     }
 
     fn drawn_texts(tab: &mut Tab) -> Vec<String> {
-        tab.mark_panes(None, false);
+        tab.mark_panes(&[], false);
         layout_texts(&tab.layout)
     }
 

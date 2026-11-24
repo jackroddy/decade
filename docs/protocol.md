@@ -142,7 +142,7 @@ A message without `to` is for decade, and carries exactly one of its verbs.
 kinds the occupant shows and the verbs its hello listed in `accepts`, in
 the form the hello gave them. `client` is null when no client in the
 pane has said hello, though a terminal or another window may be there.
-`scratch` is true for the workspace's scratch pane, and `you` is true for
+`scratch` is true for each of the workspace's scratch panes, and `you` is true for
 the pane of the client that asked:
 
 ```json
@@ -232,7 +232,7 @@ A program decade starts in a pane gets an address ending in
 `?workspace=<id>&pane=<name>` instead. In the `panes` reply to a call on
 that address, `you` marks that pane.
 Its tools are `panes`, `agents`, `point`, `show`, `highlight`, `clear`,
-`screenshot`, `scratch.open` and `scratch.send`. decade delivers a pane verb from a tool
+`screenshot`, `scratch.open`, `scratch.send` and `scratch.status`. decade delivers a pane verb from a tool
 call with `"from": "agent"`. decade answers `panes` with the pane list, in the shape
 of the socket's `panes` reply, `agents` with the agent list below, `screenshot` with an image, and
 every other call with a line saying what it did. When decade cannot act on a call, the result is a tool error whose
@@ -292,14 +292,23 @@ would ask while the dialog is up. While
 the mode is on, the pane carries a camera tag at the left end of its
 outline's top edge. The tag flashes at each capture.
 
-The person may mark one pane in a workspace as its scratch pane, from the
-Ctrl bar. Two tools reach it. `scratch.open` takes `program`, optional
+The person may mark any number of panes in a workspace as scratch panes,
+from the Ctrl bar. Marking one leaves the others marked.
+`scratch.open`, `scratch.send` and `scratch.status` reach them, and every
+agent in the workspace reaches every scratch pane. Each tool takes an
+optional `pane`, the name of a scratch pane, which may be a name the pane
+had before a rename. `pane` may be left out when the workspace has exactly
+one scratch pane. decade refuses a call that leaves it out while there are
+several, or that names a pane that is not a scratch pane. The error lists
+the workspace's scratch panes. Each scratch pane keeps its own record of
+the program last started in it and of the call waiting on it.
+
+`scratch.open` takes `program`, optional
 `args`, optional `terminal` and optional `wait`. `terminal` defaults to
 true. `program` is a
 name that decade looks up on its `PATH`, or, when it holds a `/`, a path to
 an executable file, relative to the workspace's directory. decade refuses
-the call unless the workspace has a scratch pane and `program` names an
-executable file. With `terminal`
+the call unless `program` names an executable file. With `terminal`
 true the program runs inside ghostty in the scratch pane. With `terminal`
 false decade starts it directly. decade puts the first window of that
 program, or of a process under it, in the scratch pane. Either way the
@@ -316,7 +325,7 @@ answer says which of these happened. After an exit, the answer gives the
 exit status and the last 20 lines the program wrote to stderr. decade
 also copies that stderr to its own log. A program still running when the
 wait ends keeps running. decade puts its window in the scratch pane when
-the window opens. When a second `scratch.open` arrives while the first
+the window opens. When a second `scratch.open` for the same scratch pane arrives while the first
 still waits, decade answers the first with what it knows so far.
 
 `scratch.send` takes `verb` and
@@ -324,6 +333,10 @@ still waits, decade answers the first with what it knows so far.
 `agent`, and the program in the scratch pane receives it like any other
 message. The tool's description names `panes` as where the agent finds the
 verbs the program takes, under `accepts`.
+
+`scratch.status` answers whether the program `scratch.open` last started
+in the scratch pane still runs. Once it has exited, the answer gives its
+exit status and the last 20 lines of its stderr.
 
 ## Version
 

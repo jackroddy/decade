@@ -800,7 +800,10 @@ impl State {
             client.toplevel.send_close();
         }
         let name = shown.name.clone();
-        self.answer_scratch(index, Some(Err(format!("workspace {name} went to sleep"))));
+        for scratch in 0..shown.scratch.len() {
+            let slept = format!("workspace {name} went to sleep");
+            self.answer_scratch(index, scratch, Some(Err(slept)));
+        }
         self.unlisten(index);
         self.dismiss_popups();
         self.workspaces[index].sleep(restored, tabs);
@@ -1542,7 +1545,7 @@ impl State {
         self.refocus(workspace, tab);
     }
 
-    /// Remove the pane if it has no client, is not pinned and is not the
+    /// Remove the pane if it has no client, is not pinned and is not a
     /// scratch pane, and return whether it went.
     fn prune(&mut self, workspace: usize, tab: usize, id: usize) -> bool {
         let shown = &self.workspaces[workspace];
@@ -1614,8 +1617,8 @@ impl State {
         self.schedule_save();
     }
 
-    /// Mark the pane as the workspace's scratch pane, or unmark it. An empty
-    /// transient pane that loses the mark is removed.
+    /// Mark the pane as a scratch pane, or unmark it. An empty transient
+    /// pane that loses the mark is removed.
     fn toggle_scratch(&mut self, id: usize) {
         let Some(pane) = self.layout().pane(id) else {
             return;
@@ -1623,13 +1626,9 @@ impl State {
         let name = pane.name.clone();
         let current = self.current();
         let shown = &mut self.workspaces[current];
-        let before = shown
-            .scratch_pane()
-            .and_then(|before| shown.by_name(before));
         shown.toggle_scratch(&name);
-        if let Some((tab, before)) = before {
-            self.prune(current, tab, before);
-        }
+        let tab = shown.active_tab;
+        self.prune(current, tab, id);
         self.request_redraw();
         self.schedule_save();
     }
@@ -1900,17 +1899,15 @@ impl XdgShellHandler for State {
             self.request_redraw();
             return;
         }
-        let scratched = (shown.scratch.as_ref()).is_some_and(|scratch| scratch.pane == pane.name);
+        let scratch = (shown.scratch.iter()).position(|scratch| scratch.pane == pane.name);
 
-        // the next program for the scratch pane starts only once its
+        // the next program for a scratch pane starts only once its
         // occupant has gone, and not in a workspace or tab that is closing
-        let next = shown
-            .scratch
-            .as_mut()
-            .filter(|_| scratched && !closing)
-            .and_then(|scratch| scratch.next.take());
-        if let Some(next) = next {
-            self.start_scratch(workspace, next);
+        let next = scratch
+            .filter(|_| !closing)
+            .and_then(|index| Some((index, shown.scratch[index].next.take()?)));
+        if let Some((index, next)) = next {
+            self.start_scratch(workspace, index, next);
         }
         if self.prune(workspace, tab, id) {
             return;
