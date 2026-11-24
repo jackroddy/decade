@@ -71,6 +71,10 @@ pub enum Call {
     ScratchStatus {
         pane: Option<String>,
     },
+    ScratchRename {
+        pane: Option<String>,
+        name: String,
+    },
 
     /// The name of the workspace the address names.
     Workspace,
@@ -216,6 +220,18 @@ fn tools() -> Vec<Tool> {
             schema(json!({"type": "object", "properties": {"pane": scratch_pane}})),
         ),
         Tool::new(
+            "scratch.rename",
+            "Rename a scratch pane. Only scratch panes can be renamed. The old name keeps working as an alias. A name another pane answers to, or one holding &, = or a space, fails the call",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": scratch_pane,
+                    "name": {"type": "string", "description": "the pane's new name"}
+                },
+                "required": ["name"]
+            })),
+        ),
+        Tool::new(
             "screenshot",
             "Capture what a pane in the shown tab draws, without its bar or outline, as a PNG at the screen's pixels. Unless the user has turned on accept screenshots for the pane, decade asks the user first and waits up to 30 seconds. A refusal or no answer fails the call with the reason",
             schema(json!({
@@ -281,6 +297,13 @@ struct ScratchStatus {
     pane: Option<String>,
 }
 
+/// The arguments of `scratch.rename`.
+#[derive(Deserialize)]
+struct ScratchRename {
+    pane: Option<String>,
+    name: String,
+}
+
 /// The arguments of `scratch.send`.
 #[derive(Deserialize)]
 struct ScratchSend {
@@ -319,6 +342,10 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
         "scratch.status" => {
             let ScratchStatus { pane } = parse(name, arguments)?;
             Ok(Call::ScratchStatus { pane })
+        }
+        "scratch.rename" => {
+            let ScratchRename { pane, name: new } = parse(name, arguments)?;
+            Ok(Call::ScratchRename { pane, name: new })
         }
         "screenshot" => {
             let Screenshot { pane } = parse(name, arguments)?;
@@ -390,8 +417,9 @@ impl ServerHandler for Decade {
                  agents show things, and panes lists them with scratch true. scratch.open \
                  starts a program in one, replacing the program there, and scratch.send \
                  sends that program a message. scratch.status tells whether the program \
-                 scratch.open last started in one still runs, or how it exited. Each takes \
-                 the scratch pane's name, which may be left out when there is only one. \
+                 scratch.open last started in one still runs, or how it exited. \
+                 scratch.rename gives one a new name, and no other pane can be renamed. \
+                 Each takes the scratch pane's name, which may be left out when there is only one. \
                  They fail when the workspace has no scratch pane, or when the name is left \
                  out while there are several. \
                  point draws the user's eye \
@@ -632,6 +660,7 @@ mod tests {
                 "point",
                 "scratch.open",
                 "scratch.status",
+                "scratch.rename",
                 "screenshot",
                 "scratch.send"
             ]
@@ -721,6 +750,17 @@ mod tests {
             panic!("scratch.send takes a pane");
         };
         assert_eq!(pane.as_deref(), Some("viewer"));
+        let Ok(Call::ScratchRename { pane, name }) = call_for(
+            "scratch.rename",
+            schema(json!({"pane": "viewer", "name": "docs"})),
+        ) else {
+            panic!("scratch.rename takes a pane and a name");
+        };
+        assert_eq!((pane.as_deref(), name.as_str()), (Some("viewer"), "docs"));
+        let Err(reason) = call_for("scratch.rename", Map::new()) else {
+            panic!("scratch.rename needs a name");
+        };
+        assert_eq!(reason, "scratch.rename: missing field `name`");
         let missing = call_for("point", Map::new());
         assert_eq!(missing.err().unwrap(), "point: missing field `pane`");
         assert_eq!(

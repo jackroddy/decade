@@ -155,6 +155,16 @@ impl State {
                 let index = shown.find_scratch(pane.as_deref())?;
                 return Ok(shown.scratch[index].status());
             }
+            mcp::Call::ScratchRename { pane, name } => {
+                let shown = &mut self.workspaces[workspace];
+                let index = shown.find_scratch(pane.as_deref())?;
+                let current = shown.scratch[index].pane.clone();
+                let (tab, id) = shown.by_name(&current).ok_or("the pane has gone")?;
+                shown.rename_pane(tab, id, &name)?;
+                self.schedule_save();
+                self.request_redraw();
+                return Ok(format!("renamed pane {current} to {name}"));
+            }
             mcp::Call::Panes => {
                 let panes = Reply::Panes(shown.pane_list(caller));
                 return Ok(serde_json::to_string(&panes).unwrap());

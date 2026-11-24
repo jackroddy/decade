@@ -232,7 +232,7 @@ A program decade starts in a pane gets an address ending in
 `?workspace=<id>&pane=<name>` instead. In the `panes` reply to a call on
 that address, `you` marks that pane.
 Its tools are `panes`, `agents`, `point`, `show`, `highlight`, `clear`,
-`screenshot`, `scratch.open`, `scratch.send` and `scratch.status`. decade delivers a pane verb from a tool
+`screenshot`, `scratch.open`, `scratch.send`, `scratch.status` and `scratch.rename`. decade delivers a pane verb from a tool
 call with `"from": "agent"`. decade answers `panes` with the pane list, in the shape
 of the socket's `panes` reply, `agents` with the agent list below, `screenshot` with an image, and
 every other call with a line saying what it did. When decade cannot act on a call, the result is a tool error whose
@@ -294,7 +294,7 @@ outline's top edge. The tag flashes at each capture.
 
 The person may mark any number of panes in a workspace as scratch panes,
 from the Ctrl bar. Marking one leaves the others marked.
-`scratch.open`, `scratch.send` and `scratch.status` reach them, and every
+`scratch.open`, `scratch.send`, `scratch.status` and `scratch.rename` reach them, and every
 agent in the workspace reaches every scratch pane. Each tool takes an
 optional `pane`, the name of a scratch pane, which may be a name the pane
 had before a rename. `pane` may be left out when the workspace has exactly
@@ -337,6 +337,12 @@ verbs the program takes, under `accepts`.
 `scratch.status` answers whether the program `scratch.open` last started
 in the scratch pane still runs. Once it has exited, the answer gives its
 exit status and the last 20 lines of its stderr.
+
+`scratch.rename` takes `name` and renames the scratch pane `pane` names, as
+the person can from the chrome. The old name stays an alias. decade refuses
+a name that another pane answers to, or that holds `&`, `=` or a space, and
+the result is a tool error giving the reason. No tool renames a pane that is
+not a scratch pane.
 
 ## Version
 

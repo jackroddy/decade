@@ -46,6 +46,11 @@ command line and what the tool writes.
   answer gives the terminal's state and no stderr lines. decade forgets
   the program when the workspace sleeps or closes, and when the person
   unmarks or closes its scratch pane.
+- An MCP tool `scratch.rename`. It takes a new `name` and an optional
+  `pane`, as the other scratch tools do, and renames that scratch pane as
+  the person can. The old name stays an alias. A name another pane
+  answers to, or one holding `&`, `=` or a space, fails the call. No
+  other pane can be renamed this way.
 
 ### Changed
 
