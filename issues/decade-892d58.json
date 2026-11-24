@@ -3,7 +3,7 @@
   "title": "The palette is read from the Omarchy theme at start",
   "body": "`decade-ui/src/palette.rs` holds 26 colours as `pub const` values, which drawing code names directly in about 163 places. Thirteen are a hardcoded copy of the colours in Omarchy's `~/.local/state/omarchy/current/theme/colors.toml` as of 2026-11-06. Twelve were picked by hand as shades of those, and `SHADOW` is a fixed black. A theme switch in Omarchy does not reach decade.\n\n## Proposal\n\n- At start, each process reads `colors.toml` from its own machine. When the file or a key is missing, the process uses today's values. A viewer on another machine therefore reads its own theme, or falls back.\n- The palette holds the theme keys decade uses, under the theme's names. A global holds the palette, and the process sets it once at start. Drawing code reads colours from it, and tests see today's values.\n- The twelve hand-picked shades become blends of theme colours, with the `mix` that `palette.rs` already has. The amounts are fitted to today's values, so the current theme looks almost the same:\n\n| today | becomes |\n|---|---|\n| `DARK_RED`, `DARK_YELLOW`, `DARK_GREEN` | 15% of the way from `background` to the colour |\n| `MID_RED`, `MID_YELLOW`, `MID_GREEN` | 28% of the way from `background` to the colour |\n| `LIGHT_RED`, `LIGHT_YELLOW`, `LIGHT_GREEN` | 45% of the way from the colour to `foreground` |\n| `FADED_FOREGROUND` | 15% of the way from `foreground` to `background` |\n| `RAISED_BACKGROUND` | 15% of the way from `background` to `lighter_background` |\n| `BORDER` | a third of the way from `selection` to `muted` |\n\nJack compared today's palette, theme keys alone, and theme keys with these blends in a mockup, `figures/decade-palette.acre` in the acre repository. He judged all three close, and chose the blends.\n\n## Rejected\n\n- Theme keys alone, with `bright_*` for the light text, `selection` for `BORDER` and `background` for `RAISED_BACKGROUND`. The mockup showed it a little worse than the blends.\n- A `Palette` value passed to every drawing function. It changes most of the chrome's signatures, and a process reads the theme only once.\n- The server sending its palette to viewers. Every viewer runs on the server's machine today. A remote viewer, decade-e3a784, can add that when it changes the protocol.\n\n## Out of scope\n\n- Reloading on a theme change. Omarchy's theme-set hooks could restart or signal decade later.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [
     "decade",
@@ -13,13 +13,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/5da9dd6b",
-  "lease_expires": "2026-11-24T23:59:39.726860341Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T05:27:44.876807341Z",
-  "updated_at": "2026-11-24T23:49:21.138049089Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-24T23:49:21.150188859Z",
+  "closed_at": "2026-11-24T23:49:21.150188859Z",
+  "close_reason": "Landed in df4f120 on dev. `decade_ui::palette::Palette` holds the theme's keys and the twelve blended shades, and `Palette::from_theme` parses a `colors.toml` with toml. `main.rs` sets the palette once in the server and viewer arms. Drawing code calls `palette::get()`, which returns the fixed colours in tests.",
+  "resolution": "done",
   "notes": [
     {
       "id": "463465b4",
@@ -35,6 +35,9 @@
       "commit": "93a5286",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "df4f120",
+      "branch": "dev"
+    }
   }
 }
