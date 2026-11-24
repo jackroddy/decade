@@ -149,6 +149,7 @@ impl Session {
                 self.button(button, true)?;
                 self.button(button, false)?;
             }
+            "down" | "up" => self.button(BTN_LEFT, command == "down")?,
             "drag" => {
                 let [x1, y1, x2, y2] = numbers()?[..] else {
                     return Err("drag takes x1 y1 x2 y2".into());

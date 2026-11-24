@@ -12,6 +12,9 @@ command line and what the tool writes.
 
 ### Added
 
+- `decade script` has `down` and `up`, which press and release the left
+  button where the pointer is. A script can `move`, `down`, `move`, `shot`
+  and `up` to capture a pane drag in progress.
 - A `side_buttons` key in `config.toml`, false by default. While it is
   false, decade sends no side mouse button to a pane. ghostty never clears
   a side button after one press and release, and from then on takes every
