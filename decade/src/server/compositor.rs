@@ -1376,6 +1376,20 @@ impl State {
             } else {
                 toplevel.send_configure();
             }
+            self.replace_popups(toplevel.wl_surface());
+        }
+    }
+
+    fn replace_popups(&self, toplevel: &WlSurface) {
+        for (popup, _) in PopupManager::popups_for_surface(toplevel) {
+            let PopupKind::Xdg(popup) = popup else {
+                continue;
+            };
+            let positioner = popup.with_pending_state(|state| state.positioner);
+            self.place_popup(&popup, positioner);
+            if popup.is_initial_configure_sent() {
+                let _ = popup.send_pending_configure();
+            }
         }
     }
 
@@ -2069,5 +2083,25 @@ mod tests {
             "{placed:?}"
         );
         assert_eq!(placed.size, positioner.rect_size);
+    }
+
+    #[test]
+    fn a_popup_placed_again_in_a_smaller_pane_is_kept_inside_the_smaller_pane() {
+        let parent = Point::from((10, 20));
+        let positioner = PositionerState {
+            rect_size: (200, 150).into(),
+            anchor_rect: Rectangle::new((100, 100).into(), (1, 1).into()),
+            anchor_edges: Anchor::BottomRight,
+            gravity: Gravity::BottomRight,
+            constraint_adjustment: ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY,
+            ..PositionerState::default()
+        };
+        let smaller = Size::from((250, 200));
+        let mut placed = popup_geometry(positioner, smaller, parent);
+        placed.loc += parent;
+        assert!(
+            Rectangle::from_size(smaller).contains_rect(placed),
+            "{placed:?}"
+        );
     }
 }

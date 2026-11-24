@@ -102,6 +102,9 @@ command line and what the tool writes.
   leaves the decade window with the button down. It also gets the release
   while the picker or a context menu is open. Before, the pane kept the
   button held and took every later motion as a drag.
+- An open popup follows its pane when the pane resizes. decade places
+  the popup again inside the pane's new client area. Before, a menu could
+  hang past the pane's edge or over a neighbour until it closed.
 
 ## [0.2.0] - 2026-11-12
 
