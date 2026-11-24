@@ -106,6 +106,9 @@ const AGE_EVERY: Duration = Duration::from_secs(60);
 
 /// How often a frame is drawn while a point pulses, about 30 a second.
 const PULSE_EVERY: Duration = Duration::from_millis(33);
+/// A viewer that shows a point only as a card or tile draws one pulse tick
+/// in this many, about 10 frames a second.
+const CARD_PULSE_TICKS: u32 = 3;
 
 /// The box or grid drawn over the workspace that takes the keys while it is open.
 enum Overlay {
@@ -1412,14 +1415,22 @@ impl State {
             return;
         }
         let timer = Timer::from_duration(PULSE_EVERY);
-        let token = self.loop_handle.insert_source(timer, |_, _, state| {
+        let mut tick = 0u32;
+        let token = self.loop_handle.insert_source(timer, move |_, _, state| {
             let now = Instant::now();
             let mut pulsing = state.breathing();
+            let mut steady = pulsing;
             for shown in &mut state.workspaces {
                 pulsing |= shown.keep_point(now);
-                pulsing |= shown.keep_flash(now);
+                steady |= shown.keep_flash(now);
             }
-            state.request_redraw();
+            pulsing |= steady;
+            tick = tick.wrapping_add(1);
+            if steady || tick.is_multiple_of(CARD_PULSE_TICKS) {
+                state.request_redraw();
+            } else {
+                state.request_redraw_pointed();
+            }
             if pulsing {
                 TimeoutAction::ToDuration(PULSE_EVERY)
             } else {

@@ -32,6 +32,16 @@ impl State {
         }
     }
 
+    /// Ask for a frame from each viewer that shows a point's pane outline
+    /// or tab pill, which are the viewers of a workspace with a point.
+    pub(super) fn request_redraw_pointed(&mut self) {
+        for viewer in self.viewers.values_mut() {
+            let pointed = (self.workspaces.iter())
+                .any(|shown| shown.id == viewer.workspace && shown.point.is_some());
+            viewer.wants_frame |= pointed;
+        }
+    }
+
     pub(super) fn viewer_connected(&mut self, stream: UnixStream) {
         if stream.set_nonblocking(true).is_err() {
             return;

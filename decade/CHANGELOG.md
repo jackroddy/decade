@@ -60,6 +60,9 @@ command line and what the tool writes.
 
 ### Changed
 
+- A viewer that shows a point only as a workspace card or tile redraws about
+  10 times a second while it pulses. A viewer that shows the pointed
+  pane's outline or tab pill still redraws about 30 times a second.
 - A press on a pane's name on the Ctrl bar starts a pane drag only once the
   pointer moves a few pixels. A double-click to rename no longer flashes
   the drag ghost.
