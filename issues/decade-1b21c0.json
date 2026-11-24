@@ -5,7 +5,9 @@
   "type": "bug",
   "status": "in_progress",
   "priority": 4,
-  "labels": [],
+  "labels": [
+    "decade"
+  ],
   "parent": null,
   "blocked_by": [],
   "related": [],
@@ -13,7 +15,7 @@
   "lease_expires": "2026-11-24T23:09:29.749710374Z",
   "defer_until": null,
   "created_at": "2026-11-11T01:06:39.320011362Z",
-  "updated_at": "2026-11-24T22:54:29.749710374Z",
+  "updated_at": "2026-11-24T23:07:27.488428492Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
