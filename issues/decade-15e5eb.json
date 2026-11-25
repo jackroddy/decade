@@ -6,7 +6,8 @@
   "status": "closed",
   "priority": 4,
   "labels": [
-    "decade-channel"
+    "decade-channel",
+    "decade"
   ],
   "parent": "decade-da02e3",
   "blocked_by": [],
@@ -15,7 +16,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-07T21:59:58.273325149Z",
-  "updated_at": "2026-11-25T00:48:45.654141925Z",
+  "updated_at": "2026-11-25T00:48:49.0269923Z",
   "closed_at": "2026-11-25T00:48:45.654141925Z",
   "close_reason": "Landed in abb5631 on `dev`. A hello may carry a `restore` block and a `restore` message replaces or clears it. `decade-channel` has `Restore`, `Hello::restore` and `Channel::restore`. decade saves the block with the pane, or with the terminal tab a terminal program runs under. On restore and wake decade starts it in the workspace's directory with `DECADE_PANE` set. The save file is version 8, and decade still reads version 7.",
   "resolution": "done",
