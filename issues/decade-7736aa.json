@@ -3,7 +3,7 @@
   "title": "A program can ask decade which pane its next window goes in",
   "body": "A window from a process decade did not start is placed by its client's environment, as decided in decade-1919e9. `launched_from` in `decade/src/server/compositor.rs` reads `/proc/<pid>/environ`: `DECADE_WORKSPACE` finds the workspace, and `DECADE_PANE` finds the pane to split beside. The program has no say in the pane. acre's neovim plugin starts `acre-gui --stdio` as a viewer, and it may want that window in a scratch pane rather than beside neovim.\n\n## Proposal\n\nA program that starts a child sets `DECADE_INTO=<pane name>` in the child's environment. `launched_from` reads `DECADE_INTO` first and puts the window in that pane, as a new tab when the pane already shows a window. A name no pane answers to falls back to placement by `DECADE_PANE`. A program that sets nothing keeps today's placement.\n\n## Rejected\n\n- A socket request, with a `decade-channel` call, that names the pane for the next window. decade would have to match the request to the window, by the pid that will own it or by a token. A pid races the window, which can open before the request arrives, and misses windows from the child's own children. The environment reaches every process under the child with no matching.\n- Replacing the window already in the named pane. Adding a tab closes nothing.\n\n## Cost\n\n`docs/protocol.md` documents the new variable. Adding it breaks nothing, so it moves `decade`'s patch. `decade-channel` does not change. The neovim plugin's change is acre's.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "decade"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/5da9dd6b",
-  "lease_expires": "2026-11-25T00:50:37.292131097Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T05:10:29.825417468Z",
-  "updated_at": "2026-11-25T00:35:37.292131097Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T00:36:39.269529403Z",
+  "closed_at": "2026-11-25T00:36:39.269529403Z",
+  "close_reason": "Landed in abab97e. launched_from reads DECADE_INTO first and adds the window as a tab of that pane, matching current or former names. An unknown name falls back to DECADE_PANE placement, and a sleeping workspace still sends the window to the one on screen. docs/protocol.md and the decade changelog describe it.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "b9f97c7",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "abab97e",
+      "branch": "dev"
+    }
   }
 }
