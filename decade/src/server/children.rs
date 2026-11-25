@@ -7,6 +7,13 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use crate::server::save::Session;
 use crate::server::workspace::{Workspace, app_id_prefix};
 
+#[derive(Debug, PartialEq)]
+pub struct Placement {
+    pub workspace: u32,
+    pub pane: Option<String>,
+    pub into: Option<String>,
+}
+
 /// The programs decade started, and what each one is told about decade.
 pub struct Children {
     wayland: OsString,
@@ -35,9 +42,10 @@ impl Children {
         self.runtime.join(format!("decade-{pid}-w{workspace}.sock"))
     }
 
-    /// The workspace id and pane name a process's environment holds, when
-    /// its `DECADE_SOCKET` is one of this server's sockets.
-    pub fn placement(&self, environ: &[u8]) -> Option<(u32, Option<String>)> {
+    /// The workspace id, pane name and `DECADE_INTO` pane name a process's
+    /// environment holds, when its `DECADE_SOCKET` is one of this server's
+    /// sockets.
+    pub fn placement(&self, environ: &[u8]) -> Option<Placement> {
         let var = |name: &str| {
             environ
                 .split(|&byte| byte == 0)
@@ -47,7 +55,11 @@ impl Children {
         let socket = var("DECADE_SOCKET")?;
         let (_, id) = socket.strip_suffix(".sock")?.rsplit_once("-w")?;
         let id = id.parse().ok()?;
-        (Path::new(&socket) == self.socket_path(id)).then(|| (id, var("DECADE_PANE")))
+        (Path::new(&socket) == self.socket_path(id)).then(|| Placement {
+            workspace: id,
+            pane: var("DECADE_PANE"),
+            into: var("DECADE_INTO"),
+        })
     }
 
     /// A program started in the workspace's directory, told its workspace
@@ -399,10 +411,33 @@ mod tests {
         );
         assert_eq!(
             children.placement(environ.as_bytes()),
-            Some((7, Some("terminal3".to_string())))
+            Some(Placement {
+                workspace: 7,
+                pane: Some("terminal3".to_string()),
+                into: None,
+            })
         );
         let environ = format!("DECADE_SOCKET=/run/user/1000/decade-{pid}-w7.sock");
-        assert_eq!(children.placement(environ.as_bytes()), Some((7, None)));
+        assert_eq!(
+            children.placement(environ.as_bytes()),
+            Some(Placement {
+                workspace: 7,
+                pane: None,
+                into: None,
+            })
+        );
+    }
+
+    #[test]
+    fn an_environment_naming_decade_into_gives_that_pane_beside_the_launching_pane() {
+        let children = Children::new("wayland-9".into(), "/run/user/1000".into(), None);
+        let pid = std::process::id();
+        let environ = format!(
+            "DECADE_SOCKET=/run/user/1000/decade-{pid}-w7.sock\0DECADE_PANE=terminal3\0DECADE_INTO=scratch\0"
+        );
+        let placement = children.placement(environ.as_bytes()).unwrap();
+        assert_eq!(placement.into.as_deref(), Some("scratch"));
+        assert_eq!(placement.pane.as_deref(), Some("terminal3"));
     }
 
     #[test]

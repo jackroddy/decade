@@ -12,6 +12,13 @@ Programs it starts find these in their environment:
 | `DECADE_WORKSPACE` | the workspace's name |
 | `DECADE_PANE` | the name of the pane they were started in, if any |
 
+A program sets one variable of its own. A program that starts a child with
+`DECADE_INTO=<pane name>` in the child's environment asks decade to put the
+first window of that child, or of any process under it, in that pane as a
+new tab. The name may be a former name. When no pane in the workspace
+answers to it, decade places the window beside the pane in `DECADE_PANE`
+as it would without the variable.
+
 A client reaches only the panes of the workspace whose socket it connected
 to. Every pane name below means a pane in that workspace. Each direction
 carries one JSON object per line.

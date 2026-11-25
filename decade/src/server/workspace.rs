@@ -727,6 +727,20 @@ impl Workspace {
             .find_map(|(index, tab)| Some((index, tab.layout.by_name(name)?)))
     }
 
+    /// The tab and pane a window from a process that named `into` and
+    /// `pane` goes by, and whether it joins that pane as a tab rather than
+    /// opening a pane beside it. A name no pane answers to is skipped, and
+    /// the focused pane is the last resort.
+    pub fn launch_target(&self, into: Option<&str>, pane: Option<&str>) -> (usize, usize, bool) {
+        if let Some((tab, id)) = into.and_then(|name| self.by_name(name)) {
+            return (tab, id, true);
+        }
+        let (tab, id) = pane
+            .and_then(|name| self.by_name(name))
+            .unwrap_or((self.active_tab, self.layout().focused));
+        (tab, id, false)
+    }
+
     /// The base name, or the base name with the first free count after it,
     /// free across every tab.
     fn unique_pane_name(&self, base: &str) -> String {
@@ -1824,5 +1838,29 @@ pub(super) mod tests {
         tab.remove_pane(0);
         assert!(tab.info(0).pinned);
         assert_eq!(tab.info.len(), 1);
+    }
+
+    #[test]
+    fn a_launch_into_a_named_pane_joins_it_and_otherwise_falls_back_to_the_launching_pane() {
+        let mut shown = at_home();
+        let first = shown.layout().focused;
+        let second = shown.add_pane(0, first, "scratch", None);
+        let third = shown.add_pane(0, second, "logs", None);
+        shown.rename_pane(0, second, "notes").unwrap();
+        let focused = shown.layout().focused;
+        assert_eq!(shown.launch_target(Some("notes"), None), (0, second, true));
+        assert_eq!(
+            shown.launch_target(Some("scratch"), Some("logs")),
+            (0, second, true)
+        );
+        assert_eq!(
+            shown.launch_target(Some("nowhere"), Some("logs")),
+            (0, third, false)
+        );
+        assert_eq!(
+            shown.launch_target(Some("nowhere"), None),
+            (0, focused, false)
+        );
+        assert_eq!(shown.launch_target(None, Some("logs")), (0, third, false));
     }
 }

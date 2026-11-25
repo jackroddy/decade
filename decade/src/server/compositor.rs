@@ -1172,17 +1172,14 @@ impl State {
     }
 
     /// The workspace, tab and pane process `pid` was started from, by the
-    /// `DECADE_SOCKET` and `DECADE_PANE` it inherited.
-    fn launched_from(&self, pid: u32) -> Option<(usize, usize, usize)> {
-        let (id, pane) = self.children.placement(&proc::environ(pid)?)?;
-        let index = self.workspace_index(id)?;
-        let workspace = &self.workspaces[index];
-        let launcher = pane.and_then(|pane| {
-            (workspace.tabs.iter().enumerate())
-                .find_map(|(tab, entry)| Some((tab, entry.layout.by_name(&pane)?)))
-        });
-        let (tab, at) = launcher.unwrap_or((workspace.active_tab, workspace.layout().focused));
-        Some((index, tab, at))
+    /// `DECADE_SOCKET`, `DECADE_PANE` and `DECADE_INTO` it inherited. The
+    /// last is whether the window joins that pane as a tab.
+    fn launched_from(&self, pid: u32) -> Option<(usize, usize, usize, bool)> {
+        let placement = self.children.placement(&proc::environ(pid)?)?;
+        let index = self.workspace_index(placement.workspace)?;
+        let (tab, at, into) = self.workspaces[index]
+            .launch_target(placement.into.as_deref(), placement.pane.as_deref());
+        Some((index, tab, at, into))
     }
 
     fn workspace_index(&self, id: u32) -> Option<usize> {
@@ -1863,17 +1860,27 @@ impl CompositorHandler for State {
             let (workspace, tab, id, terminal_tab) = match placed {
                 Some(placed) => placed,
                 None => {
-                    let (workspace, tab, at) = pid
+                    let (workspace, tab, at, into) = pid
                         .and_then(|pid| self.launched_from(pid))
                         .filter(|&(workspace, ..)| self.workspaces[workspace].asleep.is_none())
                         .unwrap_or_else(|| {
                             let shown = &self.workspaces[self.current()];
-                            (self.current(), shown.active_tab, shown.layout().focused)
+                            (
+                                self.current(),
+                                shown.active_tab,
+                                shown.layout().focused,
+                                false,
+                            )
                         });
                     self.wake_workspace(self.workspaces[workspace].id);
                     let base = app_id.as_deref().unwrap_or("window");
-                    let id = self.workspaces[workspace].add_pane(tab, at, base, None);
-                    self.relayout_workspace(workspace);
+                    let id = if into {
+                        at
+                    } else {
+                        let id = self.workspaces[workspace].add_pane(tab, at, base, None);
+                        self.relayout_workspace(workspace);
+                        id
+                    };
                     (workspace, tab, id, false)
                 }
             };

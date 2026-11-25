@@ -12,6 +12,9 @@ command line and what the tool writes.
 
 ### Added
 
+- A program that starts a child with `DECADE_INTO=<pane name>` in its
+  environment gets the child's window as a new tab of that pane. A name no
+  pane answers to places the window as before.
 - The name field that rename and new group open has a caret. Left, Right,
   Home and End move it, and typing and Backspace act at it. The first key
   still replaces the old name unless it is a movement key.
