@@ -16,7 +16,7 @@
   "lease_expires": "2026-11-25T01:28:36.615960245Z",
   "defer_until": null,
   "created_at": "2026-11-11T03:00:08.068084261Z",
-  "updated_at": "2026-11-25T01:28:39.187562056Z",
+  "updated_at": "2026-11-25T01:29:26.096846552Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -43,6 +43,14 @@
       "author": "Jack Roddy/5da9dd6b",
       "text": "Jack: only popups that grab input, such as menus, block focus following. A tooltip, a popup with no grab, does not.",
       "commit": "6df44f1",
+      "branch": "dev"
+    },
+    {
+      "id": "db0748a2",
+      "at": "2026-11-25T01:29:26.096845412Z",
+      "author": "Jack Roddy/5da9dd6b",
+      "text": "Commit 7aa3572 on dev changes the popup rule in `State::pointer_moved`. Only a popup that grabbed input, such as a menu, stops focus following. A tooltip does not. The check reads `State::popup_grab`, which `XdgShellHandler::grab` sets, and ignores a grab that has ended. The CHANGELOG entry for focus following says so. No unit test: `popup_grab` holds a smithay `PopupGrab`, which only a live seat and client can build.",
+      "commit": "7aa3572",
       "branch": "dev"
     }
   ],
