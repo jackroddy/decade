@@ -202,6 +202,7 @@ agent with `agent`. Every field is optional:
 | `context` | `used` and `limit`, the tokens of its context window in use and the window's size |
 | `tokens` | `input` and `output`, the tokens its session has read and written |
 | `cost` | what the session has cost so far, a number |
+| `subagents` | the sub-agents and background tasks the agent started, a list |
 
 decade merges each `agent` into what it holds for the agent. A field the
 message leaves out keeps its value. A field set to `null` is cleared. An
@@ -225,6 +226,27 @@ shows the most urgent state of its agents, in the order of the table.
 When a pane enters `attention` and no focused viewer shows its workspace,
 decade raises a desktop notification. Its text is the question, or else
 the activity.
+
+Each entry of `subagents` has a `name`, an optional `activity` and a
+`state` of `working`, `done` or `failed`:
+
+```json
+{"agent": {"subagents": [{"name": "tests", "activity": "running cargo test", "state": "working"}, {"name": "review", "state": "failed"}]}}
+```
+
+The agent sends the whole list each time it changes, and decade shows it
+as sent. The agent decides when a finished entry leaves the list. An
+empty list clears it, as `null` does. An agent lists only the sub-agents
+it started itself. Work a sub-agent starts in turn goes in that
+sub-agent's activity.
+
+An agent whose state is `done` while one of its sub-agents is `working`
+counts as `working`. Its card, its workspace's place in the sidebar and
+the 10 minute clock all go by `working` until no sub-agent works. A
+`failed` sub-agent does not raise the agent to `attention`. The card puts
+the number of sub-agents before the activity, and the popover lists them
+with a red mark on a failed one. An agent that needs the person reports
+`attention` itself.
 
 decade keeps each workspace's agents by session, in memory only. When a
 client's connection drops, decade keeps its agent with everything it
@@ -287,11 +309,13 @@ the second case the error lists the kinds the workspace's panes show.
 the order they first said hello:
 
 ```json
-{"agents": [{"name": "coax", "pane": "chat", "state": "attention", "age": 90, "question": "which branch?", "activity": null, "model": "opus", "context": {"used": 81000, "limit": 200000}, "tokens": {"input": 120000, "output": 9000}, "cost": 1.42, "connected": false}]}
+{"agents": [{"name": "coax", "pane": "chat", "state": "attention", "age": 90, "question": "which branch?", "activity": null, "model": "opus", "context": {"used": 81000, "limit": 200000}, "tokens": {"input": 120000, "output": 9000}, "cost": 1.42, "subagents": [], "connected": false}]}
 ```
 
 `age` is the number of seconds the agent has held its state. The other
 fields are the ones the agent last reported, null when unset, and
+`state` is the state the agent reported. `subagents` is its last list,
+empty when it sent none, and
 `connected` says whether a client holds its session.
 
 `point` takes `pane` and an optional `note`. decade pulses the pane's

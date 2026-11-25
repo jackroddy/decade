@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use decade_channel::{AgentState, AgentUpdate, Context, Tokens};
+use decade_channel::{AgentState, AgentUpdate, Context, Subagent, SubagentState, Tokens};
 use serde_json::{Value, json};
 
 /// How many state changes an agent keeps.
@@ -23,6 +23,9 @@ pub struct Report {
     pub context: Option<Context>,
     pub tokens: Option<Tokens>,
     pub cost: Option<f64>,
+
+    /// The agent's last list of sub-agents, empty when it sent none.
+    pub subagents: Vec<Subagent>,
 }
 
 impl Report {
@@ -35,6 +38,7 @@ impl Report {
             context,
             tokens,
             cost,
+            subagents,
         } = update;
         if let Some(state) = state {
             self.state = state;
@@ -56,6 +60,19 @@ impl Report {
         }
         if let Some(cost) = cost {
             self.cost = cost;
+        }
+        if let Some(subagents) = subagents {
+            self.subagents = subagents.unwrap_or_default();
+        }
+    }
+
+    /// The state decade shows for the agent: `Working` while a sub-agent
+    /// works under a `Done` report, or else the state reported.
+    pub fn shown_state(&self) -> Option<AgentState> {
+        let working = (self.subagents.iter()).any(|sub| sub.state == SubagentState::Working);
+        match self.state {
+            Some(AgentState::Done) if working => Some(AgentState::Working),
+            state => state,
         }
     }
 
@@ -234,7 +251,7 @@ impl Agents {
     /// the person at the screen.
     pub fn clear(&mut self, now: Instant) {
         for agent in &mut self.list {
-            if agent.report.state > Some(AgentState::Working) {
+            if agent.report.shown_state() > Some(AgentState::Working) {
                 agent.idle(now);
             }
         }
@@ -244,7 +261,7 @@ impl Agents {
     /// shown at `now`.
     pub fn shown(&mut self, now: Instant) {
         for agent in &mut self.list {
-            if agent.report.state == Some(AgentState::Done) && agent.idle_at.is_none() {
+            if agent.report.shown_state() == Some(AgentState::Done) && agent.idle_at.is_none() {
                 agent.idle_at = Some(now + DONE_FOR);
             }
         }
@@ -255,7 +272,7 @@ impl Agents {
     pub fn settle(&mut self, now: Instant) -> bool {
         let mut settled = false;
         for agent in &mut self.list {
-            if agent.report.state == Some(AgentState::Done)
+            if agent.report.shown_state() == Some(AgentState::Done)
                 && agent.idle_at.is_some_and(|at| at <= now)
             {
                 agent.idle(now);
@@ -269,7 +286,7 @@ impl Agents {
     pub fn states(&self) -> impl Iterator<Item = AgentState> {
         (self.list.iter())
             .filter(|agent| agent.live())
-            .filter_map(|agent| agent.report.state)
+            .filter_map(|agent| agent.report.shown_state())
     }
 
     /// The answer to the MCP tool `agents`.
@@ -288,6 +305,7 @@ impl Agents {
                     "context": report.context,
                     "tokens": report.tokens,
                     "cost": report.cost,
+                    "subagents": report.subagents,
                     "connected": agent.connected,
                 })
             })
@@ -467,6 +485,11 @@ mod tests {
                     output: 7,
                 })),
                 cost: Some(Some(0.25)),
+                subagents: Some(Some(vec![Subagent {
+                    name: "tests".into(),
+                    activity: Some("running cargo test".into()),
+                    state: SubagentState::Failed,
+                }])),
                 ..AgentUpdate::default()
             },
             start,
@@ -485,8 +508,86 @@ mod tests {
                 "context": {"used": 10, "limit": 100},
                 "tokens": {"input": 5, "output": 7},
                 "cost": 0.25,
+                "subagents": [
+                    {"name": "tests", "activity": "running cargo test", "state": "failed"}
+                ],
                 "connected": false
             }]})
         );
+    }
+
+    fn subagents(states: &[SubagentState]) -> AgentUpdate {
+        let list = (states.iter())
+            .map(|&state| Subagent {
+                name: "tests".into(),
+                activity: None,
+                state,
+            })
+            .collect();
+        AgentUpdate {
+            subagents: Some(Some(list)),
+            ..AgentUpdate::default()
+        }
+    }
+
+    #[test]
+    fn a_done_agent_shows_as_working_while_a_subagent_works() {
+        let start = Instant::now();
+        let mut agents = Agents::default();
+        agents.attach(identity("s1"), Some("chat".into()), None, start);
+        let agent = agents.get_mut("s1").unwrap();
+        agent.update(state(AgentState::Done), start);
+        agent.update(
+            subagents(&[SubagentState::Done, SubagentState::Working]),
+            start,
+        );
+        assert_eq!(agents.states().collect::<Vec<_>>(), [AgentState::Working]);
+
+        let agent = agents.get_mut("s1").unwrap();
+        agent.update(
+            subagents(&[SubagentState::Done, SubagentState::Failed]),
+            start,
+        );
+        assert_eq!(agents.states().collect::<Vec<_>>(), [AgentState::Done]);
+    }
+
+    #[test]
+    fn a_done_agents_clock_waits_for_its_subagents_to_finish() {
+        let start = Instant::now();
+        let minutes = |n: u64| start + Duration::from_secs(n * 60);
+        let mut agents = Agents::default();
+        agents.attach(identity("s1"), Some("chat".into()), None, start);
+        let agent = agents.get_mut("s1").unwrap();
+        agent.update(state(AgentState::Done), start);
+        agent.update(subagents(&[SubagentState::Working]), start);
+        agents.shown(start);
+        agents.clear(start);
+        assert!(!agents.settle(minutes(30)));
+        assert_eq!(agents.list[0].report.state, Some(AgentState::Done));
+
+        let agent = agents.get_mut("s1").unwrap();
+        agent.update(subagents(&[SubagentState::Done]), minutes(30));
+        agents.shown(minutes(30));
+        assert!(agents.settle(minutes(40)));
+    }
+
+    #[test]
+    fn an_update_without_subagents_keeps_the_list_and_an_empty_one_clears_it() {
+        let start = Instant::now();
+        let mut agents = Agents::default();
+        agents.attach(identity("s1"), Some("chat".into()), None, start);
+        let agent = agents.get_mut("s1").unwrap();
+        agent.update(subagents(&[SubagentState::Working]), start);
+        agent.update(state(AgentState::Working), start);
+        assert_eq!(agent.report.subagents.len(), 1);
+        agent.update(subagents(&[]), start);
+        assert!(agent.report.subagents.is_empty());
+        agent.update(subagents(&[SubagentState::Working]), start);
+        let cleared = AgentUpdate {
+            subagents: Some(None),
+            ..AgentUpdate::default()
+        };
+        agent.update(cleared, start);
+        assert!(agent.report.subagents.is_empty());
     }
 }

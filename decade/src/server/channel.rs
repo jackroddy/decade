@@ -776,6 +776,25 @@ mod tests {
     }
 
     #[test]
+    fn a_done_agent_with_a_working_subagent_counts_as_working() {
+        let mut r = Router::default();
+        r.handle(1, COAX, &names(), &[]);
+        r.handle(
+            1,
+            r#"{"agent": {"state": "done", "subagents": [{"name": "tests", "activity": "cargo test", "state": "working"}]}}"#,
+            &names(),
+            &[],
+        );
+        assert_eq!(
+            report(&r).subagents[0].activity.as_deref(),
+            Some("cargo test")
+        );
+        assert_eq!(r.agents.states().max(), Some(AgentState::Working));
+        r.handle(1, r#"{"agent": {"subagents": []}}"#, &names(), &[]);
+        assert_eq!(r.agents.states().max(), Some(AgentState::Done));
+    }
+
+    #[test]
     fn a_null_field_clears_it_and_the_question_is_shown_over_the_activity_while_set() {
         let mut r = Router::default();
         r.handle(1, COAX, &names(), &[]);

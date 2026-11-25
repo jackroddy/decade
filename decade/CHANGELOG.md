@@ -12,6 +12,15 @@ command line and what the tool writes.
 
 ### Added
 
+- An `agent` message may carry `subagents`, the list of sub-agents and
+  background tasks the agent started, each with a name, an activity and
+  a state of working, done or failed. The card puts the count before the
+  activity, as in "2 sub-agents · reading the tests". The popover lists
+  up to five, each on one line with its state mark, and a last line
+  "+N more" for the rest. A failed one has a red mark. An agent that
+  reports done while a sub-agent works sorts and colours as working, and
+  its done clock waits until no sub-agent works. The `agents` MCP reply
+  carries each agent's list.
 - Focus follows the pointer. Moving the pointer onto a pane, its bar
   included, gives that pane focus. Focus stays put during a drag, while a
   menu that grabs input or an overlay is open, and over the sidebar, the

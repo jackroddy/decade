@@ -269,7 +269,7 @@ impl State {
                         agent.connected
                             && (agent.pane.as_deref()).is_some_and(|pane| names.contains(&pane))
                     })
-                    .filter_map(|agent| agent.report.state)
+                    .filter_map(|agent| agent.report.shown_state())
                     .max();
                 let label = match &tab.name {
                     Some(name) => name.clone(),
@@ -324,12 +324,13 @@ fn card_agent(agent: &agents::Agent, now: Instant) -> frame::Agent {
     let report = &agent.report;
     frame::Agent {
         name: agent.name.clone(),
-        state: report.state,
+        state: report.shown_state(),
         age: now.saturating_duration_since(since),
         message: report.message().map(str::to_string),
         model: report.model.clone(),
         context: report.context,
         tokens: report.tokens,
+        subagents: report.subagents.clone(),
         dim,
     }
 }

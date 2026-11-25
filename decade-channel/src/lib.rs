@@ -170,6 +170,35 @@ pub struct AgentUpdate {
         skip_serializing_if = "Option::is_none"
     )]
     pub cost: Option<Option<f64>>,
+
+    /// The sub-agents and background tasks the agent started, the whole
+    /// list each time. An empty list clears it as `null` does.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subagents: Option<Option<Vec<Subagent>>>,
+}
+
+/// A sub-agent or background task an agent started.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Subagent {
+    pub name: String,
+
+    /// What the sub-agent is doing now, in one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+    pub state: SubagentState,
+}
+
+/// Where a sub-agent's work stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubagentState {
+    Working,
+    Done,
+    Failed,
 }
 
 /// How much of its context window the agent has used.
@@ -830,6 +859,39 @@ mod tests {
         );
         let empty: AgentUpdate = serde_json::from_value(json!({})).unwrap();
         assert_eq!(empty, AgentUpdate::default());
+    }
+
+    #[test]
+    fn an_agent_update_carries_its_subagents_and_reads_null_as_cleared() {
+        let update = AgentUpdate {
+            subagents: Some(Some(vec![
+                Subagent {
+                    name: "tests".into(),
+                    activity: Some("running cargo test".into()),
+                    state: SubagentState::Working,
+                },
+                Subagent {
+                    name: "review".into(),
+                    activity: None,
+                    state: SubagentState::Failed,
+                },
+            ])),
+            ..AgentUpdate::default()
+        };
+        let value = serde_json::to_value(&update).unwrap();
+        assert_eq!(
+            value,
+            json!({"subagents": [
+                {"name": "tests", "activity": "running cargo test", "state": "working"},
+                {"name": "review", "state": "failed"}
+            ]})
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentUpdate>(value).unwrap(),
+            update
+        );
+        let cleared: AgentUpdate = serde_json::from_value(json!({"subagents": null})).unwrap();
+        assert_eq!(cleared.subagents, Some(None));
     }
 
     #[test]

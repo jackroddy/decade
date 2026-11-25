@@ -11,6 +11,11 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 
 ### Added
 
+- `AgentUpdate` has a `subagents` field with the list of sub-agents and
+  background tasks the agent started. Each `Subagent` has a name, an
+  optional activity and a `SubagentState` of working, done or failed.
+  Like the other fields, an absent list keeps decade's last one, and
+  `null` or an empty list clears it.
 - `Agent` has an `args` field with the flags the program was started
   with, so decade can start it again on the same session. A hello
   without `args` reads as empty.

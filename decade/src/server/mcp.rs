@@ -184,7 +184,7 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "agents",
-            "List the agents in this workspace: each one's name, pane, state, seconds in that state, question, activity, model, context use, tokens, cost and whether it is connected",
+            "List the agents in this workspace: each one's name, pane, state, seconds in that state, question, activity, model, context use, tokens, cost, sub-agents and whether it is connected",
             schema(json!({"type": "object", "properties": {}})),
         ),
         Tool::new(

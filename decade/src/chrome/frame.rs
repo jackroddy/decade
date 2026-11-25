@@ -7,7 +7,7 @@ use decade_ui::overlay::{SMALL, draw_box};
 use decade_ui::palette::{self, Rgba};
 use decade_ui::{CellRect, Face, Scene, fit, scaled, tail};
 
-use decade_channel::{AgentState, Context, Tokens};
+use decade_channel::{AgentState, Context, Subagent, SubagentState, Tokens};
 
 /// The rows above the panes that the top bar takes.
 const TOP: u32 = 2;
@@ -83,6 +83,9 @@ const POPOVER_RISE: i32 = 5;
 /// The popover's width in columns.
 const POPOVER_WIDTH: u32 = 34;
 
+/// The most sub-agents the popover lists for one agent.
+const POPOVER_SUBAGENTS: usize = 5;
+
 fn sidebar_width(open: bool) -> u32 {
     if open { OPEN_WIDTH } else { CLOSED_WIDTH }
 }
@@ -135,6 +138,7 @@ pub struct Agent {
     pub model: Option<String>,
     pub context: Option<Context>,
     pub tokens: Option<Tokens>,
+    pub subagents: Vec<Subagent>,
 
     /// Why the agent is drawn dim, or `None` for a live agent.
     pub dim: Option<Dim>,
@@ -152,6 +156,45 @@ impl Agent {
     /// urgency.
     fn live_state(&self) -> Option<AgentState> {
         self.state.filter(|_| self.dim.is_none())
+    }
+
+    /// The card's message line: the count of sub-agents, then the
+    /// message, "2 sub-agents · reading the tests".
+    fn card_message(&self) -> Option<String> {
+        let count = match self.subagents.len() {
+            0 => return self.message.clone(),
+            1 => "1 sub-agent".to_string(),
+            n => format!("{n} sub-agents"),
+        };
+        Some(match &self.message {
+            Some(message) => format!("{count} · {message}"),
+            None => count,
+        })
+    }
+
+    /// The popover's lines for the agent's sub-agents: one each up to
+    /// `POPOVER_SUBAGENTS`, and one for the rest.
+    fn subagent_lines(&self) -> usize {
+        let shown = self.subagents.len().min(POPOVER_SUBAGENTS);
+        shown + usize::from(self.subagents.len() > shown)
+    }
+}
+
+/// The mark for a sub-agent's state and its colour.
+fn subagent_mark(state: SubagentState) -> (char, Rgba) {
+    match state {
+        SubagentState::Working => ('●', palette::get().yellow),
+        SubagentState::Done => ('✓', palette::get().green),
+        SubagentState::Failed => ('✗', palette::get().red),
+    }
+}
+
+/// A sub-agent's line in the popover without its mark: "tests · running
+/// cargo test", or the name alone.
+fn subagent_text(subagent: &Subagent) -> String {
+    match &subagent.activity {
+        Some(activity) => format!("{} · {activity}", subagent.name),
+        None => subagent.name.clone(),
     }
 }
 
@@ -189,9 +232,13 @@ impl Entry {
     }
 
     /// The lines of the popover's text: two for the workspace, two for
-    /// each agent's state and message, and the hint.
+    /// each agent's state and message and those of its sub-agents, and
+    /// the hint.
     fn popover_lines(&self) -> i32 {
-        3 + 2 * self.agents.len().max(1) as i32
+        let agents: usize = (self.agents.iter())
+            .map(|agent| 2 + agent.subagent_lines())
+            .sum();
+        3 + agents.max(2) as i32
     }
 }
 
@@ -1388,8 +1435,8 @@ impl Frame {
         };
         scene.text_px(x, line(2), &fit(&state, room), Face::Chrome, color);
 
-        if let Some(message) = agent.and_then(|agent| agent.message.as_deref()) {
-            let message = fit(message, room.saturating_sub(2));
+        if let Some(message) = agent.and_then(Agent::card_message) {
+            let message = fit(&message, room.saturating_sub(2));
             scene.text_px(
                 x + 2 * cell_width,
                 line(3),
@@ -1643,6 +1690,13 @@ impl Frame {
                 );
             }
             next += 2;
+            self.draw_subagents(
+                scene,
+                agent,
+                (x + 2 * cell_width, line(next)),
+                room.saturating_sub(2),
+            );
+            next += agent.subagent_lines() as i32;
         }
         scene.text_px(
             x,
@@ -1651,6 +1705,28 @@ impl Frame {
             Face::Chrome,
             palette::get().light_foreground,
         );
+    }
+
+    /// The popover's lines for `agent`'s sub-agents, the first at `at`,
+    /// in `room` columns.
+    fn draw_subagents(&self, scene: &mut Scene, agent: &Agent, at: (i32, i32), room: usize) {
+        let (x, top) = at;
+        let (cell_width, cell_height) = self.cell;
+        let mut y = top;
+        for subagent in agent.subagents.iter().take(POPOVER_SUBAGENTS) {
+            let (mark, color) = subagent_mark(subagent.state);
+            scene.text_px(x, y, &mark.to_string(), Face::Chrome, color);
+            let text = fit(&subagent_text(subagent), room.saturating_sub(2));
+            let color = palette::get().faded_foreground;
+            scene.text_px(x + 2 * cell_width, y, &text, Face::Chrome, color);
+            y += cell_height;
+        }
+        let rest = agent.subagents.len().saturating_sub(POPOVER_SUBAGENTS);
+        if rest > 0 {
+            let more = fit(&format!("+{rest} more"), room);
+            let color = palette::get().light_foreground;
+            scene.text_px(x, y, &more, Face::Chrome, color);
+        }
     }
 
     /// The name of the card or header `hit` in a pill beside the pointer at
@@ -1709,6 +1785,7 @@ mod tests {
             model: None,
             context: None,
             tokens: None,
+            subagents: Vec::new(),
             dim: None,
         }
     }
@@ -2459,6 +2536,61 @@ mod tests {
         // the name, the path, three agents of two lines each, and
         // the hint
         assert_eq!(popover.size.1, 2 * 6 + 9 * 18);
+    }
+
+    fn subagent(name: &str, state: SubagentState) -> Subagent {
+        Subagent {
+            name: name.to_string(),
+            activity: None,
+            state,
+        }
+    }
+
+    #[test]
+    fn the_card_puts_the_count_of_subagents_before_the_message() {
+        let mut coax = agent("coax", Some(AgentState::Working));
+        assert_eq!(coax.card_message(), None);
+        coax.subagents
+            .push(subagent("tests", SubagentState::Working));
+        assert_eq!(coax.card_message().as_deref(), Some("1 sub-agent"));
+        coax.subagents.push(subagent("review", SubagentState::Done));
+        coax.message = Some("reading the tests".to_string());
+        assert_eq!(
+            coax.card_message().as_deref(),
+            Some("2 sub-agents · reading the tests")
+        );
+        assert_eq!(
+            state_text(Some(&coax), 0),
+            "coax working · 4m",
+            "the state line carries no count"
+        );
+    }
+
+    #[test]
+    fn the_popover_gives_each_subagent_a_line_and_the_ones_past_five_one_more() {
+        let mut frame = frame(false);
+        let foam = frame.entries.iter_mut().find(|e| e.name == "foam").unwrap();
+        foam.agents[0].subagents = vec![subagent("tests", SubagentState::Failed); 3];
+        frame.hover = Some(Hit::Show(2));
+
+        // the name, the path, the agent's two lines, three
+        // sub-agents and the hint
+        assert_eq!(frame.popover().unwrap().size.1, 2 * 6 + 8 * 18);
+
+        let foam = frame.entries.iter_mut().find(|e| e.name == "foam").unwrap();
+        foam.agents[0].subagents = vec![subagent("tests", SubagentState::Working); 8];
+
+        // five sub-agents and "+3 more"
+        assert_eq!(frame.popover().unwrap().size.1, 2 * 6 + 11 * 18);
+    }
+
+    #[test]
+    fn a_subagent_line_names_it_then_gives_its_activity() {
+        let mut tests = subagent("tests", SubagentState::Working);
+        assert_eq!(subagent_text(&tests), "tests");
+        tests.activity = Some("running cargo test".to_string());
+        assert_eq!(subagent_text(&tests), "tests · running cargo test");
+        assert_eq!(subagent_mark(SubagentState::Failed).1, palette::get().red);
     }
 
     #[test]
