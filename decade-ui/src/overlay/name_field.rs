@@ -113,7 +113,7 @@ impl<A: Clone> NameField<A> {
             .max(error as i32)
             .max(hint_width(&SMALL, &HINT, self.cell) / cell_width + 1);
         let layout = (Layout::new(&SMALL, self.cell, SMALL.width(self.cell, columns)))
-            .header(false)
+            .header(0)
             .field()
             .error(self.error.is_some())
             .hint()
@@ -130,7 +130,7 @@ impl<A: Clone> NameField<A> {
     pub fn draw(&self, scene: &mut Scene) {
         let layout = self.layout();
         layout.draw_box(scene);
-        layout.draw_header(scene, &self.title, None);
+        layout.draw_header(scene, &self.title, &[]);
         layout.draw_field(scene, &self.text, "name", self.fresh, self.cursor);
         if let Some(error) = &self.error {
             layout.draw_error(scene, error);

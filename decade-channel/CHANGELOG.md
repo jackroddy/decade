@@ -11,6 +11,12 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 
 ### Added
 
+- `Channel::screenshot` sends a `screenshot` message carrying a
+  `Screenshot`: the pane, the file the client will write, and the
+  optional pane of the agent asking. decade's answer arrives as
+  `Message::Screenshot` with the PNG's bytes, or as `Message::Error`.
+  `Reply::Screenshot` holds a `Captured`, the PNG in base64 as decade
+  writes it.
 - `AgentUpdate` has a `subagents` field with the list of sub-agents and
   background tasks the agent started. Each `Subagent` has a name, an
   optional activity and a `SubagentState` of working, done or failed.

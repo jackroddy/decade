@@ -49,7 +49,7 @@ impl Panel {
     fn layout(cell: (i32, i32), window: (i32, i32)) -> Layout {
         let width = LARGE.width(cell, LARGE_COLUMNS).min(window.0);
         (Layout::new(&LARGE, cell, width))
-            .header(true)
+            .header(1)
             .list(KNOBS.len())
             .hint()
             .end()
@@ -103,7 +103,7 @@ impl Panel {
         let (cell_width, cell_height) = scene.cell();
         let layout = Panel::layout((cell_width, cell_height), window);
         layout.draw_box(scene);
-        layout.draw_header(scene, "Settings", Some("left and right change the value"));
+        layout.draw_header(scene, "Settings", &["left and right change the value"]);
         layout.draw_hint(scene, &HINT);
         let Some(list) = layout.list_area() else {
             return;

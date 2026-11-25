@@ -12,6 +12,36 @@ command line and what the tool writes.
 
 ### Added
 
+- `decade screenshot PANE FILE` asks decade for a PNG of pane PANE and
+  writes it to FILE, relative to the directory the command runs in. It
+  connects to the socket in `DECADE_SOCKET` and claims no pane. When
+  `DECADE_PANE` is set, the dialog names the agent in that pane. The
+  dialog shows FILE as an absolute path on a line of its own. decade
+  cuts the start of a path too long for the dialog, so the file name
+  stays in view. The
+  command refuses a FILE that does not end in `.png`, or whose path a
+  file or a symlink already holds, before it connects. It never replaces a
+  file. It prints any error to stderr and exits with status 1.
+- The socket takes a `screenshot` message to decade with `pane`, `file`
+  and an optional `for`. `file` is the path the client will write, and
+  `for` is the pane of the agent asking. decade answers with
+  `{"screenshot": {"png": ...}}`, the PNG in base64, or with an error.
+  A pane verb may no longer be named `screenshot`.
+- Each pane has an accept saved screenshots mode beside accept
+  screenshots. Turning one on leaves the other as it was. decade checks
+  the new mode for a `screenshot` message and the old one for the MCP
+  tool. The person turns the new mode on and off from the pane's Ctrl
+  bar or its right click menu. It starts off and decade never saves it.
+  With it off, decade asks in a dialog whose question is "coax asks to
+  save a screenshot of pane code to shot.png". The choices are allow
+  once, allow and accept saved screenshots, and deny, with y, a and n.
+  As with the screenshot dialog, decade refuses after 30 seconds,
+  ignores keys and clicks in the first half second, and refuses a
+  request while a dialog is up. While the mode is on, the pane carries a
+  save tag after the camera tag. The save tag flashes at each capture
+  for a `screenshot` message and the camera tag at each capture for the
+  MCP tool. When the client of a save dialog disconnects, decade closes
+  the dialog and turns on no mode.
 - An `agent` message may carry `subagents`, the list of sub-agents and
   background tasks the agent started, each with a name, an activity and
   a state of working, done or failed. The card puts the count before the
@@ -84,6 +114,12 @@ command line and what the tool writes.
 
 ### Changed
 
+- decade queues what it writes to a socket client and writes the rest
+  each time the socket has room. Before, a line larger than the
+  socket's buffer, such as a screenshot of a large pane, made decade
+  drop the client in the middle of the line.
+- A screenshot taken while the screenshot dialog is up no longer shows
+  the dialog or the dimming behind it.
 - A point's pulse peaks every 1.6 s, as cards breathe, rather than every
   second. A pulsing rail tile fills half way toward magenta at the peak.
 - A window that a process outliving its workspace's sleep opens goes to

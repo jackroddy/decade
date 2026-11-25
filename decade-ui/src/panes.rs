@@ -161,8 +161,9 @@ pub struct Marks<A> {
     /// close.
     pub buttons: Vec<Button<A>>,
 
-    /// The icon tagged at the left of the outline's top edge.
-    pub left_tag: Option<char>,
+    /// The icons tagged at the left of the outline's top edge, left to
+    /// right.
+    pub left_tags: Vec<char>,
 
     /// The tags at the right of the outline's top edge, from the corner in.
     pub tags: Vec<Tag>,
@@ -173,7 +174,7 @@ impl<A> Default for Marks<A> {
     fn default() -> Marks<A> {
         Marks {
             buttons: Vec::new(),
-            left_tag: None,
+            left_tags: Vec::new(),
             tags: Vec::new(),
             placeholder: Placeholder {
                 lines: Vec::new(),
@@ -304,8 +305,8 @@ pub struct Chrome<'a, A> {
     /// The pane whose outline pulses to draw the eye.
     pub pulse: Option<Pulse<'a>>,
 
-    /// The pane whose left tag flashes, and how bright, from 0 to 1.
-    pub flash: Option<(usize, f32)>,
+    /// The left tag that flashes.
+    pub flash: Option<Flash>,
 }
 
 impl<A> Default for Chrome<'_, A> {
@@ -318,6 +319,18 @@ impl<A> Default for Chrome<'_, A> {
             flash: None,
         }
     }
+}
+
+/// A left tag of a pane, brightened after the program used what it marks.
+#[derive(Clone, Copy)]
+pub struct Flash {
+    pub pane: usize,
+
+    /// The icon of the tag, among the pane's `left_tags`.
+    pub tag: char,
+
+    /// How bright, from 0 to 1.
+    pub strength: f32,
 }
 
 /// A pane whose outline pulses to draw the eye.
@@ -814,9 +827,7 @@ impl<A: Copy + PartialEq> Layout<A> {
                 palette::get().muted
             };
             let pulse = chrome.pulse.filter(|pulse| pulse.pane == pane.id);
-            let flash = (chrome.flash)
-                .filter(|&(id, _)| id == pane.id)
-                .map_or(0.0, |(_, flash)| flash);
+            let flash = chrome.flash.filter(|flash| flash.pane == pane.id);
             self.draw_outline(scene, pane, outline, flash, pulse);
             draw_placeholder(scene, pane, pane.rect.inner());
             let hover = (chrome.tab_hover)
@@ -834,13 +845,14 @@ impl<A: Copy + PartialEq> Layout<A> {
     }
 
     /// The pane's outline with its tags on its top edge, the left one
-    /// brightened by `flash`, pulsing with its note when `pulse` is at it.
+    /// the one `flash` names brightened, pulsing with its note when `pulse`
+    /// is at it.
     fn draw_outline(
         &self,
         scene: &mut Scene,
         pane: &Pane<A>,
         color: Rgba,
-        flash: f32,
+        flash: Option<Flash>,
         pulse: Option<Pulse>,
     ) {
         let (cell_width, cell_height) = scene.cell();
@@ -876,17 +888,18 @@ impl<A: Copy + PartialEq> Layout<A> {
         let height = cell_height - 2 * scene.scaled(TAG_INSET);
         let pill_y = line_y + line / 2 - height / 2;
 
-        // the left tag takes its room first, so the
-        // tags on the right are dropped before it is
+        // the left tags take their room first, so the
+        // tags on the right are dropped before they are
         let mut limit = x + left + cell_width;
-        let left_tag = x + left + cell_width * 2;
-        let left_end = left_tag + cell_width;
-        let left_fits = left_end + padding < x + width - right - cell_width * 2;
-        if let Some(icon) = pane.marks.left_tag
-            && left_fits
-        {
+        let mut left_tag = x + left + cell_width * 2;
+        for &icon in &pane.marks.left_tags {
+            let left_end = left_tag + cell_width;
+            if left_end + padding >= x + width - right - cell_width * 2 {
+                break;
+            }
             let size = (cell_width + padding * 2, height);
-            let fill = palette::mix(color, palette::get().foreground, flash);
+            let strength = (flash.filter(|flash| flash.tag == icon)).map_or(0.0, |f| f.strength);
+            let fill = palette::mix(color, palette::get().foreground, strength);
             scene.rounded(left_tag - padding, pill_y, size, radius, fill, fill);
             let icon = icon.to_string();
             scene.text_px(
@@ -897,6 +910,7 @@ impl<A: Copy + PartialEq> Layout<A> {
                 palette::get().dark_background,
             );
             limit = left_end + padding + scene.scaled(TAG_GAP);
+            left_tag = limit + padding;
         }
         let mut end = x + width - right - cell_width * 2;
         let zoomed = self.zoom == Some(pane.id);
@@ -2322,9 +2336,14 @@ mod tests {
     fn a_pane_with_a_left_tag_has_it_at_the_left_of_its_top_line_and_it_flashes() {
         let mut layout: Layout = three_anchors();
         layout.focused = 0;
-        layout.panes[0].marks.left_tag = Some('s');
+        layout.panes[0].marks.left_tags = vec!['s'];
         let font = crate::Font::load(14.0);
         let tags = |flash: Option<(usize, f32)>| {
+            let flash = flash.map(|(pane, strength)| Flash {
+                pane,
+                tag: 's',
+                strength,
+            });
             let mut scene = Scene::new(&font);
             layout.draw(
                 &mut scene,
@@ -2349,6 +2368,37 @@ mod tests {
     }
 
     #[test]
+    fn two_left_tags_sit_in_their_own_pills_left_to_right_and_only_the_named_one_flashes() {
+        let mut layout: Layout = three_anchors();
+        layout.focused = 0;
+        layout.panes[0].marks.left_tags = vec!['s', 'v'];
+        let font = crate::Font::load(14.0);
+        let fills = |tag: char| {
+            let mut scene = Scene::new(&font);
+            let flash = Flash {
+                pane: 0,
+                tag,
+                strength: 1.0,
+            };
+            layout.draw(
+                &mut scene,
+                Chrome {
+                    flash: Some(flash),
+                    ..Chrome::default()
+                },
+            );
+            let [(first, _, width, _, a), (second, _, _, _, b)] = rounded(&scene)[..] else {
+                panic!("two tags");
+            };
+            assert!(first + width < second);
+            [a, b]
+        };
+        let (plain, bright) = (palette::get().cyan, palette::get().foreground);
+        assert_eq!(fills('s'), [bright, plain]);
+        assert_eq!(fills('v'), [plain, bright]);
+    }
+
+    #[test]
     fn on_a_narrow_pane_the_tags_on_the_right_are_dropped_before_the_left_tag() {
         let narrow = CellRect {
             columns: 12,
@@ -2356,7 +2406,7 @@ mod tests {
         };
         let mut layout = Layout::new(narrow, "terminal".to_string());
         layout.toggle_zoom(0);
-        layout.panes[0].marks.left_tag = Some('s');
+        layout.panes[0].marks.left_tags = vec!['s'];
         layout.panes[0].marks.tags = vec![Tag::Icon('p'), Tag::Zoom];
         let font = crate::Font::load(14.0);
         let mut scene = Scene::new(&font);

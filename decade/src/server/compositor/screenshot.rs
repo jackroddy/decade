@@ -8,11 +8,14 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Buffer, Physical, Rectangle, Size};
 
+use decade_channel::{Captured, Error, Reply};
 use decade_ui::overlay::{Cursor, Dialog, MenuKey};
+use serde_json::Value;
 
 use crate::chrome::prompt::{self, Answer};
 use crate::png;
-use crate::server::mcp::{self, Reply};
+use crate::server::mcp;
+use crate::server::workspace::{PaneInfo, SAVED_SCREENSHOTS_ICON, SCREENSHOTS_ICON};
 
 use super::{State, popups_over, send_frames_surface_tree, waits_for_frame};
 
@@ -27,12 +30,52 @@ const ARMED_AFTER: Duration = Duration::from_millis(500);
 /// was waiting to draw.
 const FRESH_FOR: Duration = Duration::from_millis(200);
 
+/// Who asked for a screenshot, which decides where its PNG goes, the
+/// pane mode that lets it through without asking, and the dialog.
+pub(super) enum Asker {
+    /// The MCP tool `screenshot`, under the accept screenshots mode.
+    Mcp(mcp::Reply),
+
+    /// Socket client `client`, which saves the PNG to `file`, under the
+    /// accept saved screenshots mode. `message` is its line, for the error
+    /// reply.
+    Save {
+        client: usize,
+        file: String,
+        message: Value,
+    },
+}
+
+impl Asker {
+    fn accepted(&self, info: &PaneInfo) -> bool {
+        match self {
+            Asker::Mcp(_) => info.screenshots,
+            Asker::Save { .. } => info.saved_screenshots,
+        }
+    }
+
+    fn accept(&self, info: &mut PaneInfo) {
+        match self {
+            Asker::Mcp(_) => info.screenshots = true,
+            Asker::Save { .. } => info.saved_screenshots = true,
+        }
+    }
+
+    /// The left tag of the mode that lets this kind of screenshot through.
+    fn tag(&self) -> char {
+        match self {
+            Asker::Mcp(_) => SCREENSHOTS_ICON,
+            Asker::Save { .. } => SAVED_SCREENSHOTS_ICON,
+        }
+    }
+}
+
 /// A screenshot waiting for the pane's window to commit a new frame.
 pub(super) struct Capturing {
     workspace: u32,
     pane: String,
     surface: WlSurface,
-    reply: Reply,
+    asker: Asker,
     timer: Option<RegistrationToken>,
 }
 
@@ -42,7 +85,7 @@ pub(super) struct Asking {
     pane: String,
     agent: String,
     since: Instant,
-    reply: Reply,
+    asker: Asker,
     timer: Option<RegistrationToken>,
 
     /// The dialog's selected choice.
@@ -61,27 +104,49 @@ fn armed(since: Instant, now: Instant) -> bool {
 }
 
 impl State {
-    /// Answer a `screenshot` of pane `pane` at once when the pane accepts
-    /// screenshots, or else once the person answers the dialog.
+    /// Answer a screenshot of pane `pane` at once when the pane's mode for
+    /// `asker` is on, or else once the person answers the dialog.
     pub(super) fn screenshot(
         &mut self,
         workspace: usize,
         pane: &str,
         caller: Option<&str>,
-        reply: Reply,
+        asker: Asker,
     ) {
         match self.screenshot_target(workspace, pane) {
-            Ok((name, true)) => self.capture_fresh(workspace, name, reply),
-            Ok((name, false)) => self.ask(workspace, name, caller, reply),
-            Err(reason) => {
-                let _ = reply.send(Err(reason));
+            Ok((name, info)) if asker.accepted(info) => self.capture_fresh(workspace, name, asker),
+            Ok((name, _)) => self.ask(workspace, name, caller, asker),
+            Err(reason) => self.answer_asker(asker, Err(reason)),
+        }
+    }
+
+    /// Send `asker` the PNG, or the reason there is none.
+    fn answer_asker(&mut self, asker: Asker, png: Result<Vec<u8>, String>) {
+        match asker {
+            Asker::Mcp(reply) => {
+                let _ = reply.send(png.map(mcp::Answer::Png));
+            }
+            Asker::Save {
+                client, message, ..
+            } => {
+                let reply = match png {
+                    Ok(png) => Reply::Screenshot(Captured {
+                        png: png::base64(&png),
+                    }),
+                    Err(reason) => Reply::Error(Error { reason, message }),
+                };
+                self.channel_send(client, &serde_json::to_string(&reply).unwrap());
             }
         }
     }
 
-    /// The pane's own name and whether it accepts screenshots, or why it
+    /// The pane's own name and what decade keeps about it, or why it
     /// cannot be captured.
-    fn screenshot_target(&self, workspace: usize, pane: &str) -> Result<(String, bool), String> {
+    fn screenshot_target(
+        &self,
+        workspace: usize,
+        pane: &str,
+    ) -> Result<(String, &PaneInfo), String> {
         let shown = &self.workspaces[workspace];
         let (tab, id) = shown
             .by_name(pane)
@@ -96,16 +161,16 @@ impl State {
             .layout
             .pane(id)
             .ok_or_else(|| format!("no pane named {pane}"))?;
-        Ok((pane.name.clone(), shown.tabs[tab].info(id).screenshots))
+        Ok((pane.name.clone(), shown.tabs[tab].info(id)))
     }
 
     /// Put up the dialog for a screenshot of the pane named `pane`, take
     /// every key and click from the panes and chrome, and point at the
     /// pane.
-    fn ask(&mut self, workspace: usize, pane: String, caller: Option<&str>, reply: Reply) {
+    fn ask(&mut self, workspace: usize, pane: String, caller: Option<&str>, asker: Asker) {
         if self.asking.is_some() {
             let reason = "decade is already asking the person about another screenshot".to_string();
-            let _ = reply.send(Err(reason));
+            self.answer_asker(asker, Err(reason));
             return;
         }
         let shown = &self.workspaces[workspace];
@@ -115,6 +180,9 @@ impl State {
             .map_or_else(|| "An agent".to_string(), |agent| agent.name.clone());
         let timer = Timer::from_duration(ASK_FOR);
         let timer = self.loop_handle.insert_source(timer, |_, _, state| {
+            if let Some(asking) = &mut state.asking {
+                asking.timer = None;
+            }
             state.answer_screenshot(None);
             TimeoutAction::Drop
         });
@@ -139,7 +207,7 @@ impl State {
             pane,
             agent,
             since: now,
-            reply,
+            asker,
             timer: timer.ok(),
             cursor: Cursor::default(),
         });
@@ -150,18 +218,11 @@ impl State {
     /// Answer the screenshot the dialog asks about with the person's
     /// `answer`, or refuse it for `None`, when its time ran out.
     pub(super) fn answer_screenshot(&mut self, answer: Option<Answer>) {
-        let Some(asking) = self.asking.take() else {
+        let Some(asking) = self.close_dialog() else {
             return;
         };
-        if let Some(timer) = asking.timer.filter(|_| answer.is_some()) {
-            self.loop_handle.remove(timer);
-        }
-        self.unblock_input();
         let pane = &asking.pane;
         let workspace = self.workspace_index(asking.workspace);
-        if let Some(workspace) = workspace {
-            self.workspaces[workspace].end_point_at(pane);
-        }
         let refusal = match (workspace, answer) {
             (None, _) => format!("workspace {} is closed", asking.workspace),
             (Some(_), None) => format!(
@@ -173,15 +234,39 @@ impl State {
             }
             (Some(workspace), Some(answer)) => {
                 if answer == Answer::Always {
-                    self.accept_screenshots(workspace, pane);
+                    self.accept_screenshots(workspace, pane, &asking.asker);
                 }
-                self.capture_fresh(workspace, asking.pane, asking.reply);
-                self.request_redraw();
+                self.capture_fresh(workspace, asking.pane, asking.asker);
                 return;
             }
         };
-        let _ = asking.reply.send(Err(refusal));
+        self.answer_asker(asking.asker, Err(refusal));
+    }
+
+    /// Take down the dialog, stop its clock, give keys and clicks back and
+    /// stop pointing at its pane, and return what it asked about.
+    fn close_dialog(&mut self) -> Option<Asking> {
+        let asking = self.asking.take()?;
+        if let Some(timer) = asking.timer {
+            self.loop_handle.remove(timer);
+        }
+        self.unblock_input();
+        if let Some(index) = self.workspace_index(asking.workspace) {
+            self.workspaces[index].end_point_at(&asking.pane);
+        }
         self.request_redraw();
+        Some(asking)
+    }
+
+    /// Take down the dialog when it asks for socket client `client`, which
+    /// has gone, turning on no mode.
+    pub(super) fn abandon_screenshot(&mut self, client: usize) {
+        let asks_for_client = (self.asking.as_ref()).is_some_and(
+            |asking| matches!(asking.asker, Asker::Save { client: c, .. } if c == client),
+        );
+        if asks_for_client {
+            self.close_dialog();
+        }
     }
 
     /// Answer every screenshot of workspace `workspace` that is still
@@ -191,17 +276,9 @@ impl State {
             .asking
             .as_ref()
             .is_some_and(|asking| asking.workspace == workspace)
-            && let Some(asking) = self.asking.take()
+            && let Some(asking) = self.close_dialog()
         {
-            if let Some(timer) = asking.timer {
-                self.loop_handle.remove(timer);
-            }
-            self.unblock_input();
-            if let Some(index) = self.workspace_index(workspace) {
-                self.workspaces[index].end_point_at(&asking.pane);
-            }
-            let _ = asking.reply.send(Err(reason.clone()));
-            self.request_redraw();
+            self.answer_asker(asking.asker, Err(reason.clone()));
         }
         let (refused, waiting) = std::mem::take(&mut self.capturing)
             .into_iter()
@@ -211,20 +288,21 @@ impl State {
             if let Some(timer) = capturing.timer {
                 self.loop_handle.remove(timer);
             }
-            let _ = capturing.reply.send(Err(reason.clone()));
+            self.answer_asker(capturing.asker, Err(reason.clone()));
         }
     }
 
     /// Capture pane `pane` once its window commits the frame it was
     /// waiting to draw, or at once when it was waiting for none.
-    fn capture_fresh(&mut self, workspace: usize, pane: String, reply: Reply) {
+    fn capture_fresh(&mut self, workspace: usize, pane: String, asker: Asker) {
         let shown = &self.workspaces[workspace];
         let surface = (shown.by_name(&pane))
             .and_then(|(tab, id)| shown.tabs[tab].toplevel(id))
             .map(|toplevel| toplevel.wl_surface().clone())
             .filter(waits_for_frame);
         let Some(surface) = surface else {
-            let _ = reply.send(self.capture(workspace, &pane).map(mcp::Answer::Png));
+            let png = self.capture(workspace, &pane, asker.tag());
+            self.answer_asker(asker, png);
             return;
         };
 
@@ -246,7 +324,7 @@ impl State {
             workspace: self.workspaces[workspace].id,
             pane,
             surface,
-            reply,
+            asker,
             timer: timer.ok(),
         });
     }
@@ -263,19 +341,19 @@ impl State {
                 self.loop_handle.remove(timer);
             }
             let result = match self.workspace_index(capturing.workspace) {
-                Some(workspace) => self.capture(workspace, &capturing.pane),
+                Some(workspace) => self.capture(workspace, &capturing.pane, capturing.asker.tag()),
                 None => Err(format!("workspace {} is closed", capturing.workspace)),
             };
-            let _ = capturing.reply.send(result.map(mcp::Answer::Png));
+            self.answer_asker(capturing.asker, result);
         }
     }
 
-    fn accept_screenshots(&mut self, workspace: usize, pane: &str) {
+    fn accept_screenshots(&mut self, workspace: usize, pane: &str, asker: &Asker) {
         let shown = &mut self.workspaces[workspace];
         if let Some((tab, id)) = shown.by_name(pane)
             && let Some(info) = shown.tabs[tab].info.get_mut(&id)
         {
-            info.screenshots = true;
+            asker.accept(info);
         }
         shown.mark_panes();
     }
@@ -290,6 +368,17 @@ impl State {
         }
     }
 
+    /// Turn the accept saved screenshots mode of pane `id` on screen on or
+    /// off.
+    pub(super) fn toggle_saved_screenshots(&mut self, id: usize) {
+        if let Some(info) = self.tab_mut().info.get_mut(&id) {
+            info.saved_screenshots = !info.saved_screenshots;
+            let current = self.current();
+            self.workspaces[current].mark_panes();
+            self.request_redraw();
+        }
+    }
+
     /// The dialog every viewer shows while a screenshot waits on the
     /// person's answer.
     pub(super) fn prompt(&self) -> Option<Dialog<'static, Answer>> {
@@ -297,12 +386,16 @@ impl State {
         let workspace = (self.workspace_index(asking.workspace))
             .map(|index| self.workspaces[index].name.clone())
             .unwrap_or_default();
+        let dialog = match &asking.asker {
+            Asker::Mcp(_) => prompt::dialog(&asking.agent, &workspace, &asking.pane),
+            Asker::Save { file, .. } => prompt::save_dialog(&asking.agent, &asking.pane, file),
+        };
         Some(Dialog {
             armed: asking.armed(Instant::now()),
             selected: asking.cursor.selected,
             window: self.window(),
             cell: self.menu_cell(),
-            ..prompt::dialog(&asking.agent, &workspace, &asking.pane)
+            ..dialog
         })
     }
 
@@ -328,8 +421,9 @@ impl State {
     }
 
     /// A PNG of the client area of pane `pane`, drawn as the workspace
-    /// would be without decade's menus, bars or pointer hover.
-    fn capture(&mut self, workspace: usize, pane: &str) -> Result<Vec<u8>, String> {
+    /// would be without decade's menus, bars or pointer hover, flashing
+    /// the pane's left tag `tag`.
+    fn capture(&mut self, workspace: usize, pane: &str, tag: char) -> Result<Vec<u8>, String> {
         let (name, _) = self.screenshot_target(workspace, pane)?;
         let shown = &self.workspaces[workspace];
         let layout = shown.layout();
@@ -344,16 +438,18 @@ impl State {
             .ok_or_else(|| format!("pane {name} has no room to draw"))?;
         let rgba = self.render_plain(workspace)?;
         let png = crop(&rgba, self.size.w, rect);
-        self.workspaces[workspace].flash = Some((name, Instant::now()));
+        self.workspaces[workspace].flash = Some((name, tag, Instant::now()));
         self.start_pulse();
         self.request_redraw();
         Ok(png)
     }
 
-    /// The workspace rendered off screen without the overlay, a drag, the
-    /// Ctrl bar or hover, as RGBA rows, top first.
+    /// The workspace rendered off screen without the overlay, the
+    /// screenshot dialog, a drag, the Ctrl bar or hover, as RGBA rows, top
+    /// first.
     fn render_plain(&mut self, workspace: usize) -> Result<Vec<u8>, String> {
         let overlay = self.overlay.take();
+        let asking = self.asking.take();
         let sidebar_drag = self.sidebar_drag.take();
         let drag = self.workspaces[workspace].layout_mut().drag.take();
         let bar = std::mem::replace(&mut self.bar, false);
@@ -366,6 +462,7 @@ impl State {
         let rendered = self.render_offscreen(workspace);
         self.workspaces[workspace].flash = flash;
         self.overlay = overlay;
+        self.asking = asking;
         self.sidebar_drag = sidebar_drag;
         self.workspaces[workspace].layout_mut().drag = drag;
         self.bar = bar;
@@ -428,6 +525,25 @@ mod tests {
         assert!(!armed(since, since + Duration::from_millis(499)));
         assert!(armed(since, since + ARMED_AFTER));
         assert!(!armed(since + Duration::from_secs(1), since));
+    }
+
+    #[test]
+    fn a_saved_screenshot_goes_by_its_own_mode_and_a_viewed_one_by_the_other() {
+        let (reply, _) = tokio::sync::oneshot::channel();
+        let mcp = Asker::Mcp(reply);
+        let save = Asker::Save {
+            client: 1,
+            file: "shot.png".to_string(),
+            message: Value::Null,
+        };
+        let mut info = PaneInfo::default();
+        save.accept(&mut info);
+        assert!(save.accepted(&info));
+        assert!(!mcp.accepted(&info));
+        let mut info = PaneInfo::default();
+        mcp.accept(&mut info);
+        assert!(mcp.accepted(&info));
+        assert!(!save.accepted(&info));
     }
 
     #[test]

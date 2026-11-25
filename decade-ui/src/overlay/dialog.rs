@@ -1,5 +1,5 @@
 use crate::overlay::{Cursor, LARGE, LARGE_COLUMNS, Layout, MenuKey, Row, Step};
-use crate::{Scene, fit};
+use crate::{Scene, fit, tail};
 
 /// A choice of a dialog, with `A` the answer it gives.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -19,6 +19,10 @@ pub struct Dialog<'a, A> {
 
     /// The dim line under the question.
     pub detail: String,
+
+    /// A path on a dim line under the detail, cut at its start when it is
+    /// too long for the box.
+    pub path: Option<String>,
     pub choices: &'a [Choice<A>],
 
     /// The answer Escape gives.
@@ -52,7 +56,7 @@ impl<A: Copy> Dialog<'_, A> {
     fn layout(&self) -> Layout {
         let width = LARGE.width(self.cell, LARGE_COLUMNS).min(self.window.0);
         (Layout::new(&LARGE, self.cell, width))
-            .header(true)
+            .header(1 + usize::from(self.path.is_some()))
             .list(self.choices.len())
             .end()
             .centred(self.window)
@@ -84,6 +88,12 @@ impl<A: Copy> Dialog<'_, A> {
         Some(self.choices[index].answer)
     }
 
+    fn dim_lines(&self, room: usize) -> Vec<String> {
+        let detail = fit(&self.detail, room);
+        let path = self.path.as_deref().map(|path| tail(path, room));
+        [Some(detail), path].into_iter().flatten().collect()
+    }
+
     /// Draw the dialog in window pixels, with the large font.
     pub fn draw(&self, scene: &mut Scene) {
         let layout = self.layout();
@@ -92,7 +102,9 @@ impl<A: Copy> Dialog<'_, A> {
         let room = ((layout.width - 2 * LARGE.text_left(self.cell.1)) / cell_width).max(0);
         let room = room as usize;
         let question = fit(&self.question, room);
-        layout.draw_header(scene, &question, Some(&fit(&self.detail, room)));
+        let dim = self.dim_lines(room);
+        let dim: Vec<&str> = dim.iter().map(String::as_str).collect();
+        layout.draw_header(scene, &question, &dim);
         let Some(list) = layout.list_area() else {
             return;
         };
@@ -143,6 +155,7 @@ mod tests {
         Dialog {
             question: "Save the changes?".to_string(),
             detail: "to notes.txt".to_string(),
+            path: None,
             choices: &CHOICES,
             escape: Answer::Cancel,
             armed: true,
@@ -165,6 +178,26 @@ mod tests {
         }
         assert_eq!(dialog.hit(left + 1, top + 1), None);
         assert_eq!(dialog.hit(left - 1, list.text_y(0)), None);
+    }
+
+    #[test]
+    fn a_long_detail_loses_its_end_and_a_long_path_its_start() {
+        let dialog = Dialog {
+            detail: "of the open notes".to_string(),
+            path: Some("/home/notes.txt".to_string()),
+            ..dialog()
+        };
+        assert_eq!(dialog.dim_lines(10), ["of the op…", "…notes.txt"]);
+    }
+
+    #[test]
+    fn a_path_adds_a_line_to_the_dialog() {
+        let plain = dialog().layout().height;
+        let with_path = Dialog {
+            path: Some("/home/notes.txt".to_string()),
+            ..dialog()
+        };
+        assert!(with_path.layout().height > plain);
     }
 
     #[test]

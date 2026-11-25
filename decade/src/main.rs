@@ -11,6 +11,8 @@ mod lines;
 #[cfg(target_os = "linux")]
 mod png;
 #[cfg(target_os = "linux")]
+mod screenshot;
+#[cfg(target_os = "linux")]
 mod script;
 #[cfg(target_os = "linux")]
 mod server;
@@ -22,6 +24,7 @@ mod wire;
 const USAGE: &str = "usage: decade [--class <app id>]
        decade start | stop | restart | status | list
        decade script FILE
+       decade screenshot PANE FILE
        decade server";
 
 #[cfg(target_os = "linux")]
@@ -42,6 +45,12 @@ fn main() {
         (Some("list"), None, _) => list(),
         (Some("script"), Some(file), None) => {
             if let Err(error) = script::run(&file) {
+                eprintln!("decade: {error}");
+                std::process::exit(1);
+            }
+        }
+        (Some("screenshot"), Some(pane), Some(file)) if args.next().is_none() => {
+            if let Err(error) = screenshot::run(&pane, &file) {
                 eprintln!("decade: {error}");
                 std::process::exit(1);
             }

@@ -17,6 +17,7 @@ use serde_json::{Map, Value, json};
 use smithay::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
 
+use crate::png;
 use crate::server::scratch::Launch;
 
 pub struct Request {
@@ -488,31 +489,12 @@ impl ServerHandler for Decade {
         let result = match answer {
             Ok(Answer::Text(text)) => CallToolResult::success(vec![ContentBlock::text(text)]),
             Ok(Answer::Png(png)) => {
-                CallToolResult::success(vec![ContentBlock::image(base64(&png), "image/png")])
+                CallToolResult::success(vec![ContentBlock::image(png::base64(&png), "image/png")])
             }
             Err(reason) => CallToolResult::error(vec![ContentBlock::text(reason)]),
         };
         Ok(result.into())
     }
-}
-
-/// `bytes` in the standard base64 alphabet with padding, as MCP carries
-/// image data.
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let [a, b, c] = [0, 1, 2].map(|i| chunk.get(i).copied().unwrap_or(0) as u32);
-        let triple = (a << 16) | (b << 8) | c;
-        for i in 0..4 {
-            if i <= chunk.len() {
-                text.push(ALPHABET[(triple >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                text.push('=');
-            }
-        }
-    }
-    text
 }
 
 #[cfg(test)]
@@ -523,16 +505,6 @@ mod tests {
     use smithay::reexports::calloop::EventLoop;
     use smithay::reexports::calloop::channel::{self, Event};
     use std::time::Duration;
-
-    #[test]
-    fn base64_pads_a_last_group_of_one_or_two_bytes() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foo"), "Zm9v");
-        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-        assert_eq!(base64(&[0xff, 0xfe]), "//4=");
-    }
 
     #[test]
     fn the_workspace_and_pane_are_read_from_the_query_of_the_address() {

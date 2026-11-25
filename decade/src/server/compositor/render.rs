@@ -12,7 +12,7 @@ use smithay::backend::renderer::{Bind, Color32F, Frame, Renderer};
 use smithay::utils::{Physical, Point, Rectangle, Transform};
 
 use decade_ui::palette::{self, Rgba};
-use decade_ui::{Chrome, Pulse, Scene, Shape};
+use decade_ui::{Chrome, Flash, Pulse, Scene, Shape};
 
 use crate::chrome::frame;
 use crate::chrome::picker::{self, Grid, Picker};
@@ -79,8 +79,13 @@ impl State {
                 note: point.note.as_deref(),
             })
         });
-        let flash = (workspaces[workspace].flash_at(now))
-            .and_then(|(name, flash)| Some((named(name)?.id, flash)));
+        let flash = (workspaces[workspace].flash_at(now)).and_then(|(name, tag, strength)| {
+            Some(Flash {
+                pane: named(name)?.id,
+                tag,
+                strength,
+            })
+        });
         let shutter = (workspaces[workspace].shutter_at(now))
             .and_then(|(name, alpha)| Some((layout.pane(layout.by_name(name)?)?, alpha)))
             .map(|(pane, alpha)| (text.px_rect(pane.client_rect()), alpha));

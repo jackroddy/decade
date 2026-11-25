@@ -1,20 +1,35 @@
-use std::io::{self, Write};
+use std::io;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Command, ExitStatus};
 use std::time::{Duration, Instant};
 
 use decade_channel::Reply;
+use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{Interest, Mode as CalloopMode, PostAction};
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
-use crate::lines::Lines;
+use crate::lines::{Lines, Queue};
 use crate::server::channel::Out;
 use crate::server::mcp;
 use crate::server::scratch::{self, Launch, Started, Waiting};
 
 use super::State;
+use super::screenshot::Asker;
+
+/// A connection to a socket client.
+pub(super) struct Socket {
+    pub(super) workspace: u32,
+    stream: UnixStream,
+
+    /// The lines the client has not taken yet.
+    queue: Queue,
+
+    /// The event source that writes `queue` as the client takes it, while
+    /// the queue holds anything.
+    pub(super) flushing: Option<RegistrationToken>,
+}
 
 impl State {
     pub(super) fn listen(&mut self, workspace: usize) {
@@ -70,7 +85,15 @@ impl State {
             let pid = peer.pid.as_raw_nonzero().get() as u32;
             self.workspaces[index].router.peers.insert(id, pid);
         }
-        self.sockets.insert(id, (workspace, writer));
+        self.sockets.insert(
+            id,
+            Socket {
+                workspace,
+                stream: writer,
+                queue: Queue::default(),
+                flushing: None,
+            },
+        );
         let mut lines = Lines::default();
         let inserted = self.loop_handle.insert_source(
             Generic::new(stream, Interest::READ, CalloopMode::Level),
@@ -104,7 +127,7 @@ impl State {
                 self.scratch_open(workspace, pane.as_deref(), launch, request.reply)
             }
             mcp::Call::Screenshot { pane } => {
-                self.screenshot(workspace, &pane, caller, request.reply)
+                self.screenshot(workspace, &pane, caller, Asker::Mcp(request.reply))
             }
             call => {
                 let answer = self.mcp_call(workspace, call, caller);
@@ -459,19 +482,23 @@ impl State {
     }
 
     fn channel_disconnected(&mut self, id: usize) {
-        let Some((workspace, _)) = self.sockets.remove(&id) else {
+        let Some(socket) = self.sockets.remove(&id) else {
             return;
         };
-        if let Some(index) = self.workspace_index(workspace) {
+        if let Some(token) = socket.flushing {
+            self.loop_handle.remove(token);
+        }
+        if let Some(index) = self.workspace_index(socket.workspace) {
             self.workspaces[index].router.disconnect(id, Instant::now());
         }
+        self.abandon_screenshot(id);
     }
 
     fn channel_line(&mut self, id: usize, line: &str) {
         let Some(workspace) = self
             .sockets
             .get(&id)
-            .and_then(|(workspace, _)| self.workspace_index(*workspace))
+            .and_then(|socket| self.workspace_index(socket.workspace))
         else {
             return;
         };
@@ -479,6 +506,19 @@ impl State {
             match out {
                 Out::Line(to, text) => self.channel_send(to, &text),
                 Out::Agent { raised } => self.agent_changed(workspace, raised),
+                Out::Screenshot {
+                    client,
+                    screenshot,
+                    message,
+                } => {
+                    let asker = Asker::Save {
+                        client,
+                        file: screenshot.file,
+                        message,
+                    };
+                    let caller = screenshot.caller.as_deref();
+                    self.screenshot(workspace, &screenshot.pane, caller, asker);
+                }
             }
         }
     }
@@ -513,17 +553,54 @@ impl State {
         self.request_redraw();
     }
 
-    fn channel_send(&mut self, to: usize, text: &str) {
-        let Some((_, stream)) = self.sockets.get(&to) else {
+    /// Queue the line `text` for client `to` and write what its socket
+    /// takes now. The rest goes as the socket takes it.
+    pub(super) fn channel_send(&mut self, to: usize, text: &str) {
+        let Some(socket) = self.sockets.get_mut(&to) else {
             return;
         };
-        let mut stream = stream;
-        if stream
-            .write_all(text.as_bytes())
-            .and_then(|_| stream.write_all(b"\n"))
-            .is_err()
-        {
-            self.channel_disconnected(to);
+        socket.queue.push(text);
+        if socket.flushing.is_some() {
+            return;
+        }
+        match socket.queue.write(&socket.stream) {
+            Ok(true) => {}
+            Ok(false) => self.watch_for_room(to),
+            Err(_) => self.channel_disconnected(to),
+        }
+    }
+
+    /// Write the rest of client `id`'s queue each time its socket has
+    /// room, until the queue is empty or the socket fails.
+    fn watch_for_room(&mut self, id: usize) {
+        let Some(stream) = (self.sockets.get(&id)).and_then(|s| s.stream.try_clone().ok()) else {
+            self.channel_disconnected(id);
+            return;
+        };
+        let inserted = self.loop_handle.insert_source(
+            Generic::new(stream, Interest::WRITE, CalloopMode::Level),
+            move |_, _, state| {
+                let Some(socket) = state.sockets.get_mut(&id) else {
+                    return Ok(PostAction::Remove);
+                };
+                let written = socket.queue.write(&socket.stream);
+                if let Ok(false) = written {
+                    return Ok(PostAction::Continue);
+                }
+
+                // cleared before channel_disconnected, which
+                // would otherwise remove this source from
+                // inside its own callback
+                socket.flushing = None;
+                if written.is_err() {
+                    state.channel_disconnected(id);
+                }
+                Ok(PostAction::Remove)
+            },
+        );
+        match (inserted, self.sockets.get_mut(&id)) {
+            (Ok(token), Some(socket)) => socket.flushing = Some(token),
+            _ => self.channel_disconnected(id),
         }
     }
 }

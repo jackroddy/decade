@@ -10,7 +10,7 @@ mod viewers;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io;
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -157,7 +157,7 @@ pub struct State {
     cursor: CursorImageStatus,
     display_handle: DisplayHandle,
     loop_handle: LoopHandle<'static, State>,
-    sockets: HashMap<usize, (u32, UnixStream)>,
+    sockets: HashMap<usize, channels::Socket>,
     next_client: usize,
     children: Children,
     text: Text,
@@ -916,7 +916,16 @@ impl State {
         }
         let id = shown.id;
         let _ = std::fs::remove_file(self.children.socket_path(id));
-        self.sockets.retain(|_, (workspace, _)| *workspace != id);
+        let (dropped, kept) = std::mem::take(&mut self.sockets)
+            .into_iter()
+            .partition(|(_, socket)| socket.workspace == id);
+        self.sockets = kept;
+        let dropped: HashMap<usize, channels::Socket> = dropped;
+        for socket in dropped.into_values() {
+            if let Some(token) = socket.flushing {
+                self.loop_handle.remove(token);
+            }
+        }
     }
 
     fn remove_workspace(&mut self, index: usize) {
@@ -1051,6 +1060,7 @@ impl State {
             Command::Zoom(id) => self.toggle_zoom(id),
             Command::Scratch(id) => self.toggle_scratch(id),
             Command::Screenshots(id) => self.toggle_screenshots(id),
+            Command::SavedScreenshots(id) => self.toggle_saved_screenshots(id),
             Command::Clear(id) => {
                 if let Some(index) = self.workspace_index(id) {
                     self.clear_agents(index);
