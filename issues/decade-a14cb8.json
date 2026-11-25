@@ -1,0 +1,32 @@
+{
+  "id": "decade-a14cb8",
+  "title": "coax is started again through a restore block like any other program",
+  "body": "decade starts coax again on restore through a path of its own. coax's hello carries an `agent` block with its session id and arguments, and `resume_input` in `decade/src/server/children.rs` builds a ghostty that types `coax <args> --session <id>`. decade-15e5eb gives every decade-aware program a general `restore` block for this.\n\n## Proposal\n\ncoax sends a `restore` block whose argv carries its arguments and `--session <id>`, with `terminal` true. decade drops `resume_input` and the saved `session` field, and restores coax like any other program. The save file reader keeps an arm that turns an old `session` field into a `restore` block.\n\n## Cost\n\ncoax changes in its own repository. decade's save format version goes up again unless this lands with decade-15e5eb.",
+  "type": "feature",
+  "status": "open",
+  "priority": 4,
+  "labels": [
+    "decade"
+  ],
+  "parent": null,
+  "blocked_by": [
+    "decade-15e5eb"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-25T00:40:24.878814278Z",
+  "updated_at": "2026-11-25T00:40:24.878814278Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "abab97e",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
