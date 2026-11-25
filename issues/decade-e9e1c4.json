@@ -3,26 +3,29 @@
   "title": "The point pulse is faint on rail tiles and may be too quick",
   "body": "An agent's `point` pulses the pane's outline toward `MAGENTA`, and the tab pill, sidebar card or rail tile when the pane is out of view (commit 73a99bc). `pulse(elapsed)` in `src/server/workspace.rs` is a cosine with a 1 s period. A pulsing pill, card or tile gets a ring and a 30% fill toward `MAGENTA` in `src/server/chrome/frame.rs`. In the scripted frames the fill reads well on cards and pills but is faint on the small rail tile, and a 1 s period may feel quick for a glow.\n\n## Proposal\n\nGive the rail tile a stronger fill than cards and pills, and try a slower period, around 1.6 s. Jack judges both by eye on his own screen.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 4,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/5da9dd6b",
-  "lease_expires": "2026-11-25T01:23:02.377025777Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-09T20:40:53.727995862Z",
-  "updated_at": "2026-11-25T01:08:02.377025777Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T01:12:31.063366488Z",
+  "closed_at": "2026-11-25T01:12:31.063366488Z",
+  "close_reason": "Landed in 68e069c: the pulse period is 1.6 s, matching the card breath, and a pulsing rail tile fills 50% toward magenta while pills and cards stay at 30%. Jack chose to commit before judging it on screen.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "e37ba45",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "68e069c",
+      "branch": "dev"
+    }
   }
 }
