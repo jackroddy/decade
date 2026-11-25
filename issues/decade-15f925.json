@@ -3,7 +3,7 @@
   "title": "A window from a process that outlives a workspace's sleep can land in the sleeping workspace",
   "body": "Sleeping a workspace (`State::sleep_workspace` in `decade/src/server/compositor.rs`) kills the programs decade started in it and asks its other windows to close. A process that survives, such as a program a shell in the workspace started outside decade, can still open a window afterwards. `Tab::place` no longer matches panes of a sleeping workspace by app id, but `launched_from` and the fallback to the workspace on screen can still put the window in the sleeping workspace. The window then sits in a workspace that says it is asleep.\n\nA pending pane screenshot (`capturing` or `asking`) for a workspace that goes to sleep also ends with whatever the empty pane yields.\n\n## Open\n\n- Whether such a window should wake the workspace, go to the workspace on screen, or be closed.",
   "type": "bug",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "decade"
@@ -12,13 +12,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/5da9dd6b",
-  "lease_expires": "2026-11-25T00:36:16.79862907Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-22T08:51:49.46255249Z",
-  "updated_at": "2026-11-25T00:21:16.79862907Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T00:22:05.062182863Z",
+  "closed_at": "2026-11-25T00:22:05.062182863Z",
+  "close_reason": "Landed in b9df6e8. A window placed in a sleeping workspace goes to the workspace on screen, which wakes if asleep. Pending screenshots (capturing or asking) answer with a went-to-sleep error when the workspace sleeps.",
+  "resolution": "done",
   "notes": [
     {
       "id": "4bc56a1f",
@@ -34,6 +34,9 @@
       "commit": "f62a5f1",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "b9df6e8",
+      "branch": "dev"
+    }
   }
 }
