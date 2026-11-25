@@ -1,0 +1,30 @@
+{
+  "id": "decade-b91d19",
+  "title": "How is foam built into decade, so coax can preview and open any project's foam issues?",
+  "body": "coax renders `foam:<id>` links. On hover it runs `foam show <id> --plain` in its own directory and shows the output as a preview card (the `foam` scheme in coax's `src/links.rs`). foam reads the issues of the repository it runs in, so an id from another project, such as an acre issue cited from a decade session, previews as \"no foam issue\". The scheme has no click action, so a foam link cannot be opened at all.\n\ndecade already routes things to panes by kind. A client's hello lists the kinds it `shows`, and a `show` message with a kind and a target goes to the pane whose program shows that kind (the Show section of `docs/protocol.md`). decade also knows each workspace's directory, and most workspaces are one project's repository.\n\nJack wants foam built into decade rather than reached through pane or scratch rules.\n\n## Goals\n\n- A foam link previews from any project, whichever repository the coax session runs in.\n- A click on a foam link opens the issue somewhere in decade.\n\n## Options\n\n- Prefix to repository in foam itself. foam learns where each prefix's repository lives, from a list it keeps or from repositories it has seen, and `foam show acre-4ed6a0` works from any directory. This answers the preview and nothing else. It costs foam a registry that can go stale.\n- Prefix to repository through decade. decade maps a prefix to the workspace whose directory holds that foam, and coax asks decade for the directory before running `foam show`. It works only for projects open as workspaces, and it adds a request to the protocol.\n- foam as a decade-aware program. foam gains a viewer, perhaps a `foam-gui` crate in foam's repository, that connects with `decade-channel` and says hello with `shows: [{\"kind\": \"foam\"}]`. A click on a foam link in coax sends `show` with kind `foam` and the id as target, and decade routes it to the pane that shows foam. That answers where the issue opens, as long as such a pane exists.\n\n## Leaning\n\nThe third option, with the first for the lookup. The viewer gives the click a destination through routing decade already has, and the viewer needs the prefix lookup too, since it shows issues from every project. That still leaves where the viewer runs when no pane shows foam yet.\n\n## Open\n\n- Where a click opens when no pane shows foam: start the viewer in a scratch pane, start it in a new pane beside coax, or keep one foam pane per workspace that decade starts.\n- Whether the viewer is a separate program in foam's repository or a part of decade's chrome, like the sidebar. Chrome would make foam part of decade's own build.\n- Whether coax's hover card should come from the viewer too, so preview and open share one lookup.",
+  "type": "decision",
+  "status": "open",
+  "priority": 2,
+  "labels": [
+    "decade"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-25T02:31:50.470633114Z",
+  "updated_at": "2026-11-25T02:31:50.470633114Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "dcd178b",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
