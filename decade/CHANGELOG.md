@@ -36,7 +36,8 @@ command line and what the tool writes.
   starts it again and whether that argv runs in a terminal. A `restore`
   message replaces the block, and an empty argv clears it. decade saves
   the block with the program's pane. On restore and on wake it starts the
-  argv in the workspace's directory with `DECADE_PANE` set to the pane. A
+  argv in the block's `cwd`, or in the workspace's directory when there
+  is none or it is not a directory, with `DECADE_PANE` set to the pane. A
   terminal argv is typed into a ghostty in the pane. coax starts again
   this way, on its session.
 - A program that starts a child with `DECADE_INTO=<pane name>` in its
@@ -107,7 +108,8 @@ command line and what the tool writes.
   earlier versions. A version 6 file's one scratch pane reads as a list
   of one. A coax session that a file of version 6 to 8 holds for a
   terminal reads as a terminal restore block. Its argv is `coax`, then
-  coax's saved flags, then `--session <id>`.
+  coax's saved flags, then `--session <id>`, and its `cwd` is the
+  session's directory.
 - A workspace can have any number of scratch panes. Marking a pane as
   scratch leaves the others marked. `scratch.open`, `scratch.send` and
   `scratch.status` take an optional `pane`, the name of a scratch pane.

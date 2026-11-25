@@ -82,7 +82,7 @@ use crate::control::{self, viewer_socket_path};
 use crate::files;
 use crate::gpu::Gpu;
 use crate::server::apps;
-use crate::server::children::Children;
+use crate::server::children::{Children, restore_dir};
 use crate::server::chrome::text::Text;
 use crate::server::clients::{self, Client as PaneClient};
 use crate::server::mcp;
@@ -625,21 +625,21 @@ impl State {
                 let cwd = self.workspaces[workspace].cwd.clone();
                 self.spawn_pane_tab(workspace, tab, id, &cwd, Some(&restore));
             } else {
-                self.spawn_restored(workspace, tab, id, &restore.argv);
+                self.spawn_restored(workspace, tab, id, &restore);
             }
         }
     }
 
-    /// Start `argv` in the workspace's directory, told the pane's name.
-    fn spawn_restored(&mut self, workspace: usize, tab: usize, id: usize, argv: &[String]) {
+    /// Start the argv of `restore` in its directory, told the pane's name.
+    fn spawn_restored(&mut self, workspace: usize, tab: usize, id: usize, restore: &Restore) {
         let shown = &self.workspaces[workspace];
         let (Some(pane), Some((program, args))) =
-            (shown.tabs[tab].layout.pane(id), argv.split_first())
+            (shown.tabs[tab].layout.pane(id), restore.argv.split_first())
         else {
             return;
         };
         let mut command = self.children.command(shown, program, Some(&pane.name));
-        command.args(args);
+        command.args(args).current_dir(restore_dir(shown, restore));
         if let Err(error) = self.children.spawn(shown, command) {
             eprintln!("decade: {error}");
         }
@@ -665,7 +665,7 @@ impl State {
         info.next_tab += 1;
         let shown = &self.workspaces[workspace];
         let ghostty = match restore {
-            Some(restore) => self.children.restoring(shown, &name, &class, &restore.argv),
+            Some(restore) => self.children.restoring(shown, &name, &class, restore),
             None => self.children.ghostty(shown, &name, &class, cwd),
         };
         if let Err(error) = self.children.spawn(shown, ghostty) {
@@ -689,9 +689,7 @@ impl State {
         let restore =
             (shown.tabs[tab].info(id).restore.as_ref()).filter(|restore| restore.terminal);
         let ghostty = match restore {
-            Some(restore) => {
-                (self.children).restoring(shown, &pane.name, &pane.name, &restore.argv)
-            }
+            Some(restore) => (self.children).restoring(shown, &pane.name, &pane.name, restore),
             None => self.children.ghostty(shown, &pane.name, &pane.name, cwd),
         };
         match self.children.spawn(shown, ghostty) {

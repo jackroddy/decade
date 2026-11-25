@@ -4,6 +4,8 @@ use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 
+use decade_channel::Restore;
+
 use crate::server::workspace::{Workspace, app_id_prefix};
 
 #[derive(Debug, PartialEq)]
@@ -95,18 +97,18 @@ impl Children {
         ghostty
     }
 
-    /// A ghostty for the pane like `ghostty`'s, in the workspace's
-    /// directory, whose shell runs `argv` and is left at its prompt when
-    /// it exits.
+    /// A ghostty for the pane like `ghostty`'s, in the restore block's
+    /// directory, whose shell runs its argv and is left at its prompt
+    /// when it exits.
     pub fn restoring(
         &self,
         workspace: &Workspace,
         pane: &str,
         class: &str,
-        argv: &[String],
+        restore: &Restore,
     ) -> Command {
-        let mut ghostty = self.ghostty(workspace, pane, class, &workspace.cwd);
-        ghostty.arg(typed_input(argv));
+        let mut ghostty = self.ghostty(workspace, pane, class, restore_dir(workspace, restore));
+        ghostty.arg(typed_input(&restore.argv));
         ghostty
     }
 
@@ -182,6 +184,15 @@ impl Children {
         for (_, child) in (self.running.iter_mut()).filter(|(started, _)| *started == workspace) {
             let _ = child.kill();
         }
+    }
+}
+
+/// The directory a restore block starts in: its `cwd` when that is a
+/// directory, else the workspace's.
+pub fn restore_dir<'a>(workspace: &'a Workspace, restore: &'a Restore) -> &'a Path {
+    match &restore.cwd {
+        Some(cwd) if cwd.is_dir() => cwd,
+        _ => &workspace.cwd,
     }
 }
 
@@ -353,13 +364,33 @@ mod tests {
     fn a_restoring_ghostty_starts_in_the_workspace_directory_and_types_the_argv() {
         let children = Children::new(OsString::from("wayland-9"), PathBuf::from("/run"), None);
         let argv = ["decade-notes", "--file", "my notes.md"].map(str::to_string);
-        let ghostty = children.restoring(&workspace(1), "notes", "notes", &argv);
+        let restore = Restore {
+            argv: argv.to_vec(),
+            terminal: true,
+            cwd: None,
+        };
+        let ghostty = children.restoring(&workspace(1), "notes", "notes", &restore);
         assert_eq!(ghostty.get_current_dir(), Some(Path::new("/tmp")));
         assert_eq!(env(&ghostty, "DECADE_PANE").as_deref(), Some("notes"));
         assert_eq!(
             ghostty.get_args().last().unwrap(),
             r"--input=raw:decade-notes --file 'my notes.md'\n"
         );
+    }
+
+    #[test]
+    fn a_restore_block_starts_in_its_directory_and_else_in_the_workspaces() {
+        let children = Children::new(OsString::from("wayland-9"), PathBuf::from("/run"), None);
+        let mut restore = Restore {
+            argv: vec!["decade-notes".to_string()],
+            terminal: true,
+            cwd: Some("/usr".into()),
+        };
+        let ghostty = children.restoring(&workspace(1), "notes", "notes", &restore);
+        assert_eq!(ghostty.get_current_dir(), Some(Path::new("/usr")));
+        restore.cwd = Some("/no/such/directory".into());
+        let ghostty = children.restoring(&workspace(1), "notes", "notes", &restore);
+        assert_eq!(ghostty.get_current_dir(), Some(Path::new("/tmp")));
     }
 
     #[test]

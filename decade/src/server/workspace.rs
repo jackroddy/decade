@@ -1323,6 +1323,7 @@ pub(super) mod tests {
         let waiting = Restore {
             argv: vec!["decade-notes".to_string()],
             terminal: false,
+            cwd: None,
         };
         workspace.tab_mut().info_mut(0).restore = Some(waiting.clone());
         workspace.channel_line(1, r#"{"hello": {"name": "list"}}"#);

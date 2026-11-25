@@ -20,7 +20,8 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
   with, so decade can start it again on the same session. A hello
   without `args` reads as empty.
 - `Hello` has a `restore` field holding a `Restore`, the argv that starts
-  the program again and whether it runs in a terminal.
+  the program again, whether it runs in a terminal and the optional
+  directory to start it in.
   `Channel::restore` sends a `restore` message that replaces it, and an
   empty argv clears it.
 

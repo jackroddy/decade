@@ -68,7 +68,8 @@ A client without it is a plain pane program.
 
 A client that decade should start again adds a `restore` block. `argv`
 is the command that starts it. `terminal` says whether that command runs
-in a terminal, and defaults to false:
+in a terminal, and defaults to false. `cwd` is the directory to start it
+in, and may be left out:
 
 ```json
 {"hello": {"name": "decade-notes", "pane": "notes", "restore": {"argv": ["decade-notes", "--file", "todo.md"], "terminal": false}}}
@@ -76,7 +77,8 @@ in a terminal, and defaults to false:
 
 decade saves the block with the pane the client holds. When decade
 restores the workspace, or wakes it from sleep, it starts each saved
-`argv` in the workspace's directory with `DECADE_PANE` set to that pane.
+`argv` in `cwd`, or in the workspace's directory when `cwd` is absent or
+is not a directory, with `DECADE_PANE` set to that pane.
 A terminal command is typed into the shell of a ghostty in the pane,
 which stays at its prompt when the command exits. That ghostty is the
 terminal decade started and the program ran in. When the program ran in

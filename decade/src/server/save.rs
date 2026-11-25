@@ -250,10 +250,13 @@ fn session_as_restore(table: &mut toml::Table) {
     }
     argv.push(toml::Value::from("--session"));
     argv.extend(session.get("id").cloned());
-    let restore = toml::Table::from_iter([
+    let mut restore = toml::Table::from_iter([
         ("argv".to_string(), toml::Value::Array(argv)),
         ("terminal".to_string(), toml::Value::Boolean(true)),
     ]);
+    if let Some(cwd) = session.get("cwd") {
+        restore.insert("cwd".to_string(), cwd.clone());
+    }
     table.insert("restore".to_string(), toml::Value::Table(restore));
 }
 
@@ -991,6 +994,7 @@ cwd = "/tmp"
 
     fn restore(argv: &[&str], terminal: bool) -> Restore {
         Restore {
+            cwd: None,
             argv: argv.iter().map(|arg| arg.to_string()).collect(),
             terminal,
         }
@@ -1084,9 +1088,16 @@ cwd = "/home/jack"
         let area = crate::server::workspace::tests::AREA;
         let (restored, tabs) = file.workspaces[0].workspace(0, area, &[]).unwrap();
         let main = ["coax", "--agent", "claude", "--allow", "--session", "main"];
-        assert_eq!(restored.tab().info(0).restore, Some(restore(&main, true)));
+        let main = Restore {
+            cwd: Some("/home/jack/projects/coax".into()),
+            ..restore(&main, true)
+        };
+        assert_eq!(restored.tab().info(0).restore, Some(main));
         let restores: Vec<_> = tabs.iter().map(|tab| tab.restore.clone()).collect();
-        let tab = restore(&["coax", "--session", "tab"], true);
+        let tab = Restore {
+            cwd: Some("/tmp".into()),
+            ..restore(&["coax", "--session", "tab"], true)
+        };
         assert_eq!(restores, [Some(tab), None]);
     }
 

@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
@@ -100,6 +100,10 @@ pub struct Restore {
     /// Whether the command runs in a terminal.
     #[serde(default)]
     pub terminal: bool,
+
+    /// The directory to start the command in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
 }
 
 /// The identity an agent gives in hello.
@@ -715,6 +719,7 @@ mod tests {
             .restore(&Restore {
                 argv: vec!["decade-code".into()],
                 terminal: false,
+                cwd: None,
             })
             .unwrap();
         assert_eq!(
@@ -789,11 +794,29 @@ mod tests {
         let restore = Restore {
             argv: vec!["decade-notes".into(), "--file".into(), "todo.md".into()],
             terminal: false,
+            cwd: None,
         };
         assert_eq!(
             line(Request::Restore(&restore)),
             json!({"restore": {"argv": ["decade-notes", "--file", "todo.md"], "terminal": false}})
         );
+    }
+
+    #[test]
+    fn a_restore_block_carries_its_directory_only_when_it_has_one() {
+        let restore = Restore {
+            argv: vec!["decade-notes".into()],
+            terminal: false,
+            cwd: Some("/tmp".into()),
+        };
+        let text = serde_json::to_string(&restore).unwrap();
+        assert_eq!(
+            text,
+            r#"{"argv":["decade-notes"],"terminal":false,"cwd":"/tmp"}"#
+        );
+        assert_eq!(serde_json::from_str::<Restore>(&text).unwrap(), restore);
+        let bare: Restore = serde_json::from_str(r#"{"argv":["a"]}"#).unwrap();
+        assert_eq!(bare.cwd, None);
     }
 
     #[test]
