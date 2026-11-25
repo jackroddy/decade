@@ -5,7 +5,10 @@
   "type": "feature",
   "status": "in_progress",
   "priority": 2,
-  "labels": [],
+  "labels": [
+    "decade",
+    "decade-channel"
+  ],
   "parent": null,
   "blocked_by": [],
   "related": [],
@@ -13,7 +16,7 @@
   "lease_expires": "2026-11-25T01:51:12.89010023Z",
   "defer_until": null,
   "created_at": "2026-11-11T03:02:40.527249803Z",
-  "updated_at": "2026-11-25T01:36:12.89010023Z",
+  "updated_at": "2026-11-25T01:40:34.156750086Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
