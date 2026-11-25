@@ -16,7 +16,7 @@
   "lease_expires": "2026-11-25T01:28:36.615960245Z",
   "defer_until": null,
   "created_at": "2026-11-11T03:00:08.068084261Z",
-  "updated_at": "2026-11-25T01:21:11.419046926Z",
+  "updated_at": "2026-11-25T01:28:39.187562056Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -34,6 +34,14 @@
       "at": "2026-11-25T01:21:11.406745543Z",
       "author": "Jack Roddy/5da9dd6b",
       "text": "Both parts landed on `dev`. The issue stays open until Jack tries part 2 on his seat.\n\nCommit a429d9b makes focus follow the pointer. `Layout::hover_focus` in `decade-ui/src/panes.rs` gives the pane under the pointer, its bar included. It gives `None` during a pane or boundary drag and over a shown Ctrl bar. `State::pointer_moved` in `decade/src/server/compositor/input.rs` adds the other exclusions. Those are an open overlay, an open popup, a client's held press, a sidebar card or top bar tab drag, the sidebar popover, and anywhere outside the pane area. Only a pointer whose position changed moves focus. The settings panel's last row is Focus follows pointer, on by default, stored as `follow_pointer` in `config.toml`. A `decade script` run checked that motion focuses a pane, and that the settings panel, a shown Ctrl bar, a client drag and a boundary drag each leave focus alone.\n\nCommit 6df44f1 moves the pointer after Super+h/j/k/l, Super+Shift+h/j/k/l and Super+Shift+Return. It uses the same setting. The server sends the active viewer a new `Warp` message. The viewer locks the pointer with pointer-constraints, sets the cursor position hint, and destroys the lock when the host sends `locked`. The viewer skips this while the pointer is outside its window. The hyprctl `movecursor` route is not built.\n\n## For Jack to try\n\nRun decade with Focus follows pointer on. Put the pointer in one pane and press Super+l. If the pointer lands in the middle of the newly focused pane, the hint works and the issue can close. If it stays put, Hyprland ignored the hint. The fix then is a `dispatch movecursor` through Hyprland's socket in the viewer's `warp`, under Hyprland only. A brief pointer freeze or a cursor flicker during the lock would also be worth reporting.",
+      "commit": "6df44f1",
+      "branch": "dev"
+    },
+    {
+      "id": "7b560256",
+      "at": "2026-11-25T01:28:39.187561166Z",
+      "author": "Jack Roddy/5da9dd6b",
+      "text": "Jack: only popups that grab input, such as menus, block focus following. A tooltip, a popup with no grab, does not.",
       "commit": "6df44f1",
       "branch": "dev"
     }
