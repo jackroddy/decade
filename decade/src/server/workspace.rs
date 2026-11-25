@@ -457,7 +457,7 @@ const AGENT: &str = "agent";
 const BRANCH_EVERY: Duration = Duration::from_secs(2);
 
 /// The time from one peak of a point's pulse to the next.
-const PULSE_PERIOD: Duration = Duration::from_secs(1);
+const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 
 /// How long a point lasts unless something ends it sooner.
 const POINT_FOR: Duration = Duration::from_secs(30);
@@ -1402,11 +1402,11 @@ pub(super) mod tests {
     fn a_pulse_rises_from_nothing_to_its_peak_and_back_each_period() {
         let at = |ms| pulse(Duration::from_millis(ms));
         assert!(at(0) < 1e-6);
-        assert!((at(250) - 0.5).abs() < 1e-3);
-        assert!((at(500) - 1.0).abs() < 1e-6);
-        assert!((at(750) - 0.5).abs() < 1e-3);
-        assert!(at(1000) < 1e-6);
-        assert!(at(100) < at(200) && at(600) > at(700));
+        assert!((at(400) - 0.5).abs() < 1e-3);
+        assert!((at(800) - 1.0).abs() < 1e-6);
+        assert!((at(1200) - 0.5).abs() < 1e-3);
+        assert!(at(1600) < 1e-6);
+        assert!(at(100) < at(200) && at(900) > at(1000));
     }
 
     #[test]

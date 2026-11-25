@@ -70,6 +70,8 @@ command line and what the tool writes.
 
 ### Changed
 
+- A point's pulse peaks every 1.6 s, as cards breathe, rather than every
+  second. A pulsing rail tile fills half way toward magenta at the peak.
 - A window that a process outliving its workspace's sleep opens goes to
   the workspace on screen, and wakes it if it is asleep too. A pane
   screenshot still pending when its workspace sleeps answers with an

@@ -35,9 +35,13 @@ const MENU_WIDTH: u32 = 5;
 /// The most columns of what runs in a tab, on its pill.
 const TAB_LABEL: usize = 16;
 
-/// How far toward magenta a pulsing pill, card or tile is filled at
-/// the pulse's peak; its ring goes all the way.
+/// How far toward magenta a pulsing pill or card is filled at the
+/// pulse's peak; its ring goes all the way.
 const POINTED_FILL: f32 = 0.3;
+
+/// How far toward magenta a pulsing rail tile is filled at the
+/// pulse's peak.
+const POINTED_TILE_FILL: f32 = 0.5;
 
 // the sizes below are in pixels at 18 px rows, for `scaled`
 const CARD_INSET: i32 = 6;
@@ -1498,7 +1502,7 @@ impl Frame {
             ),
         };
         if let Some(pulse) = entry.and_then(|entry| entry.pulse) {
-            fill = palette::mix(fill, palette::get().magenta, POINTED_FILL * pulse);
+            fill = palette::mix(fill, palette::get().magenta, POINTED_TILE_FILL * pulse);
             ring = palette::mix(ring, palette::get().magenta, pulse);
         }
         if asleep && !current && !hovered {
