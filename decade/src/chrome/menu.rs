@@ -310,7 +310,7 @@ impl Menu {
         let box_width = LARGE.width(cell, LARGE_COLUMNS).min(width);
         let mut layout = Layout::new(&LARGE, cell, box_width);
         if self.changing.is_some() {
-            layout = layout.header(false);
+            layout = layout.header(0);
         }
         let layout = layout.field().list(shown).hint().end();
         let top = (height / 7).min((height - layout.height).max(0));
@@ -359,7 +359,7 @@ impl Menu {
                 &format!("Change directory of {name}"),
                 LARGE_COLUMNS as usize - 3,
             );
-            layout.draw_header(scene, &title, None);
+            layout.draw_header(scene, &title, &[]);
         }
         let trail: Vec<&str> = self.trail().map(|row| row.label.as_str()).collect();
         let placeholder = if trail.is_empty() {

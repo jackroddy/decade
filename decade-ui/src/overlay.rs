@@ -228,13 +228,11 @@ impl Layout {
         (self.cell.0 / 8).max(1)
     }
 
-    /// Add a title, with a dim second line under it when `second` is true.
-    pub fn header(mut self, second: bool) -> Layout {
+    /// Add a title, with `dim` dim lines under it.
+    pub fn header(mut self, dim: usize) -> Layout {
         self.header = Some(self.height);
         self.height += self.cell.1 + self.px(self.size.header_below);
-        if second {
-            self.height += self.px(self.size.header_gap) + self.cell.1;
-        }
+        self.height += dim as i32 * (self.px(self.size.header_gap) + self.cell.1);
         self
     }
 
@@ -344,22 +342,16 @@ impl Layout {
         draw_box(scene, self.size, self.at, (self.width, self.height));
     }
 
-    /// Draw the header's `title`, and `second` dim under it.
-    pub fn draw_header(&self, scene: &mut Scene, title: &str, second: Option<&str>) {
+    /// Draw the header's `title`, and the lines of `dim` dim under it.
+    pub fn draw_header(&self, scene: &mut Scene, title: &str, dim: &[&str]) {
         let Some(top) = self.header else {
             return;
         };
-        let (x, y) = (self.text_left(), self.at.1 + top);
+        let (x, mut y) = (self.text_left(), self.at.1 + top);
         scene.text_px(x, y, title, self.size.bold, palette::get().foreground);
-        if let Some(second) = second {
-            let y = y + self.cell.1 + self.px(self.size.header_gap);
-            scene.text_px(
-                x,
-                y,
-                second,
-                self.size.face,
-                palette::get().light_foreground,
-            );
+        for line in dim {
+            y += self.cell.1 + self.px(self.size.header_gap);
+            scene.text_px(x, y, line, self.size.face, palette::get().light_foreground);
         }
     }
 
@@ -916,7 +908,7 @@ mod tests {
     fn the_parts_stack_in_the_order_they_are_added() {
         let cell = (10, 25);
         let layout = Layout::new(&LARGE, cell, 400)
-            .header(true)
+            .header(1)
             .list(3)
             .hint()
             .end();

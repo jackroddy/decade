@@ -56,6 +56,25 @@ pub fn encode(width: u32, height: u32, rgb: &[u8]) -> Vec<u8> {
     png
 }
 
+/// `bytes` in the standard base64 alphabet with padding, as MCP and the
+/// socket carry a PNG.
+pub fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| chunk.get(i).copied().unwrap_or(0) as u32);
+        let triple = (a << 16) | (b << 8) | c;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                text.push(ALPHABET[(triple >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                text.push('=');
+            }
+        }
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +89,15 @@ mod tests {
     #[test]
     fn the_crc_matches_the_published_check_value() {
         assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
+    }
+
+    #[test]
+    fn base64_pads_a_last_group_of_one_or_two_bytes() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(&[0xff, 0xfe]), "//4=");
     }
 }

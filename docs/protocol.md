@@ -126,8 +126,8 @@ payload is the business of the two clients. The three verbs below are the
 exception.
 
 A pane verb may not be one of these names, which decade keeps for its own
-messages: `hello`, `agent`, `ended`, `panes`, `restore`, `welcome`,
-`error` and `from`.
+messages: `hello`, `agent`, `ended`, `panes`, `restore`, `screenshot`,
+`welcome`, `error` and `from`.
 decade answers a message to a pane that uses one with an error and
 does not forward it.
 
@@ -187,6 +187,63 @@ block only while the client is connected. It gets no reply:
 ```json
 {"restore": {"argv": ["decade-notes", "--file", "notes.md"], "terminal": false}}
 ```
+
+`screenshot` asks for a PNG of a pane that the client will save. `pane`
+names the pane. `file` is the path the client will write, which decade
+shows to the person and does not open. The dialog shows the path on a line of
+its own. decade cuts the start of a path too long for the dialog, so the
+file name stays in view. `for` is optional, and names the
+pane of the agent asking, normally the client's `DECADE_PANE`. decade
+uses it only to name that agent in the dialog, and does not check it:
+
+```json
+{"screenshot": {"pane": "code", "file": "shot.png", "for": "chat"}}
+```
+
+decade captures the pane as for the MCP tool `screenshot`, described
+under Agents: MCP, and answers with the PNG in standard base64 with
+padding:
+
+```json
+{"screenshot": {"png": "iVBORw0KGgo..."}}
+```
+
+decade answers with an error in the socket's `error` form whenever it
+sends no PNG. These are the reasons it gives, with the pane's current
+name for `<pane>`:
+
+| when | `reason` |
+|---|---|
+| the client has not said hello | `say hello first` |
+| `pane` or `file` is missing or not a string | `malformed screenshot: <what is wrong>` |
+| no pane answers to `pane` | `no pane named <pane>` |
+| the pane is in a tab that is not shown | `pane <pane> is in tab <n>, which is not shown` |
+| the dialog is up for another screenshot | `decade is already asking the person about another screenshot` |
+| the person denies | `the person refused a screenshot of pane <pane>` |
+| no answer within 30 seconds | `the person did not answer within 30 seconds, so decade took no screenshot of pane <pane>` |
+| the workspace closed while decade asked | `workspace <id> is closed` |
+| the workspace went to sleep while decade asked or captured | `workspace <name> went to sleep` |
+| the pane is off the screen | `pane <pane> has no room to draw` |
+| the capture failed | `making a buffer to capture into failed: <error>`, `binding the capture failed: <error>`, `reading the capture failed: <error>`, `mapping the capture failed: <error>`, or the renderer's own text |
+
+`<id>` is the workspace's number. decade checks the pane again when it
+captures, so `no pane named` and `is in tab` can also come after the
+person allows the screenshot. When the client disconnects while the
+dialog asks for it, decade closes the dialog, turns on no mode and sends
+nothing.
+
+Each pane has an accept saved screenshots mode, apart from its accept
+screenshots mode. decade checks the first for a `screenshot` message and
+the second for the MCP tool. Turning one on leaves the other as it was.
+The person turns the mode on and off as for accept screenshots, and
+decade never saves it. With the mode off, decade asks in the same
+dialog, with the same rules. Its question is then "coax asks to save a
+screenshot of pane code to shot.png", and its middle choice turns on
+accept saved screenshots. While the mode is on, the pane carries a save
+tag after the camera tag. The save tag flashes at each capture for a
+`screenshot` message, and the camera tag at each capture for the MCP
+tool, whether the mode was on or the person allowed the capture in the
+dialog.
 
 ## Agents
 
@@ -353,7 +410,7 @@ viewer counts. A deny, or no answer within 30 seconds, ends the call with
 a tool error that gives the reason. decade refuses a `screenshot` that
 would ask while the dialog is up. While
 the mode is on, the pane carries a camera tag at the left end of its
-outline's top edge. The tag flashes at each capture.
+outline's top edge. The tag flashes at each capture for the tool.
 
 The person may mark any number of panes in a workspace as scratch panes,
 from the Ctrl bar. Marking one leaves the others marked.

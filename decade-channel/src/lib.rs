@@ -20,6 +20,11 @@ pub enum Message {
         message: Value,
     },
     Panes(Vec<Pane>),
+
+    /// The answer to `screenshot`, decoded.
+    Screenshot {
+        png: Vec<u8>,
+    },
     Show {
         from: String,
         show: Show,
@@ -342,6 +347,27 @@ pub struct Error {
     pub message: Value,
 }
 
+/// The payload of `screenshot`: ask decade for a PNG of pane `pane`,
+/// which the client will save to `file`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Screenshot {
+    pub pane: String,
+
+    /// The path the client writes, shown to the person in the dialog.
+    pub file: String,
+
+    /// The pane of the agent asking, which the dialog names.
+    #[serde(rename = "for", default, skip_serializing_if = "Option::is_none")]
+    pub caller: Option<String>,
+}
+
+/// The payload of decade's answer to `screenshot`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Captured {
+    /// The PNG in standard base64 with padding.
+    pub png: String,
+}
+
 /// A line decade writes to a client, other than a forwarded verb.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -349,6 +375,7 @@ pub enum Reply {
     Welcome(Welcome),
     Error(Error),
     Panes(Vec<Pane>),
+    Screenshot(Captured),
 }
 
 #[derive(Serialize)]
@@ -359,6 +386,7 @@ enum Request<'a> {
     Ended {},
     Panes {},
     Restore(&'a Restore),
+    Screenshot(&'a Screenshot),
 }
 
 pub fn parse(line: &str) -> Result<Message, String> {
@@ -379,6 +407,12 @@ pub fn parse(line: &str) -> Result<Message, String> {
     if let Some(panes) = object.remove("panes") {
         let panes = serde_json::from_value(panes).map_err(|e| format!("bad panes: {e}"))?;
         return Ok(Message::Panes(panes));
+    }
+    if let Some(captured) = object.remove("screenshot") {
+        let Captured { png } =
+            serde_json::from_value(captured).map_err(|e| format!("bad screenshot: {e}"))?;
+        let png = decode_base64(&png).map_err(|e| format!("bad screenshot: {e}"))?;
+        return Ok(Message::Screenshot { png });
     }
     let from = object
         .remove("from")
@@ -482,11 +516,52 @@ impl Channel {
         self.write(&Request::Restore(restore))
     }
 
+    /// Ask decade for a PNG of a pane, which arrives as
+    /// `Message::Screenshot` or else as `Message::Error`.
+    pub fn screenshot(&mut self, screenshot: &Screenshot) -> io::Result<()> {
+        self.write(&Request::Screenshot(screenshot))
+    }
+
     fn write(&mut self, message: &impl Serialize) -> io::Result<()> {
         let mut line = serde_json::to_string(message).map_err(io::Error::other)?;
         line.push('\n');
         self.writer.write_all(line.as_bytes())
     }
+}
+
+/// The bytes of `text`, standard base64 with padding.
+fn decode_base64(text: &str) -> Result<Vec<u8>, String> {
+    let text = text.as_bytes();
+    if !text.len().is_multiple_of(4) {
+        return Err("base64 whose length is not a multiple of 4".to_string());
+    }
+    let groups = text.len() / 4;
+    let mut bytes = Vec::with_capacity(groups * 3);
+    for (i, group) in text.chunks_exact(4).enumerate() {
+        let padding = if i + 1 == groups {
+            group.iter().rev().take_while(|&&c| c == b'=').count()
+        } else {
+            0
+        };
+        if padding > 2 {
+            return Err("base64 with more than two = at its end".to_string());
+        }
+        let mut triple = 0u32;
+        for &c in &group[..4 - padding] {
+            let value = match c {
+                b'A'..=b'Z' => c - b'A',
+                b'a'..=b'z' => c - b'a' + 26,
+                b'0'..=b'9' => c - b'0' + 52,
+                b'+' => 62,
+                b'/' => 63,
+                _ => return Err(format!("{:?} is not a base64 character", c as char)),
+            };
+            triple = (triple << 6) | value as u32;
+        }
+        triple <<= 6 * padding;
+        bytes.extend_from_slice(&triple.to_be_bytes()[1..4 - padding]);
+    }
+    Ok(bytes)
 }
 
 fn read_lines(stream: UnixStream, tx: Sender<Message>) {
@@ -756,6 +831,110 @@ mod tests {
         drop(channel);
         assert_eq!(rx.recv().unwrap(), Message::Closed);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn screenshot_sends_its_request_and_the_png_arrives_decoded() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixListener;
+
+        let dir = std::env::temp_dir().join(format!(
+            "decade-channel-screenshot-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("decade.sock");
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut hello = String::new();
+            reader.read_line(&mut hello).unwrap();
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            let mut writer = &stream;
+            writer
+                .write_all(b"{\"welcome\":{\"pane\":null,\"version\":1}}\n")
+                .unwrap();
+            writer
+                .write_all(b"{\"screenshot\":{\"png\":\"iVBORw==\"}}\n")
+                .unwrap();
+            request
+        });
+        let (mut channel, rx) =
+            Channel::connect(&path, "decade screenshot", &[], &[], None, None).unwrap();
+        channel
+            .screenshot(&Screenshot {
+                pane: "code".into(),
+                file: "shot.png".into(),
+                caller: Some("chat".into()),
+            })
+            .unwrap();
+        assert!(matches!(rx.recv().unwrap(), Message::Welcome { .. }));
+        assert_eq!(
+            rx.recv().unwrap(),
+            Message::Screenshot {
+                png: vec![0x89, b'P', b'N', b'G']
+            }
+        );
+        let request: Value = serde_json::from_str(&server.join().unwrap()).unwrap();
+        assert_eq!(
+            request,
+            json!({"screenshot": {"pane": "code", "file": "shot.png", "for": "chat"}})
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_screenshot_request_without_a_caller_leaves_for_out() {
+        let screenshot = Screenshot {
+            pane: "code".into(),
+            file: "shot.png".into(),
+            caller: None,
+        };
+        let value = serde_json::to_value(Request::Screenshot(&screenshot)).unwrap();
+        assert_eq!(
+            value,
+            json!({"screenshot": {"pane": "code", "file": "shot.png"}})
+        );
+        let read: Screenshot = serde_json::from_value(value["screenshot"].clone()).unwrap();
+        assert_eq!(read, screenshot);
+    }
+
+    #[test]
+    fn base64_decodes_with_one_or_two_padding_characters_and_refuses_junk() {
+        assert_eq!(decode_base64("").unwrap(), b"");
+        assert_eq!(decode_base64("Zg==").unwrap(), b"f");
+        assert_eq!(decode_base64("Zm8=").unwrap(), b"fo");
+        assert_eq!(decode_base64("Zm9v").unwrap(), b"foo");
+        assert_eq!(decode_base64("Zm9vYmFy").unwrap(), b"foobar");
+        assert_eq!(decode_base64("//4=").unwrap(), [0xff, 0xfe]);
+        assert!(decode_base64("Zm9").is_err());
+        assert!(decode_base64("Zm=v").is_err());
+        assert!(decode_base64("Z===").is_err());
+        assert!(decode_base64("Zg==Zm9v").is_err());
+        assert!(decode_base64("Zm9-").is_err());
+    }
+
+    #[test]
+    fn a_screenshot_reply_parses_into_its_decoded_png() {
+        let reply = Reply::Screenshot(Captured {
+            png: "Zm9vYmFy".into(),
+        });
+        let line = serde_json::to_string(&reply).unwrap();
+        assert_eq!(line, r#"{"screenshot":{"png":"Zm9vYmFy"}}"#);
+        assert_eq!(
+            parse(&line).unwrap(),
+            Message::Screenshot {
+                png: b"foobar".to_vec()
+            }
+        );
+        assert!(
+            parse(r#"{"screenshot":{"png":"Zm9"}}"#)
+                .unwrap_err()
+                .starts_with("bad screenshot")
+        );
     }
 
     #[test]

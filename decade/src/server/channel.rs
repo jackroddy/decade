@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use decade_channel::{
-    AgentUpdate, Clear, Error, Hello, Highlight, Pane, Reply, Restore, Show, Shows, VERSION, Verb,
-    Welcome,
+    AgentUpdate, Clear, Error, Hello, Highlight, Pane, Reply, Restore, Screenshot, Show, Shows,
+    VERSION, Verb, Welcome,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -12,8 +12,16 @@ use crate::server::agents::Agents;
 
 /// The keys a pane verb may not take: decade's own verbs and the
 /// names decade's replies and forwarded messages use.
-const RESERVED: [&str; 8] = [
-    "hello", "agent", "ended", "panes", "restore", "welcome", "error", "from",
+const RESERVED: [&str; 9] = [
+    "hello",
+    "agent",
+    "ended",
+    "panes",
+    "restore",
+    "screenshot",
+    "welcome",
+    "error",
+    "from",
 ];
 
 pub struct Client {
@@ -57,6 +65,14 @@ pub enum Out {
     /// notification when its pane has just entered attention.
     Agent {
         raised: Option<String>,
+    },
+
+    /// Client `client` asks to save a screenshot; `message` is its line,
+    /// for the error reply.
+    Screenshot {
+        client: usize,
+        screenshot: Screenshot,
+        message: Value,
     },
 }
 
@@ -220,9 +236,17 @@ impl Router {
                 let list = self.panes(panes, scratch, caller.as_deref());
                 vec![reply(id, Reply::Panes(list))]
             }
+            "screenshot" => match serde_json::from_value(payload) {
+                Ok(screenshot) => vec![Out::Screenshot {
+                    client: id,
+                    screenshot,
+                    message: value,
+                }],
+                Err(error) => malformed(error),
+            },
             _ => vec![error_line(
                 id,
-                "a message needs \"to\", or one of \"hello\", \"agent\", \"ended\", \"panes\" and \"restore\"",
+                "a message needs \"to\", or one of \"hello\", \"agent\", \"ended\", \"panes\", \"restore\" and \"screenshot\"",
                 value,
             )],
         }
@@ -589,6 +613,50 @@ mod tests {
     }
 
     #[test]
+    fn a_screenshot_message_goes_to_decade_with_its_pane_file_and_caller() {
+        let mut r = Router::default();
+        r.handle(
+            1,
+            r#"{"hello": {"name": "decade screenshot"}}"#,
+            &names(),
+            &[],
+        );
+        let line = r#"{"screenshot": {"pane": "code", "file": "shot.png", "for": "chat"}}"#;
+        let out = r.handle(1, line, &names(), &[]);
+        let [
+            Out::Screenshot {
+                client,
+                screenshot,
+                message,
+            },
+        ] = &out[..]
+        else {
+            panic!("one screenshot request");
+        };
+        assert_eq!(*client, 1);
+        assert_eq!(screenshot.pane, "code");
+        assert_eq!(screenshot.file, "shot.png");
+        assert_eq!(screenshot.caller.as_deref(), Some("chat"));
+        assert_eq!(*message, serde_json::from_str::<Value>(line).unwrap());
+        let out = r.handle(
+            1,
+            r#"{"screenshot": {"pane": "code", "file": "shot.png"}}"#,
+            &names(),
+            &[],
+        );
+        assert!(
+            matches!(&out[..], [Out::Screenshot { screenshot, .. }] if screenshot.caller.is_none())
+        );
+        let out = lines(r.handle(1, r#"{"screenshot": {"pane": "code"}}"#, &names(), &[]));
+        assert!(
+            out[0].1["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("malformed screenshot: missing field `file`")
+        );
+    }
+
+    #[test]
     fn a_reserved_name_sent_to_a_pane_is_refused_and_not_forwarded() {
         let mut r = Router::default();
         r.handle(
@@ -603,7 +671,7 @@ mod tests {
             &names(),
             &[],
         );
-        for verb in ["agent", "ended", "restore", "error", "from"] {
+        for verb in ["agent", "ended", "restore", "screenshot", "error", "from"] {
             let line = format!(r#"{{"to": "code", "{verb}": {{"pane": "chat"}}}}"#);
             let out = lines(r.handle(2, &line, &names(), &[]));
             assert_eq!(out.len(), 1);
