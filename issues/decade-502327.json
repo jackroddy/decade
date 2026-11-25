@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T03:00:08.068084261Z",
-  "updated_at": "2026-11-11T03:00:08.068084261Z",
+  "updated_at": "2026-11-25T01:13:36.604591461Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "adaf9f97",
+      "at": "2026-11-25T01:13:36.604590881Z",
+      "author": "Jack Roddy/5da9dd6b",
+      "text": "Decided with Jack. Focus follows the pointer is the part that matters most. No focus change during any drag (pane, boundary, tab), while a popup or a decade overlay is open, or over the sidebar, the top bar or a Ctrl bar; a pane's own bar counts as the pane. Only pointer motion moves focus. No delay at first. A setting in the settings panel, on by default. The pointer follows focus through lock, cursor position hint and unlock; Jack tries it on his seat, and if Hyprland ignores the hint the fallback is hyprctl dispatch movecursor, used only under Hyprland.",
+      "commit": "68e069c",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "ad0a585",
