@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-25T01:43:39.211696779Z",
   "defer_until": null,
   "created_at": "2026-11-11T03:02:40.527249803Z",
-  "updated_at": "2026-11-25T01:28:39.211696779Z",
+  "updated_at": "2026-11-25T01:30:42.531066167Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/5da9dd6b",
       "text": "Decided with Jack. decade shows the sub-agent list as the agent last sent it; when finished entries leave is the agent's call. Only direct sub-agents are reported; deeper work can go in a sub-agent's activity line. A failed sub-agent does not raise the workspace to attention; the popover shows it with a red mark, and the parent agent reports attention itself if it needs the person. coax sending the list is coax's own work, filed in coax's foam.",
       "commit": "6df44f1",
+      "branch": "dev"
+    },
+    {
+      "id": "3069286d",
+      "at": "2026-11-25T01:30:42.531065347Z",
+      "author": "Jack Roddy/5da9dd6b",
+      "text": "Stopped before writing code. The card has no room for the count as the proposal words it, and how it should read there is a question about looks.\n\nThe card's state line is `state_text` in `decade/src/chrome/frame.rs`. It reads \"coax working · 4m\", with \" +N\" after it when the workspace has other agents. `fit` cuts anything past the line's room and ends it with an ellipsis. The room is 28 columns at the 8 by 18 cell the frame tests use. The popover's state lines have 32 columns.\n\n| line | columns |\n|---|---|\n| `coax working · 4m` | 17 |\n| `coax working · 4m · 2 sub-agents` | 32 |\n| `coax working · 4m · 2 sub-agents +1` | 35 |\n| `claude needs you · 12m · 2 sub-agents` | 37 |\n\nSo the common case is cut on the card to \"coax working · 4m · 2 sub-ag…\". In the popover, the same line is 34 columns with its glyph, two past the room.\n\nOptions for the card:\n\n- Drop the age while sub-agents run, as the proposal's example does: \"coax working · 2 sub-agents\" is 27 columns. A longer agent name or \"needs you\" still overflows.\n- A short form after the age, such as \"coax working · 4m · 2 sub\" (25 columns) or a glyph and a number.\n- Put the count on the card's fourth line, before the activity, or on the usage line.\n\nI lean to the first, since it matches the proposal's example. I left the choice to Jack. Two smaller questions about the popover need the same answer. One is whether its state lines carry the count, given that the popover lists the sub-agents under them. The other is how many lines each sub-agent takes. The popover moves up to stay inside the window, and a long list can still run past the window's bottom.\n\nThe rest of the issue does not depend on this choice. It covers the `subagents` field, the effective `working` state, and the `agents` MCP reply.",
+      "commit": "7aa3572",
       "branch": "dev"
     }
   ],
