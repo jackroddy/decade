@@ -14,9 +14,9 @@ command line and what the tool writes.
 
 - Focus follows the pointer. Moving the pointer onto a pane, its bar
   included, gives that pane focus. Focus stays put during a drag, while a
-  popup or an overlay is open, and over the sidebar, the top bar or a
-  shown Ctrl bar. The settings panel has a Focus follows pointer setting,
-  on by default.
+  menu that grabs input or an overlay is open, and over the sidebar, the
+  top bar or a shown Ctrl bar. A tooltip does not stop it. The settings
+  panel has a Focus follows pointer setting, on by default.
 - With Focus follows pointer on, the pointer follows focus that a keybind
   moves. After Super with h, j, k or l, Super+Shift with h, j, k or l, or
   Super+Shift+Return, the viewer asks the host to move the pointer to the

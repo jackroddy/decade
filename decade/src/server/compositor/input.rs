@@ -198,7 +198,7 @@ impl State {
             && in_panes
             && !on_popover
             && !pointer.is_grabbed()
-            && !self.popup_open()
+            && !self.popup_grabbed()
             && let Some(id) = self.layout().hover_focus(column, row, self.bar)
         {
             self.focus(id);
@@ -766,11 +766,9 @@ impl State {
         }
     }
 
-    /// Whether a popup is open over any pane on screen.
-    fn popup_open(&self) -> bool {
-        (self.layout().visible())
-            .filter_map(|pane| self.tab().toplevel(pane.id))
-            .any(|toplevel| popups_over(toplevel.wl_surface()).next().is_some())
+    /// Whether a popup that grabbed input is open, such as a menu.
+    fn popup_grabbed(&self) -> bool {
+        (self.popup_grab.as_ref()).is_some_and(|grab| !grab.has_ended())
     }
 
     /// Open the menu for the chrome under the pointer, and return whether
