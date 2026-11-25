@@ -17,11 +17,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T00:40:24.878814278Z",
-  "updated_at": "2026-11-25T00:40:24.878814278Z",
+  "updated_at": "2026-11-25T01:47:05.758505828Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "fa049c0b",
+      "at": "2026-11-25T01:47:05.758505188Z",
+      "author": "Jack Roddy/5da9dd6b",
+      "text": "coax's side is coax-5c168a in coax's foam: it sends the restore block after connecting and again when its session changes. decade's side drops resume_input, Children::resuming and the saved session field. The save format moves to 9, since a dev build may have written 8, and the reader turns an old session field into a terminal restore block.",
+      "commit": "b0e8c37",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "abab97e",
