@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-25T01:28:36.615960245Z",
   "defer_until": null,
   "created_at": "2026-11-11T03:00:08.068084261Z",
-  "updated_at": "2026-11-25T01:13:36.615960245Z",
+  "updated_at": "2026-11-25T01:21:11.406746313Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/5da9dd6b",
       "text": "Decided with Jack. Focus follows the pointer is the part that matters most. No focus change during any drag (pane, boundary, tab), while a popup or a decade overlay is open, or over the sidebar, the top bar or a Ctrl bar; a pane's own bar counts as the pane. Only pointer motion moves focus. No delay at first. A setting in the settings panel, on by default. The pointer follows focus through lock, cursor position hint and unlock; Jack tries it on his seat, and if Hyprland ignores the hint the fallback is hyprctl dispatch movecursor, used only under Hyprland.",
       "commit": "68e069c",
+      "branch": "dev"
+    },
+    {
+      "id": "1156f5b1",
+      "at": "2026-11-25T01:21:11.406745543Z",
+      "author": "Jack Roddy/5da9dd6b",
+      "text": "Both parts landed on `dev`. The issue stays open until Jack tries part 2 on his seat.\n\nCommit a429d9b makes focus follow the pointer. `Layout::hover_focus` in `decade-ui/src/panes.rs` gives the pane under the pointer, its bar included. It gives `None` during a pane or boundary drag and over a shown Ctrl bar. `State::pointer_moved` in `decade/src/server/compositor/input.rs` adds the other exclusions. Those are an open overlay, an open popup, a client's held press, a sidebar card or top bar tab drag, the sidebar popover, and anywhere outside the pane area. Only a pointer whose position changed moves focus. The settings panel's last row is Focus follows pointer, on by default, stored as `follow_pointer` in `config.toml`. A `decade script` run checked that motion focuses a pane, and that the settings panel, a shown Ctrl bar, a client drag and a boundary drag each leave focus alone.\n\nCommit 6df44f1 moves the pointer after Super+h/j/k/l, Super+Shift+h/j/k/l and Super+Shift+Return. It uses the same setting. The server sends the active viewer a new `Warp` message. The viewer locks the pointer with pointer-constraints, sets the cursor position hint, and destroys the lock when the host sends `locked`. The viewer skips this while the pointer is outside its window. The hyprctl `movecursor` route is not built.\n\n## For Jack to try\n\nRun decade with Focus follows pointer on. Put the pointer in one pane and press Super+l. If the pointer lands in the middle of the newly focused pane, the hint works and the issue can close. If it stays put, Hyprland ignored the hint. The fix then is a `dispatch movecursor` through Hyprland's socket in the viewer's `warp`, under Hyprland only. A brief pointer freeze or a cursor flicker during the lock would also be worth reporting.",
+      "commit": "6df44f1",
       "branch": "dev"
     }
   ],
