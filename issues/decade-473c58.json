@@ -3,7 +3,7 @@
   "title": "Another account on the machine can call decade's MCP tools",
   "body": "decade serves its MCP tools over streamable HTTP on `127.0.0.1`, at a port the kernel picks (`start` in `decade/src/server/mcp.rs`). Programs decade starts get the address in `DECADE_MCP`, as `http://127.0.0.1:<port>/mcp?workspace=<id>`, with `&pane=<name>` added for a program in a pane. `Decade::call_tool` takes the workspace and the pane from the query string and checks nothing else.\n\nEvery account on the machine can connect to a loopback TCP port. Workspace ids are small integers, and a scan of local ports finds the server. A caller from another account can then use every tool as an agent would:\n\n- `scratch.open` runs any program on decade's `PATH`, with any arguments, as the user who runs decade.\n- `screenshot` returns a pane's image at once when the pane is in accept screenshots mode. Otherwise it puts the consent dialog in front of the person.\n- `scratch.send`, `show`, `highlight` and `point` act on the person's panes.\n\nOn a machine with one user this exposes nothing. On a shared machine it lets another user run code as the person who runs decade.\n\n## Options\n\n| option | cost |\n|---|---|\n| a random token in the URL | decade makes a secret at start, puts it in `DECADE_MCP`, and refuses any request without it. Harnesses keep working, because they use the URL as given. |\n| a unix socket in a `0700` directory | Only the owner can connect. Harnesses that accept only an HTTP URL cannot reach it, and coax hands the server to its agent as a URL in the ACP session's server list. |\n\nI lean to the token. It closes the hole without changing what harnesses must support.\n\n## Open\n\n- `docs/protocol.md` documents the address as ending in `?workspace=<id>`. Programs pass the address along without reading it, but a new query parameter still changes the documented form. Is that a protocol change under the versioning rules?",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [
     "decade"
@@ -15,16 +15,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T06:33:20.020920219Z",
-  "updated_at": "2026-11-25T06:33:20.020920219Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T06:36:23.15506266Z",
+  "closed_at": "2026-11-25T06:36:23.15506266Z",
+  "close_reason": "Dropped: decade runs only on machines with one user account, so no other account can reach the loopback port.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "dcd178b",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "dcd178b",
+      "branch": "dev"
+    }
   }
 }
