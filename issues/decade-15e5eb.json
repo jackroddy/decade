@@ -3,7 +3,7 @@
   "title": "A decade-aware app tells decade how to start it again",
   "body": "The save file keeps each pane's name, the terminal tabs decade started in it, and the coax session running there. On restore and on wake, decade starts those terminals again. For coax it starts a ghostty that types `coax <args> --session <id>`, built from the `agent` block of coax's hello (`resume_input` in `decade/src/server/children.rs`). No other program is started again. A GUI window keeps only its pane's name and app id.\n\n## Proposal\n\n- A client's hello may carry a `restore` block: the argv that starts it again, and whether that argv runs in a terminal.\n\n```json\n{\"hello\": {\"name\": \"decade-notes\", \"pane\": \"notes\", \"restore\": {\"argv\": [\"decade-notes\", \"--file\", \"todo.md\"], \"terminal\": false}}}\n```\n\n- A `restore` message to decade replaces the block while the client runs, and one with an empty argv clears it. `decade-channel` gains a call that sends it.\n- decade saves the block with the client's pane. On restore and on wake it starts each saved argv in the workspace's directory with `DECADE_PANE` set to that pane. A terminal argv starts the way coax does, in a ghostty that types the command. Any other argv is spawned directly. The program's hello then claims the pane.\n- Programs that send no block, and windows from programs that are not decade-aware, are not started again.\n\n## Rejected\n\n- Restarting any GUI window from `/proc/<pid>/cmdline`. Electron apps, browsers and programs that detach show a helper's or an internal command line there.\n- Restarting apps from the Launch menu by the desktop entry's argv. Jack wants only decade-aware apps restarted, each saying how.\n\n## Out of scope\n\n- coax sending a `restore` block, and decade dropping its coax special case, in decade-a14cb8.\n\n## Cost\n\nThe hello field and the message change `docs/protocol.md`, which moves the minor of both `decade` and `decade-channel`. The save file gains an optional field per pane, so its version byte goes up and the reader keeps an arm for the old layout.",
   "type": "feature",
-  "status": "open",
+  "status": "in_progress",
   "priority": 4,
   "labels": [
     "decade-channel"
@@ -11,11 +11,11 @@
   "parent": "decade-da02e3",
   "blocked_by": [],
   "related": [],
-  "assignee": null,
-  "lease_expires": null,
+  "assignee": "Jack Roddy/5da9dd6b",
+  "lease_expires": "2026-11-25T00:55:27.682662994Z",
   "defer_until": null,
   "created_at": "2026-11-07T21:59:58.273325149Z",
-  "updated_at": "2026-11-25T00:40:27.664324973Z",
+  "updated_at": "2026-11-25T00:40:27.682662994Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
