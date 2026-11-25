@@ -184,6 +184,37 @@ impl State {
         self.request_redraw();
     }
 
+    /// Answer every screenshot of workspace `workspace` that is still
+    /// pending with the error `reason`.
+    pub(super) fn refuse_screenshots(&mut self, workspace: u32, reason: String) {
+        if self
+            .asking
+            .as_ref()
+            .is_some_and(|asking| asking.workspace == workspace)
+            && let Some(asking) = self.asking.take()
+        {
+            if let Some(timer) = asking.timer {
+                self.loop_handle.remove(timer);
+            }
+            self.unblock_input();
+            if let Some(index) = self.workspace_index(workspace) {
+                self.workspaces[index].end_point_at(&asking.pane);
+            }
+            let _ = asking.reply.send(Err(reason.clone()));
+            self.request_redraw();
+        }
+        let (refused, waiting) = std::mem::take(&mut self.capturing)
+            .into_iter()
+            .partition(|capturing| capturing.workspace == workspace);
+        self.capturing = waiting;
+        for capturing in refused {
+            if let Some(timer) = capturing.timer {
+                self.loop_handle.remove(timer);
+            }
+            let _ = capturing.reply.send(Err(reason.clone()));
+        }
+    }
+
     /// Capture pane `pane` once its window commits the frame it was
     /// waiting to draw, or at once when it was waiting for none.
     fn capture_fresh(&mut self, workspace: usize, pane: String, reply: Reply) {

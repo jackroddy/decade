@@ -807,6 +807,7 @@ impl State {
             let slept = format!("workspace {name} went to sleep");
             self.answer_scratch(index, scratch, Some(Err(slept)));
         }
+        self.refuse_screenshots(id, format!("workspace {name} went to sleep"));
         self.unlisten(index);
         self.dismiss_popups();
         self.workspaces[index].sleep(restored, tabs);
@@ -1864,10 +1865,12 @@ impl CompositorHandler for State {
                 None => {
                     let (workspace, tab, at) = pid
                         .and_then(|pid| self.launched_from(pid))
+                        .filter(|&(workspace, ..)| self.workspaces[workspace].asleep.is_none())
                         .unwrap_or_else(|| {
                             let shown = &self.workspaces[self.current()];
                             (self.current(), shown.active_tab, shown.layout().focused)
                         });
+                    self.wake_workspace(self.workspaces[workspace].id);
                     let base = app_id.as_deref().unwrap_or("window");
                     let id = self.workspaces[workspace].add_pane(tab, at, base, None);
                     self.relayout_workspace(workspace);

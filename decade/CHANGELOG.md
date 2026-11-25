@@ -60,6 +60,10 @@ command line and what the tool writes.
 
 ### Changed
 
+- A window that a process outliving its workspace's sleep opens goes to
+  the workspace on screen, and wakes it if it is asleep too. A pane
+  screenshot still pending when its workspace sleeps answers with an
+  error saying the workspace went to sleep.
 - decade draws in the colours of the Omarchy theme. The server and each
   viewer read `omarchy/current/theme/colors.toml` under
   `$XDG_STATE_HOME` or `~/.local/state` once at start. A key that is
