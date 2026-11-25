@@ -107,7 +107,25 @@ impl Children {
         session: &Session,
     ) -> Command {
         let mut ghostty = self.ghostty(workspace, pane, class, &session.cwd);
-        ghostty.arg(resume_input(session));
+        let mut words = vec!["coax".to_string()];
+        words.extend(session.args.iter().cloned());
+        words.extend(["--session".to_string(), session.id.clone()]);
+        ghostty.arg(typed_input(&words));
+        ghostty
+    }
+
+    /// A ghostty for the pane like `ghostty`'s, in the workspace's
+    /// directory, whose shell runs `argv` and is left at its prompt when
+    /// it exits.
+    pub fn restoring(
+        &self,
+        workspace: &Workspace,
+        pane: &str,
+        class: &str,
+        argv: &[String],
+    ) -> Command {
+        let mut ghostty = self.ghostty(workspace, pane, class, &workspace.cwd);
+        ghostty.arg(typed_input(argv));
         ghostty
     }
 
@@ -186,15 +204,11 @@ impl Children {
     }
 }
 
-/// The ghostty option that types `coax <args> --session <id>` and a
-/// return into the terminal's shell.
-fn resume_input(session: &Session) -> String {
-    let mut line = "coax".to_string();
-    let session_flag = ["--session".to_string(), session.id.clone()];
-    for word in session.args.iter().chain(&session_flag) {
-        line.push(' ');
-        line.push_str(&shell_quoted(word));
-    }
+/// The ghostty option that types `words` and a return into the
+/// terminal's shell.
+fn typed_input(words: &[String]) -> String {
+    let words: Vec<String> = words.iter().map(|word| shell_quoted(word)).collect();
+    let line = words.join(" ");
 
     // ghostty reads the value as the body of a Zig string literal
     let mut input = "--input=raw:".to_string();
@@ -363,13 +377,23 @@ mod tests {
 
         // the shell reads 'it'\''s\' as it's\, and ghostty reads a
         // doubled backslash as one
-        let session = Session {
-            args: vec!["--agent".to_string(), "it's\\".to_string()],
-            ..session
-        };
+        let words = ["coax", "--agent", "it's\\"].map(str::to_string);
         assert_eq!(
-            resume_input(&session),
-            r"--input=raw:coax --agent 'it'\\''s\\' --session 7f3a\n"
+            typed_input(&words),
+            r"--input=raw:coax --agent 'it'\\''s\\'\n"
+        );
+    }
+
+    #[test]
+    fn a_restoring_ghostty_starts_in_the_workspace_directory_and_types_the_argv() {
+        let children = Children::new(OsString::from("wayland-9"), PathBuf::from("/run"), None);
+        let argv = ["decade-notes", "--file", "my notes.md"].map(str::to_string);
+        let ghostty = children.restoring(&workspace(1), "notes", "notes", &argv);
+        assert_eq!(ghostty.get_current_dir(), Some(Path::new("/tmp")));
+        assert_eq!(env(&ghostty, "DECADE_PANE").as_deref(), Some("notes"));
+        assert_eq!(
+            ghostty.get_args().last().unwrap(),
+            r"--input=raw:decade-notes --file 'my notes.md'\n"
         );
     }
 

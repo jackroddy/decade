@@ -12,6 +12,13 @@ command line and what the tool writes.
 
 ### Added
 
+- A program's hello may carry a `restore` block with the argv that
+  starts it again and whether that argv runs in a terminal. A `restore`
+  message replaces the block, and an empty argv clears it. decade saves
+  the block with the program's pane. On restore and on wake it starts the
+  argv in the workspace's directory with `DECADE_PANE` set to the pane. A
+  terminal argv is typed into a ghostty in the pane. The save file is now
+  version 8, and decade still reads version 7.
 - A program that starts a child with `DECADE_INTO=<pane name>` in its
   environment gets the child's window as a new tab of that pane. A name no
   pane answers to places the window as before.

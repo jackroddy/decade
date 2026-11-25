@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use decade_channel::{
-    AgentUpdate, Clear, Error, Hello, Highlight, Pane, Reply, Show, Shows, VERSION, Verb, Welcome,
+    AgentUpdate, Clear, Error, Hello, Highlight, Pane, Reply, Restore, Show, Shows, VERSION, Verb,
+    Welcome,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -11,8 +12,8 @@ use crate::server::agents::Agents;
 
 /// The keys a pane verb may not take: decade's own verbs and the
 /// names decade's replies and forwarded messages use.
-const RESERVED: [&str; 7] = [
-    "hello", "agent", "ended", "panes", "welcome", "error", "from",
+const RESERVED: [&str; 8] = [
+    "hello", "agent", "ended", "panes", "restore", "welcome", "error", "from",
 ];
 
 pub struct Client {
@@ -23,6 +24,9 @@ pub struct Client {
 
     /// The session of the agent named in hello, until it sends `ended`.
     pub session: Option<String>,
+
+    /// How decade starts the client again, from hello or `restore`.
+    pub restore: Option<Restore>,
 }
 
 /// A workspace's pane names: each pane's current name, and the names
@@ -203,6 +207,14 @@ impl Router {
                 self.agents.end(&session.unwrap());
                 vec![Out::Agent { raised: None }]
             }
+            "restore" => {
+                let restore: Restore = match serde_json::from_value(payload) {
+                    Ok(restore) => restore,
+                    Err(error) => return malformed(error),
+                };
+                client.restore = Some(restore).filter(|restore| !restore.argv.is_empty());
+                Vec::new()
+            }
             "panes" => {
                 let caller = self.clients[&id].pane.clone();
                 let list = self.panes(panes, scratch, caller.as_deref());
@@ -210,7 +222,7 @@ impl Router {
             }
             _ => vec![error_line(
                 id,
-                "a message needs \"to\", or one of \"hello\", \"agent\", \"ended\" and \"panes\"",
+                "a message needs \"to\", or one of \"hello\", \"agent\", \"ended\", \"panes\" and \"restore\"",
                 value,
             )],
         }
@@ -357,6 +369,7 @@ impl Router {
                 pane: pane.clone(),
                 shows: hello.shows,
                 session,
+                restore: hello.restore.filter(|restore| !restore.argv.is_empty()),
             },
         );
         out.push(reply(
@@ -591,7 +604,7 @@ mod tests {
             &names(),
             &[],
         );
-        for verb in ["agent", "ended", "error", "from"] {
+        for verb in ["agent", "ended", "restore", "error", "from"] {
             let line = format!(r#"{{"to": "code", "{verb}": {{"pane": "chat"}}}}"#);
             let out = lines(r.handle(2, &line, &names(), &[]));
             assert_eq!(out.len(), 1);
@@ -1167,5 +1180,48 @@ mod tests {
             .map(|pane| pane.name)
             .collect();
         assert_eq!(listed, ["chat", "build"]);
+    }
+
+    #[test]
+    fn a_restore_block_from_hello_is_replaced_by_restore_and_cleared_by_an_empty_argv() {
+        let mut r = Router::default();
+        let out = r.handle(
+            1,
+            r#"{"hello": {"name": "decade-notes", "pane": "code", "restore": {"argv": ["decade-notes", "--file", "todo.md"]}}}"#,
+            &names(),
+            &[],
+        );
+        assert_eq!(out.len(), 1);
+        let restore = r.clients[&1].restore.clone().unwrap();
+        assert_eq!(restore.argv, ["decade-notes", "--file", "todo.md"]);
+        assert!(!restore.terminal);
+        let out = r.handle(
+            1,
+            r#"{"restore": {"argv": ["htop"], "terminal": true}}"#,
+            &names(),
+            &[],
+        );
+        assert!(out.is_empty());
+        let restore = r.clients[&1].restore.clone().unwrap();
+        assert_eq!(
+            (restore.argv, restore.terminal),
+            (vec!["htop".into()], true)
+        );
+        r.handle(1, r#"{"restore": {"argv": []}}"#, &names(), &[]);
+        assert!(r.clients[&1].restore.is_none());
+        let out = r.handle(1, r#"{"restore": {}}"#, &names(), &[]);
+        assert!(reason(out).starts_with("malformed restore"));
+    }
+
+    #[test]
+    fn a_hello_with_an_empty_argv_holds_no_restore_block() {
+        let mut r = Router::default();
+        r.handle(
+            1,
+            r#"{"hello": {"name": "list", "pane": "code", "restore": {"argv": []}}}"#,
+            &names(),
+            &[],
+        );
+        assert!(r.clients[&1].restore.is_none());
     }
 }

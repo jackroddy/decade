@@ -85,6 +85,21 @@ pub struct Hello {
     /// Who the agent is, when the client is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<Agent>,
+
+    /// How decade starts the client again on restore and on wake.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore: Option<Restore>,
+}
+
+/// The command that starts a program again in its pane. An empty `argv`
+/// in a `restore` message clears it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Restore {
+    pub argv: Vec<String>,
+
+    /// Whether the command runs in a terminal.
+    #[serde(default)]
+    pub terminal: bool,
 }
 
 /// The identity an agent gives in hello.
@@ -306,10 +321,11 @@ pub enum Reply {
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
 enum Request<'a> {
-    Hello(Hello),
+    Hello(&'a Hello),
     Agent(&'a AgentUpdate),
     Ended {},
     Panes {},
+    Restore(&'a Restore),
 }
 
 pub fn parse(line: &str) -> Result<Message, String> {
@@ -394,12 +410,13 @@ impl Channel {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || read_lines(reader, tx));
         let mut channel = Channel { writer: stream };
-        channel.write(&Request::Hello(Hello {
+        channel.write(&Request::Hello(&Hello {
             name: name.to_string(),
             accepts: accepts.to_vec(),
             pane: pane.map(str::to_string),
             shows: shows.to_vec(),
             agent: agent.cloned(),
+            restore: None,
         }))?;
         Ok((channel, rx))
     }
@@ -424,6 +441,12 @@ impl Channel {
 
     pub fn panes(&mut self) -> io::Result<()> {
         self.write(&Request::Panes {})
+    }
+
+    /// Tell decade how to start this program again, replacing what it
+    /// held; an empty `argv` clears it.
+    pub fn restore(&mut self, restore: &Restore) -> io::Result<()> {
+        self.write(&Request::Restore(restore))
     }
 
     fn write(&mut self, message: &impl Serialize) -> io::Result<()> {
@@ -632,7 +655,9 @@ mod tests {
                 .unwrap();
             let mut sent = String::new();
             reader.read_line(&mut sent).unwrap();
-            (hello, sent)
+            let mut restore = String::new();
+            reader.read_line(&mut restore).unwrap();
+            (hello, sent, restore)
         });
         let (mut channel, rx) = Channel::connect(
             &path,
@@ -657,6 +682,12 @@ mod tests {
                 },
             )
             .unwrap();
+        channel
+            .restore(&Restore {
+                argv: vec!["decade-code".into()],
+                terminal: false,
+            })
+            .unwrap();
         assert_eq!(
             rx.recv().unwrap(),
             Message::Welcome {
@@ -665,7 +696,7 @@ mod tests {
             }
         );
         assert!(matches!(rx.recv().unwrap(), Message::Clear { clear, .. } if clear.kind == "file"));
-        let (hello, sent) = server.join().unwrap();
+        let (hello, sent, restore) = server.join().unwrap();
         let hello: Value = serde_json::from_str(&hello).unwrap();
         assert_eq!(hello["hello"]["name"], "decade-code");
         assert_eq!(hello["hello"]["pane"], "code");
@@ -682,6 +713,11 @@ mod tests {
         assert_eq!(
             sent,
             json!({"to": "chat", "show": {"kind": "file", "target": "a.rs", "at": 3}})
+        );
+        let restore: Value = serde_json::from_str(&restore).unwrap();
+        assert_eq!(
+            restore,
+            json!({"restore": {"argv": ["decade-code"], "terminal": false}})
         );
         drop(channel);
         assert_eq!(rx.recv().unwrap(), Message::Closed);
@@ -721,6 +757,27 @@ mod tests {
         );
         assert_eq!(line(Request::Ended {}), json!({"ended": {}}));
         assert_eq!(line(Request::Panes {}), json!({"panes": {}}));
+        let restore = Restore {
+            argv: vec!["decade-notes".into(), "--file".into(), "todo.md".into()],
+            terminal: false,
+        };
+        assert_eq!(
+            line(Request::Restore(&restore)),
+            json!({"restore": {"argv": ["decade-notes", "--file", "todo.md"], "terminal": false}})
+        );
+    }
+
+    #[test]
+    fn a_hello_reads_its_restore_block_and_one_without_terminal_runs_outside_a_terminal() {
+        let hello: Hello = serde_json::from_value(json!({
+            "name": "decade-notes",
+            "pane": "notes",
+            "restore": {"argv": ["decade-notes", "--file", "todo.md"]}
+        }))
+        .unwrap();
+        let restore = hello.restore.unwrap();
+        assert_eq!(restore.argv, ["decade-notes", "--file", "todo.md"]);
+        assert!(!restore.terminal);
     }
 
     #[test]
@@ -789,6 +846,7 @@ mod tests {
             pane: Some("chat".into()),
             shows: Vec::new(),
             agent: Some(agent.clone()),
+            restore: None,
         };
         let value = serde_json::to_value(&hello).unwrap();
         assert_eq!(

@@ -64,6 +64,26 @@ start it again on the same session. It is optional and defaults to empty.
 
 A client without it is a plain pane program.
 
+A client that decade should start again adds a `restore` block. `argv`
+is the command that starts it. `terminal` says whether that command runs
+in a terminal, and defaults to false:
+
+```json
+{"hello": {"name": "decade-notes", "pane": "notes", "restore": {"argv": ["decade-notes", "--file", "todo.md"], "terminal": false}}}
+```
+
+decade saves the block with the pane the client holds. When decade
+restores the workspace, or wakes it from sleep, it starts each saved
+`argv` in the workspace's directory with `DECADE_PANE` set to that pane.
+A terminal command is typed into the shell of a ghostty in the pane,
+which stays at its prompt when the command exits. That ghostty is the
+terminal decade started and the program ran in. When the program ran in
+no such terminal, it is the pane's own terminal, or a new terminal tab
+when the pane has no terminal free. Any other command is started
+directly. The program's hello then claims the pane. A block with an
+empty `argv` counts as no block. decade starts nothing again for a client
+that sent no block.
+
 When `accepts` is empty or missing, a client that lists no kinds takes
 every verb. A client that lists kinds takes only `show`, `highlight` and
 `clear`. decade answers:
@@ -102,8 +122,8 @@ payload is the business of the two clients. The three verbs below are the
 exception.
 
 A pane verb may not be one of these names, which decade keeps for its own
-messages: `hello`, `agent`, `ended`, `panes`, `welcome`, `error` and
-`from`.
+messages: `hello`, `agent`, `ended`, `panes`, `restore`, `welcome`,
+`error` and `from`.
 decade answers a message to a pane that uses one with an error and
 does not forward it.
 
@@ -154,6 +174,14 @@ the pane of the client that asked:
 
 ```json
 {"panes": [{"name": "chat", "client": "coax", "shows": [], "accepts": [], "scratch": false, "you": true}, {"name": "terminal", "client": null, "shows": [], "accepts": [], "scratch": true, "you": false}, {"name": "code", "client": "decade-code", "shows": [{"kind": "file", "highlight": true}], "accepts": [{"name": "reload", "description": "Read the file from disk again."}], "scratch": false, "you": false}]}
+```
+
+`restore` replaces the client's restore block, in the form hello gives
+it. A `restore` with an empty `argv` clears the block. decade holds the
+block only while the client is connected. It gets no reply:
+
+```json
+{"restore": {"argv": ["decade-notes", "--file", "notes.md"], "terminal": false}}
 ```
 
 ## Agents

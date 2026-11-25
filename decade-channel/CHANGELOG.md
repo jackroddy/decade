@@ -14,6 +14,10 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 - `Agent` has an `args` field with the flags the program was started
   with, so decade can start it again on the same session. A hello
   without `args` reads as empty.
+- `Hello` has a `restore` field holding a `Restore`, the argv that starts
+  the program again and whether it runs in a terminal.
+  `Channel::restore` sends a `restore` message that replaces it, and an
+  empty argv clears it.
 
 ### Changed
 

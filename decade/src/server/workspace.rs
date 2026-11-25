@@ -12,7 +12,7 @@ use crate::server::channel::{Out, PaneNames, Router};
 use crate::server::clients::Client;
 use crate::server::save::{Session, TerminalTab};
 use crate::server::scratch::Scratch;
-use decade_channel::AgentState;
+use decade_channel::{AgentState, Restore};
 use serde_json::Value;
 
 const PIN_ICON: char = '\u{f0403}';
@@ -120,6 +120,10 @@ pub struct PaneInfo {
     /// The coax session the pane's terminal starts on, until it starts.
     pub resume: Option<Session>,
 
+    /// The restore block of the program decade starts in the pane, until
+    /// a client claims the pane.
+    pub restore: Option<Restore>,
+
     /// The name of the live agent in the pane, which labels its first tab.
     pub agent: Option<String>,
 
@@ -136,6 +140,7 @@ impl Default for PaneInfo {
             cwd: None,
             pid: None,
             resume: None,
+            restore: None,
             agent: None,
             screenshots: false,
         }
@@ -667,8 +672,18 @@ impl Workspace {
         let scratch: Vec<&str> = (self.scratch.iter())
             .map(|scratch| scratch.pane.as_str())
             .collect();
-        self.router
-            .handle(id, line, &pane_names(&self.tabs), &scratch)
+        let out = self
+            .router
+            .handle(id, line, &pane_names(&self.tabs), &scratch);
+        let claimed = self
+            .router
+            .clients
+            .get(&id)
+            .and_then(|client| client.pane.as_deref());
+        if let Some((tab, pane)) = claimed.and_then(|pane| self.by_name(pane)) {
+            self.tabs[tab].info_mut(pane).restore = None;
+        }
+        out
     }
 
     /// The id of the client in pane `to` and the line carrying it a pane
@@ -1253,6 +1268,7 @@ pub(super) mod tests {
             pane: 0,
             cwd: PathBuf::from("/tmp"),
             session: None,
+            restore: None,
         };
         workspace.asleep = Some(vec![stored(0), stored(1), stored(2)]);
         workspace.remove_tab(1);
@@ -1304,6 +1320,20 @@ pub(super) mod tests {
             workspace.find_scratch(Some("terminal")),
             Err("terminal is not a scratch pane; the scratch panes are: build".to_string())
         );
+    }
+
+    #[test]
+    fn a_restore_block_waiting_in_a_pane_is_dropped_once_a_client_claims_the_pane() {
+        let mut workspace = at_home();
+        let waiting = Restore {
+            argv: vec!["decade-notes".to_string()],
+            terminal: false,
+        };
+        workspace.tab_mut().info_mut(0).restore = Some(waiting.clone());
+        workspace.channel_line(1, r#"{"hello": {"name": "list"}}"#);
+        assert_eq!(workspace.tab().info(0).restore, Some(waiting));
+        workspace.channel_line(2, r#"{"hello": {"name": "notes", "pane": "terminal"}}"#);
+        assert_eq!(workspace.tab().info(0).restore, None);
     }
 
     #[test]

@@ -90,7 +90,7 @@ use crate::server::proc;
 use crate::server::save::{self, Session, TerminalTab};
 use crate::server::workspace::{self, Layout, Pane, PaneAction, Workspace};
 use crate::wire::{self, OUTBOX_RETRY, ServerMessage};
-use decade_channel::AgentState;
+use decade_channel::{AgentState, Restore};
 use decade_ui::BarButton;
 use decade_ui::overlay::{ContextMenu, NameField};
 
@@ -590,28 +590,66 @@ impl State {
         }
     }
 
-    /// Listen on the workspace's socket, and start a terminal for every pane
-    /// that holds one and for every terminal tab in `tabs`.
+    /// Listen on the workspace's socket, start a terminal for every pane
+    /// that holds one and for every terminal tab in `tabs`, and start again
+    /// each program whose pane keeps its restore block.
     fn start_workspace(&mut self, workspace: usize, tabs: Vec<TerminalTab>) {
         self.listen(workspace);
-        let terminals: Vec<(usize, usize)> = (self.workspaces[workspace].tabs.iter().enumerate())
-            .flat_map(|(tab, entry)| {
-                (entry.layout.panes.iter())
-                    .filter(|pane| entry.info(pane.id).cwd.is_some())
-                    .map(move |pane| (tab, pane.id))
-            })
-            .collect();
+        let mut terminals = Vec::new();
+        let mut programs = Vec::new();
+        for (tab, entry) in self.workspaces[workspace].tabs.iter().enumerate() {
+            for pane in &entry.layout.panes {
+                let info = entry.info(pane.id);
+                if info.cwd.is_some() {
+                    terminals.push((tab, pane.id));
+                }
+
+                // spawn_terminal runs a terminal command in the pane's
+                // own terminal when that terminal resumes no session
+                let typed = info.cwd.is_some() && info.resume.is_none();
+                let restore = (info.restore.clone()).filter(|restore| !(restore.terminal && typed));
+                if let Some(restore) = restore {
+                    programs.push((tab, pane.id, restore));
+                }
+            }
+        }
         for (tab, id) in terminals {
             self.spawn_terminal(workspace, tab, id);
         }
         for saved in tabs {
-            let session = saved.session.as_ref();
-            self.spawn_pane_tab(workspace, saved.tab, saved.pane, &saved.cwd, session);
+            let (session, restore) = (saved.session.as_ref(), saved.restore.as_ref());
+            self.spawn_pane_tab(
+                workspace, saved.tab, saved.pane, &saved.cwd, session, restore,
+            );
+        }
+        for (tab, id, restore) in programs {
+            if restore.terminal {
+                let cwd = self.workspaces[workspace].cwd.clone();
+                self.spawn_pane_tab(workspace, tab, id, &cwd, None, Some(&restore));
+            } else {
+                self.spawn_restored(workspace, tab, id, &restore.argv);
+            }
+        }
+    }
+
+    /// Start `argv` in the workspace's directory, told the pane's name.
+    fn spawn_restored(&mut self, workspace: usize, tab: usize, id: usize, argv: &[String]) {
+        let shown = &self.workspaces[workspace];
+        let (Some(pane), Some((program, args))) =
+            (shown.tabs[tab].layout.pane(id), argv.split_first())
+        else {
+            return;
+        };
+        let mut command = self.children.command(shown, program, Some(&pane.name));
+        command.args(args);
+        if let Err(error) = self.children.spawn(shown, command) {
+            eprintln!("decade: {error}");
         }
     }
 
     /// Start a ghostty that goes in the pane as a new tab, starting coax on
-    /// `session` when there is one.
+    /// `session` when there is one, or else running the terminal command
+    /// of `restore`.
     fn spawn_pane_tab(
         &mut self,
         workspace: usize,
@@ -619,6 +657,7 @@ impl State {
         id: usize,
         cwd: &Path,
         session: Option<&Session>,
+        restore: Option<&Restore>,
     ) {
         let entry = &mut self.workspaces[workspace].tabs[tab];
         let Some(pane) = entry.layout.pane(id) else {
@@ -629,9 +668,10 @@ impl State {
         let class = format!("{name}.t{}", info.next_tab);
         info.next_tab += 1;
         let shown = &self.workspaces[workspace];
-        let ghostty = match session {
-            Some(session) => self.children.resuming(shown, &name, &class, session),
-            None => self.children.ghostty(shown, &name, &class, cwd),
+        let ghostty = match (session, restore) {
+            (Some(session), _) => self.children.resuming(shown, &name, &class, session),
+            (None, Some(restore)) => self.children.restoring(shown, &name, &class, &restore.argv),
+            (None, None) => self.children.ghostty(shown, &name, &class, cwd),
         };
         if let Err(error) = self.children.spawn(shown, ghostty) {
             eprintln!("decade: {error}");
@@ -639,7 +679,8 @@ impl State {
     }
 
     /// Start the ghostty of a pane that holds a terminal, in the pane's cwd,
-    /// starting coax on the session the pane keeps for its terminal.
+    /// starting coax on the session the pane keeps for its terminal, or
+    /// else running the terminal command of the pane's restore block.
     fn spawn_terminal(&mut self, workspace: usize, tab: usize, id: usize) {
         let resume = self.workspaces[workspace].tabs[tab]
             .info_mut(id)
@@ -654,11 +695,16 @@ impl State {
             .cwd
             .as_deref()
             .unwrap_or(&shown.cwd);
-        let ghostty = match &resume {
-            Some(session) => self
+        let restore =
+            (shown.tabs[tab].info(id).restore.as_ref()).filter(|restore| restore.terminal);
+        let ghostty = match (&resume, restore) {
+            (Some(session), _) => self
                 .children
                 .resuming(shown, &pane.name, &pane.name, session),
-            None => self.children.ghostty(shown, &pane.name, &pane.name, cwd),
+            (None, Some(restore)) => {
+                (self.children).restoring(shown, &pane.name, &pane.name, &restore.argv)
+            }
+            (None, None) => self.children.ghostty(shown, &pane.name, &pane.name, cwd),
         };
         match self.children.spawn(shown, ghostty) {
             Ok(pid) => self.workspaces[workspace].tabs[tab].started(id, pid),
@@ -1488,7 +1534,7 @@ impl State {
         }
         let cwd = (shown.tab().info(id).cwd.clone()).unwrap_or_else(|| shown.cwd.clone());
         let tab = shown.active_tab;
-        self.spawn_pane_tab(current, tab, id, &cwd, None);
+        self.spawn_pane_tab(current, tab, id, &cwd, None, None);
     }
 
     /// Show tab `index` of the pane in the current workspace's active tab.
