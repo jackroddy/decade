@@ -1,0 +1,31 @@
+{
+  "id": "decade-69fe70",
+  "title": "A restore block can name the directory its program starts in",
+  "body": "A restore block (`decade_channel::Restore { argv, terminal }`) starts its program in the workspace's directory. Before e3f2cf7, decade restarted a coax session in the directory coax ran in. A coax started in a subdirectory now comes back in the workspace's directory, and an agent that finds its session by project directory may not find it there.\n\n## Proposal\n\n- `Restore` gains an optional `cwd`. decade starts the argv there, and in the workspace's directory when `cwd` is absent or no longer exists.\n- When the save file reader turns an old saved coax session into a restore block, it carries the session's directory into `cwd`.\n- coax sends its directory in the block, in coax-5c168a.\n\n## Cost\n\nAn optional field on the `restore` block in `docs/protocol.md`, and on `Restore`, which is public in `decade-channel`. Both are unreleased since `Restore` arrived in abb5631. The save format stays at 9, since 9 is unreleased and the new field is optional.",
+  "type": "feature",
+  "status": "open",
+  "priority": 2,
+  "labels": [
+    "decade",
+    "decade-channel"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-25T01:54:27.943154452Z",
+  "updated_at": "2026-11-25T01:54:27.943154452Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "e3f2cf7",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
