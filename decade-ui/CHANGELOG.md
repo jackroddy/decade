@@ -11,6 +11,9 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 
 ### Added
 
+- `Layout::hover_focus` gives the pane that pointer motion onto a cell
+  focuses, or `None` during a drag, over a shown Ctrl bar or on the
+  focused pane.
 - `MenuKey` has `Home` and `End`. `NameField` keeps a caret that Left,
   Right, Home and End move, and typing and Backspace act at it. The first
   key still replaces the old name unless it is a movement key.

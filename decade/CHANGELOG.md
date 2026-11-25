@@ -12,6 +12,11 @@ command line and what the tool writes.
 
 ### Added
 
+- Focus follows the pointer. Moving the pointer onto a pane, its bar
+  included, gives that pane focus. Focus stays put during a drag, while a
+  popup or an overlay is open, and over the sidebar, the top bar or a
+  shown Ctrl bar. The settings panel has a Focus follows pointer setting,
+  on by default.
 - A program's hello may carry a `restore` block with the argv that
   starts it again and whether that argv runs in a terminal. A `restore`
   message replaces the block, and an empty argv clears it. decade saves

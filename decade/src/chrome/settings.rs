@@ -19,6 +19,9 @@ pub struct Settings {
 
     /// Whether the side mouse buttons reach clients.
     pub side_buttons: bool,
+
+    /// Whether moving the pointer onto a pane gives it focus.
+    pub follow_pointer: bool,
 }
 
 impl Default for Settings {
@@ -31,6 +34,7 @@ impl Default for Settings {
             ghost_opacity: 0.8,
             grab_ms: 50,
             side_buttons: false,
+            follow_pointer: true,
         }
     }
 }
@@ -43,15 +47,17 @@ pub enum Knob {
     GhostScale,
     GhostOpacity,
     Grab,
+    FollowPointer,
 }
 
-pub const KNOBS: [Knob; 6] = [
+pub const KNOBS: [Knob; 7] = [
     Knob::FontSize,
     Knob::PaletteSize,
     Knob::BarHold,
     Knob::GhostScale,
     Knob::GhostOpacity,
     Knob::Grab,
+    Knob::FollowPointer,
 ];
 
 #[derive(Clone, Copy)]
@@ -59,17 +65,19 @@ enum Unit {
     Px,
     Ms,
     Percent,
+    OnOff,
 }
 
 /// Each knob's label, step, least and greatest value, and unit, in the
 /// order of `Knob`'s variants.
-const RANGES: [(&str, f64, f64, f64, Unit); 6] = [
+const RANGES: [(&str, f64, f64, f64, Unit); 7] = [
     ("Font size", 1.0, 8.0, 40.0, Unit::Px),
     ("Palette font size", 1.0, 8.0, 40.0, Unit::Px),
     ("Ctrl bar delay", 10.0, 0.0, 1000.0, Unit::Ms),
     ("Drag size", 0.05, 0.05, 1.0, Unit::Percent),
     ("Drag opacity", 0.05, 0.05, 1.0, Unit::Percent),
     ("Drag pickup time", 10.0, 0.0, 1000.0, Unit::Ms),
+    ("Focus follows pointer", 1.0, 0.0, 1.0, Unit::OnOff),
 ];
 
 impl Knob {
@@ -85,6 +93,7 @@ impl Knob {
             Knob::GhostScale => settings.ghost_scale,
             Knob::GhostOpacity => settings.ghost_opacity as f64,
             Knob::Grab => settings.grab_ms as f64,
+            Knob::FollowPointer => f64::from(u8::from(settings.follow_pointer)),
         }
     }
 
@@ -100,6 +109,7 @@ impl Knob {
             Knob::GhostScale => settings.ghost_scale = value,
             Knob::GhostOpacity => settings.ghost_opacity = value as f32,
             Knob::Grab => settings.grab_ms = value as u64,
+            Knob::FollowPointer => settings.follow_pointer = value == 1.0,
         }
     }
 
@@ -109,6 +119,8 @@ impl Knob {
             Unit::Px => format!("{value} px"),
             Unit::Ms => format!("{value} ms"),
             Unit::Percent => format!("{:.0}%", value * 100.0),
+            Unit::OnOff if value == 1.0 => "on".to_string(),
+            Unit::OnOff => "off".to_string(),
         }
     }
 }
@@ -189,5 +201,18 @@ mod tests {
         Knob::BarHold.step(&mut settings, false);
         Knob::BarHold.step(&mut settings, false);
         assert_eq!(settings.bar_hold_ms, 30);
+    }
+
+    #[test]
+    fn focus_follows_pointer_is_on_by_default_and_left_turns_it_off() {
+        let mut settings = Settings::default();
+        assert_eq!(Knob::FollowPointer.show(&settings), "on");
+        Knob::FollowPointer.step(&mut settings, true);
+        assert!(settings.follow_pointer);
+        Knob::FollowPointer.step(&mut settings, false);
+        assert!(!settings.follow_pointer);
+        assert_eq!(Knob::FollowPointer.show(&settings), "off");
+        Knob::FollowPointer.step(&mut settings, false);
+        assert!(!settings.follow_pointer);
     }
 }

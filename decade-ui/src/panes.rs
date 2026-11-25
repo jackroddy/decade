@@ -434,6 +434,16 @@ impl<A: Copy + PartialEq> Layout<A> {
         (!on_client).then_some(pane.id)
     }
 
+    /// The pane that pointer motion onto the cell gives focus, with the
+    /// Ctrl bar shown when `bar` is set, or `None` when the motion leaves
+    /// focus where it is.
+    pub fn hover_focus(&self, column: u32, row: u32, bar: bool) -> Option<usize> {
+        if self.drag.is_some() || (bar && self.bar_hit(column, row).is_some()) {
+            return None;
+        }
+        self.pane_at(column, row).filter(|&id| id != self.focused)
+    }
+
     pub fn neighbour(&self, direction: Direction) -> Option<usize> {
         let (x, y) = self.pane(self.focused)?.rect.center();
         let mut best: Option<(i64, usize)> = None;
@@ -1654,6 +1664,30 @@ mod tests {
                 action,
             })
             .collect()
+    }
+
+    #[test]
+    fn pointer_motion_focuses_the_pane_under_it_bar_included_but_not_during_a_drag() {
+        let mut layout: Layout = three_anchors();
+        assert_eq!(layout.hover_focus(10, 10, false), Some(0));
+        assert_eq!(layout.hover_focus(10, 0, false), Some(0));
+        assert_eq!(layout.hover_focus(60, 25, false), Some(2));
+        assert_eq!(layout.hover_focus(60, 5, false), None);
+        assert_eq!(layout.hover_focus(200, 5, false), None);
+        layout.drag = Some(pane_drag(1, None));
+        assert_eq!(layout.hover_focus(10, 10, false), None);
+        layout.drag = layout.boundary_at(50, 10).map(Drag::Boundary);
+        assert!(layout.drag.is_some());
+        assert_eq!(layout.hover_focus(10, 10, false), None);
+    }
+
+    #[test]
+    fn pointer_motion_over_a_shown_ctrl_bar_leaves_focus_alone() {
+        let layout: Layout = three_anchors();
+        let inner = layout.pane(0).unwrap().rect.inner();
+        assert_eq!(layout.hover_focus(10, inner.row, true), None);
+        assert_eq!(layout.hover_focus(10, inner.row, false), Some(0));
+        assert_eq!(layout.hover_focus(10, inner.row + 1, true), Some(0));
     }
 
     #[test]

@@ -109,6 +109,7 @@ impl State {
     }
 
     pub(super) fn pointer_moved(&mut self, location: Point<f64, Logical>, time: u32) {
+        let motion = location != self.pointer;
         self.pointer = location;
         if self.asking.is_some() {
             let (x, y) = self.pointer_px();
@@ -190,6 +191,17 @@ impl State {
             }
         }
         let pointer = self.seat.get_pointer().unwrap();
+        if motion
+            && self.settings.follow_pointer
+            && self.overlay.is_none()
+            && in_panes
+            && !on_popover
+            && !pointer.is_grabbed()
+            && !self.popup_open()
+            && let Some(id) = self.layout().hover_focus(column, row, self.bar)
+        {
+            self.focus(id);
+        }
         let under = self.pane_under_pointer().filter(|_| !on_popover);
         let focus = under.and_then(|id| {
             let pane = self.layout().pane(id)?;
@@ -731,6 +743,13 @@ impl State {
         (layout.pane_at(column, row))
             .and_then(|id| self.tab().toplevel(id))
             .is_some_and(|toplevel| popups_over(toplevel.wl_surface()).next().is_some())
+    }
+
+    /// Whether a popup is open over any pane on screen.
+    fn popup_open(&self) -> bool {
+        (self.layout().visible())
+            .filter_map(|pane| self.tab().toplevel(pane.id))
+            .any(|toplevel| popups_over(toplevel.wl_surface()).next().is_some())
     }
 
     /// Open the menu for the chrome under the pointer, and return whether
