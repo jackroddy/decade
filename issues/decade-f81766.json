@@ -3,7 +3,7 @@
   "title": "An agent can save a pane's screenshot to a file",
   "body": "The MCP `screenshot` tool (`State::screenshot` in `decade/src/server/compositor/screenshot.rs`) returns the PNG only as an MCP image block. The agent's harness turns that block into pixels in the model's context, so an agent never holds the bytes and cannot save a capture to disk.\n\n## Proposal\n\n- A socket verb for decade, `{\"screenshot\": {\"pane\": \"code\", \"for\": \"chat\"}}`. `for` is optional and carries the caller's `DECADE_PANE`. decade uses it only to name the agent in the dialog, and does not check it. decade replies `{\"screenshot\": {\"png\": \"<base64>\"}}` or with `error`.\n- A method on `decade-channel` that sends the verb and returns the PNG bytes.\n- `decade screenshot PANE FILE` uses that method and writes `FILE` relative to its own working directory. Before it connects, it refuses a `FILE` that does not end in `.png` and one that exists or is a symlink. It writes with `create_new`.\n- A second per-pane mode, accept saved screenshots, beside accept screenshots. The person sets it from the Ctrl bar and the right click menu. decade never saves it, and neither mode turns on the other.\n- Without the mode, decade asks with the existing dialog, worded \"X asks to save a screenshot of pane P to FILE\". Its choices are allow once, allow and accept saved screenshots, and deny.\n- The MCP `screenshot` tool keeps its current behaviour and follows only accept screenshots.\n\n## Cost\n\nThe new socket verb is a protocol change, so the minor versions of `decade` and `decade-channel` both move. The work goes on the branch `screenshot-save`.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [
     "decade",
@@ -13,13 +13,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/3cd5690e",
-  "lease_expires": "2026-11-25T06:52:57.22235362Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T06:37:57.21148203Z",
-  "updated_at": "2026-11-25T06:55:49.715056775Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T10:30:02.121660946Z",
+  "closed_at": "2026-11-25T10:30:02.121660946Z",
+  "close_reason": "Landed in e4f627b on the screenshot-save branch, which merges into dev before the next release of decade and decade-channel.",
+  "resolution": "done",
   "notes": [
     {
       "id": "498a2092",
@@ -35,6 +35,9 @@
       "commit": "dcd178b",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "e4f627b",
+      "branch": "screenshot-save"
+    }
   }
 }
