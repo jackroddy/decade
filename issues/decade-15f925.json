@@ -15,11 +15,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-22T08:51:49.46255249Z",
-  "updated_at": "2026-11-22T08:51:49.46255249Z",
+  "updated_at": "2026-11-25T00:21:16.786506051Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "4bc56a1f",
+      "at": "2026-11-25T00:21:16.786505061Z",
+      "author": "Jack Roddy/5da9dd6b",
+      "text": "Jack chose the workspace on screen. When placement picks a sleeping workspace, the window goes to the workspace on screen. If that one is asleep too, it wakes, since Jack is looking at it. A pane screenshot still pending when its workspace sleeps answers with an error saying the workspace went to sleep.",
+      "commit": "df4f120",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "f62a5f1",
