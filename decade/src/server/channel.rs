@@ -358,8 +358,7 @@ impl Router {
                     client.session = None;
                 }
             }
-            let pid = self.peers.get(&id).copied();
-            self.agents.attach(identity, pane.clone(), pid, now);
+            self.agents.attach(identity, pane.clone(), now);
         }
         self.clients.insert(
             id,

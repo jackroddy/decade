@@ -4,7 +4,6 @@ use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 
-use crate::server::save::Session;
 use crate::server::workspace::{Workspace, app_id_prefix};
 
 #[derive(Debug, PartialEq)]
@@ -93,24 +92,6 @@ impl Children {
             .current_dir(cwd)
             .args(["--window-decoration=none", "--gtk-titlebar=false"])
             .arg(format!("--class={}{class}", app_id_prefix(workspace.id)));
-        ghostty
-    }
-
-    /// A ghostty for the pane like `ghostty`'s, in the session's directory,
-    /// whose shell starts coax on the session and is left at its prompt
-    /// when coax exits.
-    pub fn resuming(
-        &self,
-        workspace: &Workspace,
-        pane: &str,
-        class: &str,
-        session: &Session,
-    ) -> Command {
-        let mut ghostty = self.ghostty(workspace, pane, class, &session.cwd);
-        let mut words = vec!["coax".to_string()];
-        words.extend(session.args.iter().cloned());
-        words.extend(["--session".to_string(), session.id.clone()]);
-        ghostty.arg(typed_input(&words));
         ghostty
     }
 
@@ -358,23 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn a_resuming_ghostty_starts_in_the_sessions_directory_and_types_coax_on_the_session() {
-        let children = Children::new(OsString::from("wayland-9"), PathBuf::from("/run"), None);
-        let session = Session {
-            agent: "claude".to_string(),
-            id: "7f3a".to_string(),
-            args: ["--agent", "my agent", "--allow"]
-                .map(str::to_string)
-                .to_vec(),
-            cwd: PathBuf::from("/home/jack/projects/coax"),
-        };
-        let ghostty = children.resuming(&workspace(1), "chat", "chat", &session);
-        assert_eq!(ghostty.get_current_dir(), Some(session.cwd.as_path()));
-        assert_eq!(
-            ghostty.get_args().last().unwrap(),
-            r"--input=raw:coax --agent 'my agent' --allow --session 7f3a\n"
-        );
-
+    fn typed_input_quotes_each_word_for_the_shell_and_escapes_the_line_for_ghostty() {
         // the shell reads 'it'\''s\' as it's\, and ghostty reads a
         // doubled backslash as one
         let words = ["coax", "--agent", "it's\\"].map(str::to_string);

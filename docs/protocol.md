@@ -59,8 +59,10 @@ its version and the id of its session:
 {"hello": {"name": "coax", "pane": "chat", "agent": {"name": "coax", "version": "0.4.0", "session": "7f3a", "args": ["--agent", "claude"]}}}
 ```
 
-`args` holds the flags the program was started with, so that decade can
-start it again on the same session. It is optional and defaults to empty.
+`args` holds the flags the program was started with. It is optional and
+defaults to empty. decade does not start a program again from the
+`agent` block. An agent that should start again on its session sends a
+`restore` block whose argv names the session, as described below.
 
 A client without it is a plain pane program.
 

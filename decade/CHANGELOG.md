@@ -37,8 +37,8 @@ command line and what the tool writes.
   message replaces the block, and an empty argv clears it. decade saves
   the block with the program's pane. On restore and on wake it starts the
   argv in the workspace's directory with `DECADE_PANE` set to the pane. A
-  terminal argv is typed into a ghostty in the pane. The save file is now
-  version 8, and decade still reads version 7.
+  terminal argv is typed into a ghostty in the pane. coax starts again
+  this way, on its session.
 - A program that starts a child with `DECADE_INTO=<pane name>` in its
   environment gets the child's window as a new tab of that pane. A name no
   pane answers to places the window as before.
@@ -63,18 +63,11 @@ command line and what the tool writes.
   and the workspace's card shows a sleep mark where its agent's mark goes.
   A click on that mark, on a wake button, or on Wake in the menu starts
   its terminals again, each in the directory its shell was in. Shells
-  start fresh, without their scrollback. GUI apps and agents other than
-  coax do not start again. Showing a sleeping workspace does not wake it,
+  start fresh, without their scrollback. A program that sent no restore
+  block does not start again. Showing a sleeping workspace does not wake it,
   and it stays asleep when the server restarts. While an agent in the
   workspace is working, Sleep asks for a second click. A group's menu
   offers Sleep all and Wake all.
-- decade starts a coax session again in the terminal it ran in. When
-  decade saves a terminal, it records the session of a connected coax
-  under it that was started with `--agent`, with coax's flags and
-  directory. On restore and on wake, decade starts that terminal in
-  coax's directory and types `coax <flags> --session <id>` into its
-  shell. When coax exits, the shell stays at its prompt. A coax that has
-  quit is not in the next save.
 - An MCP tool `scratch.status`. Its answer says whether the program
   `scratch.open` last started in a scratch pane is still running. Once
   that program has exited, the answer gives its exit status and the last
@@ -108,11 +101,13 @@ command line and what the tool writes.
 - A press on a pane's name on the Ctrl bar starts a pane drag only once the
   pointer moves a few pixels. A double-click to rename no longer flashes
   the drag ghost.
-- decade saves workspaces at version 7 of its file. It saves whether
-  each workspace is asleep, the coax session running in each terminal,
-  and every scratch pane of each workspace. decade still reads the
-  files of earlier versions. A version 6 file's one scratch pane reads
-  as a list of one.
+- decade saves workspaces at version 9 of its file. It saves whether
+  each workspace is asleep, the restore blocks of its programs, and
+  every scratch pane of each workspace. decade still reads the files of
+  earlier versions. A version 6 file's one scratch pane reads as a list
+  of one. A coax session that a file of version 6 to 8 holds for a
+  terminal reads as a terminal restore block. Its argv is `coax`, then
+  coax's saved flags, then `--session <id>`.
 - A workspace can have any number of scratch panes. Marking a pane as
   scratch leaves the others marked. `scratch.open`, `scratch.send` and
   `scratch.status` take an optional `pane`, the name of a scratch pane.
