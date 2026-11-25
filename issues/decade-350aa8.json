@@ -3,7 +3,7 @@
   "title": "Caps lock sometimes turns on after closing the settings panel with Escape",
   "body": "Jack has seen caps lock turn on inside decade a few times, after opening the palette, choosing settings and pressing Escape to close the panel. His keyboard's firmware sends Escape from the caps lock key, so no `KEY_CAPSLOCK` comes from the hardware.\n\ndecade has one place that turns caps lock on. When the viewer gains keyboard focus, it sends the server `ViewerMessage::Keys` with the lock state from Hyprland's `wl_keyboard.modifiers`. The viewer reads caps lock as bit `1 << 1` of `mods_locked`, in `decade/src/viewer.rs`. `State::sync_keys` in `decade/src/server/compositor/viewers.rs` compares that with the seat's own `caps_lock`, and on a mismatch it forwards a press and release of `KEY_CAPSLOCK`. So caps lock comes on in decade whenever the two disagree.\n\n## Open\n\n- What makes them disagree after closing the settings panel. It is not known whether the panel or Escape changes keyboard focus at the Hyprland level.\n- Hyprland keeps caps lock per keyboard device, and it listed five on 2026-11-12, all with caps lock off. If the active device changes, the lock state sent to the viewer can change with it.\n- Whether Hyprland also shows caps lock on when it happens. `hyprctl devices | grep -E \"Keyboard at|capsLock\"` answers that, along with whether windows outside decade also type capitals.",
   "type": "bug",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [
     "decade"
@@ -15,16 +15,19 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-13T00:20:26.421809537Z",
-  "updated_at": "2026-11-13T00:20:26.421809537Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T01:48:06.355727706Z",
+  "closed_at": "2026-11-25T01:48:06.355727706Z",
+  "close_reason": "Dropped: Jack has not seen caps lock turn on since the issue was filed, so there is nothing to reproduce. Reopen it if it happens again. The body names the one place decade forces caps lock, State::sync_keys, and what to check on Hyprland's side.",
+  "resolution": "dropped",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "b9f97c7",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "b0e8c37",
+      "branch": "dev"
+    }
   }
 }
