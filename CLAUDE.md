@@ -62,6 +62,8 @@ whether the bump is a patch or a minor.
 
 **One server.** One decade server runs per user, and it holds every
 workspace. There are no named sessions and no multi-user modes.
+We assume that the machine has one user account, so decade defends
+against no other account.
 
 **Closing panes.** No keybind closes a pane. A pane closes only through the
 x on its bar or when the program in it exits.
