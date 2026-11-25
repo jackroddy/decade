@@ -3,7 +3,7 @@
   "title": "Pane focus follows the pointer, and the pointer follows focus moved by keybinds",
   "body": "Keyboard focus in decade moves between panes in two ways today: a click in a pane, and decade's focus keybinds such as Super+h, j, k and l. The pointer and the focus are independent. After a keybind moves focus, the pointer stays over whatever pane it was on, and moving the pointer into a pane changes nothing until a click.\n\nJack wants the two tied together.\n\n## Proposal\n\n- Focus follows the pointer. When the pointer enters a pane's area, that pane takes keyboard focus without a click.\n- The pointer follows focus. When a keybind moves focus to a pane, decade moves the pointer to the centre of that pane, so the next pointer motion does not send focus back.\n\n## Open\n\n- The viewer is a Wayland client of the host compositor, and a client cannot move the host's pointer directly. The usual route is to lock the pointer with pointer-constraints, set a cursor position hint, and unlock. Whether Hyprland honours the hint on unlock needs a trial. If it does not, the pointer can only follow focus inside decade's own idea of the pointer, which the host does not see.\n- Which motions should not move focus: crossing a pane while dragging a pane or a boundary, while a popup or a decade overlay is open, and passing over the sidebar, the top bar or a Ctrl bar.\n- Whether focus should wait a short moment before following, so a pointer sweeping across panes does not focus each one on the way.\n- Whether this is a setting, on by default or off.",
   "type": "feature",
-  "status": "open",
+  "status": "closed",
   "priority": 2,
   "labels": [
     "decade",
@@ -16,10 +16,10 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T03:00:08.068084261Z",
-  "updated_at": "2026-11-25T01:50:57.465129316Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-25T02:18:53.702042112Z",
+  "closed_at": "2026-11-25T02:18:53.702042112Z",
+  "close_reason": "Landed in a429d9b (focus follows the pointer, with a setting), 6df44f1 (the pointer follows keybind focus through pointer lock and a position hint) and 7aa3572 (a tooltip no longer blocks focus following). Jack confirmed on his seat after a restart that focus follows the pointer and the pointer follows keybind focus, so Hyprland honours the hint and the hyprctl fallback is not needed.",
+  "resolution": "done",
   "notes": [
     {
       "id": "adaf9f97",
@@ -59,6 +59,9 @@
       "commit": "ad0a585",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "dcd178b",
+      "branch": "dev"
+    }
   }
 }
