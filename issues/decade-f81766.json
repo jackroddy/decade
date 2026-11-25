@@ -16,11 +16,20 @@
   "lease_expires": "2026-11-25T06:52:57.22235362Z",
   "defer_until": null,
   "created_at": "2026-11-25T06:37:57.21148203Z",
-  "updated_at": "2026-11-25T06:37:57.22235362Z",
+  "updated_at": "2026-11-25T06:55:49.715056775Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "498a2092",
+      "at": "2026-11-25T06:55:49.715056055Z",
+      "author": "Jack Roddy/3cd5690e",
+      "text": "The verb also carries `file`, the path as the person typed it, so the dialog can name it: `{\"screenshot\": {\"pane\": \"code\", \"file\": \"shot.png\", \"for\": \"chat\"}}`.\n\n`Channel::screenshot` sends the verb and returns at once. The PNG arrives on the receiver as `Message::Screenshot`, the way `panes` replies already arrive. A method that blocked would have to read the caller's receiver and drop other messages, which breaks clients with their own event loop, such as coax.\n\nThe first version dropped any client whose reply did not fit the socket buffer, and a pane's PNG is several MB of base64. Each client now has a `lines::Queue` that decade drains when the socket can take more. A capture flashes only the tag of the mode that let it through, and decade hides the consent dialog from captures.",
+      "commit": "dcd178b",
+      "branch": "screenshot-save"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "dcd178b",
