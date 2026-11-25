@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-11T03:02:40.527249803Z",
-  "updated_at": "2026-11-11T03:02:40.527249803Z",
+  "updated_at": "2026-11-25T01:28:39.200267206Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "992e3edd",
+      "at": "2026-11-25T01:28:39.200266536Z",
+      "author": "Jack Roddy/5da9dd6b",
+      "text": "Decided with Jack. decade shows the sub-agent list as the agent last sent it; when finished entries leave is the agent's call. Only direct sub-agents are reported; deeper work can go in a sub-agent's activity line. A failed sub-agent does not raise the workspace to attention; the popover shows it with a red mark, and the parent agent reports attention itself if it needs the person. coax sending the list is coax's own work, filed in coax's foam.",
+      "commit": "6df44f1",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "ad0a585",
