@@ -46,6 +46,10 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1::{self, ZwpLinuxBufferParamsV1},
     zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
 };
+use wayland_protocols::wp::pointer_constraints::zv1::client::{
+    zwp_locked_pointer_v1::{self, ZwpLockedPointerV1},
+    zwp_pointer_constraints_v1::{Lifetime, ZwpPointerConstraintsV1},
+};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_device_manager_v1::ZwpPrimarySelectionDeviceManagerV1;
 use wayland_protocols::wp::single_pixel_buffer::v1::client::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
 use wayland_protocols::wp::viewporter::client::{
@@ -248,6 +252,12 @@ impl Fit {
         let (x_scale, y_scale) = self.scale();
         ((x - self.x as f64) * x_scale, (y - self.y as f64) * y_scale)
     }
+
+    /// Convert physical pixels of the frame to a window-local position.
+    fn to_window(&self, x: f64, y: f64) -> (f64, f64) {
+        let (x_scale, y_scale) = self.scale();
+        (x / x_scale + self.x as f64, y / y_scale + self.y as f64)
+    }
 }
 
 fn shape(name: &str) -> Shape {
@@ -358,6 +368,10 @@ struct Pointer {
     /// The scroll on each axis in the current pointer frame, vertical first.
     scroll: [Scroll; 2],
     scroll_source: u32,
+    constraints: Option<ZwpPointerConstraintsV1>,
+
+    /// The lock that moves the pointer when it ends, until the host locks.
+    lock: Option<ZwpLockedPointerV1>,
 }
 
 #[derive(Default)]
@@ -406,7 +420,10 @@ impl Frames {
 }
 
 impl Pointer {
-    fn new(shape_manager: Option<WpCursorShapeManagerV1>) -> Pointer {
+    fn new(
+        shape_manager: Option<WpCursorShapeManagerV1>,
+        constraints: Option<ZwpPointerConstraintsV1>,
+    ) -> Pointer {
         Pointer {
             shape_manager,
             pointer: None,
@@ -416,6 +433,14 @@ impl Pointer {
             cursor: Some(Shape::Default),
             scroll: [Scroll::default(), Scroll::default()],
             scroll_source: 0,
+            constraints,
+            lock: None,
+        }
+    }
+
+    fn unlock(&mut self) {
+        if let Some(lock) = self.lock.take() {
+            lock.destroy();
         }
     }
 
@@ -542,6 +567,7 @@ impl Viewer {
         let shape_manager: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
         let inhibit_manager: Option<ZwpKeyboardShortcutsInhibitManagerV1> =
             globals.bind(&qh, 1..=1, ()).ok();
+        let constraints: Option<ZwpPointerConstraintsV1> = globals.bind(&qh, 1..=1, ()).ok();
 
         let subcompositor =
             SubcompositorState::bind(compositor.wl_compositor().clone(), globals, &qh)
@@ -595,7 +621,7 @@ impl Viewer {
             repeat: None,
             frames: Frames::default(),
             seat,
-            pointer: Pointer::new(shape_manager),
+            pointer: Pointer::new(shape_manager, constraints),
             keyboard: None,
             keys: Keys::default(),
             clipboard,
@@ -690,6 +716,7 @@ impl Viewer {
                 self.exit = Some(0);
             }
             ServerMessage::Listing { .. } => {}
+            ServerMessage::Warp { x, y } => self.warp(x, y),
             ServerMessage::Welcome { .. } => {
                 self.welcomed = true;
                 self.sync_size();
@@ -929,6 +956,32 @@ impl Viewer {
         }
     }
 
+    /// Move the host's pointer to `x`, `y` in the frame, while the pointer
+    /// is in the window: lock the pointer with the place as its position
+    /// hint, and end the lock once the host has locked it.
+    fn warp(&mut self, x: f64, y: f64) {
+        let (Some(constraints), Some(pointer), Some(_)) = (
+            &self.pointer.constraints,
+            &self.pointer.pointer,
+            self.pointer.enter_serial,
+        ) else {
+            return;
+        };
+
+        // a second lock on the same surface and pointer is a
+        // protocol error, so the one that never took hold goes first
+        if let Some(lock) = self.pointer.lock.take() {
+            lock.destroy();
+        }
+        let (x, y) = self.fit().to_window(x, y);
+        let surface = self.window.wl_surface();
+        let lock =
+            constraints.lock_pointer(surface, pointer, None, Lifetime::Oneshot, &self.qh, ());
+        lock.set_cursor_position_hint(x, y);
+        surface.commit();
+        self.pointer.lock = Some(lock);
+    }
+
     fn pointer_event(&mut self, event: wl_pointer::Event) {
         match event {
             wl_pointer::Event::Enter {
@@ -945,6 +998,7 @@ impl Viewer {
             }
             wl_pointer::Event::Leave { .. } => {
                 self.pointer.enter_serial = None;
+                self.pointer.unlock();
                 self.input(ViewerMessage::PointerLeft);
             }
             wl_pointer::Event::Motion {
@@ -1257,6 +1311,25 @@ impl Dispatch<WlPointer, ()> for Viewer {
     }
 }
 
+impl Dispatch<ZwpLockedPointerV1, ()> for Viewer {
+    fn event(
+        viewer: &mut Self,
+        lock: &ZwpLockedPointerV1,
+        event: zwp_locked_pointer_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let ended = matches!(
+            event,
+            zwp_locked_pointer_v1::Event::Locked | zwp_locked_pointer_v1::Event::Unlocked
+        );
+        if ended && viewer.pointer.lock.as_ref() == Some(lock) {
+            viewer.pointer.unlock();
+        }
+    }
+}
+
 impl Dispatch<WlKeyboard, ()> for Viewer {
     fn event(
         viewer: &mut Self,
@@ -1315,6 +1388,7 @@ no_events!(
     WpCursorShapeDeviceV1,
     ZwpKeyboardShortcutsInhibitManagerV1,
     ZwpKeyboardShortcutsInhibitorV1,
+    ZwpPointerConstraintsV1,
     WlDataDeviceManager,
     ZwpPrimarySelectionDeviceManagerV1,
 );
@@ -1363,8 +1437,17 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_position_maps_back_to_the_window_place_it_came_from() {
+        let fit = Fit::new((500, 1000), (800, 400), (1600, 800));
+        assert_eq!(fit.to_window(0.0, 1000.0), (300.0, 400.0));
+        assert_eq!(fit.to_window(250.0, 500.0), (400.0, 200.0));
+        let whole = Fit::new((1600, 800), (800, 400), (1600, 800));
+        assert_eq!(whole.to_window(800.0, 400.0), (400.0, 200.0));
+    }
+
+    #[test]
     fn a_pointer_frame_sends_one_scroll_per_moved_axis_in_frame_pixels() {
-        let mut pointer = Pointer::new(None);
+        let mut pointer = Pointer::new(None, None);
         let vertical = WEnum::Value(wl_pointer::Axis::VerticalScroll);
         pointer.scroll_event(wl_pointer::Event::AxisSource {
             axis_source: WEnum::Value(wl_pointer::AxisSource::Finger),
@@ -1411,7 +1494,7 @@ mod tests {
 
     #[test]
     fn a_horizontal_stop_is_sent_with_no_distance_and_keeps_its_inverted_direction() {
-        let mut pointer = Pointer::new(None);
+        let mut pointer = Pointer::new(None, None);
         let horizontal = WEnum::Value(wl_pointer::Axis::HorizontalScroll);
         pointer.scroll_event(wl_pointer::Event::AxisRelativeDirection {
             axis: horizontal,

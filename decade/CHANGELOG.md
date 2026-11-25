@@ -17,6 +17,12 @@ command line and what the tool writes.
   popup or an overlay is open, and over the sidebar, the top bar or a
   shown Ctrl bar. The settings panel has a Focus follows pointer setting,
   on by default.
+- With Focus follows pointer on, the pointer follows focus that a keybind
+  moves. After Super with h, j, k or l, Super+Shift with h, j, k or l, or
+  Super+Shift+Return, the viewer asks the host to move the pointer to the
+  middle of the focused pane. It locks the pointer with that place as the
+  position hint and then unlocks it. A host that ignores the hint leaves
+  the pointer where it was.
 - A program's hello may carry a `restore` block with the argv that
   starts it again and whether that argv runs in a terminal. A `restore`
   message replaces the block, and an empty argv clears it. decade saves

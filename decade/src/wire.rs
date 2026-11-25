@@ -215,6 +215,12 @@ pub enum ServerMessage {
     Listing {
         workspaces: Vec<Listed>,
     },
+
+    /// Move the host's pointer to a place in the frame, in its pixels.
+    Warp {
+        x: f64,
+        y: f64,
+    },
 }
 
 /// A DRM fourcc and modifier the viewer's host can import.
@@ -561,6 +567,11 @@ impl ServerMessage {
                     w.u32(workspace.panes);
                 }
                 14
+            }
+            ServerMessage::Warp { x, y } => {
+                w.fixed(x);
+                w.fixed(y);
+                15
             }
         };
         w.finish(opcode)
@@ -1058,6 +1069,10 @@ impl Decoder {
                 }
                 ServerMessage::Listing { workspaces }
             }
+            15 => ServerMessage::Warp {
+                x: a.fixed()?,
+                y: a.fixed()?,
+            },
             _ => return Err(Error::UnknownOpcode(opcode)),
         };
         a.finish()?;
@@ -1361,6 +1376,7 @@ mod tests {
                     panes: 2,
                 }],
             },
+            ServerMessage::Warp { x: 640.5, y: 360.0 },
         ]
     }
 

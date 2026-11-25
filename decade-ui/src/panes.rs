@@ -444,6 +444,19 @@ impl<A: Copy + PartialEq> Layout<A> {
         self.pane_at(column, row).filter(|&id| id != self.focused)
     }
 
+    /// The middle of the focused pane in pixels, for a pointer on the cell
+    /// to move to, or `None` when the cell is on the focused pane already.
+    pub fn pointer_target(&self, column: u32, row: u32, cell: Size) -> Option<(f64, f64)> {
+        if self.pane_at(column, row) == Some(self.focused) {
+            return None;
+        }
+        let (x, y) = self.pane(self.focused)?.rect.center();
+        Some((
+            (x * i64::from(cell.width)) as f64 / 2.0,
+            (y * i64::from(cell.height)) as f64 / 2.0,
+        ))
+    }
+
     pub fn neighbour(&self, direction: Direction) -> Option<usize> {
         let (x, y) = self.pane(self.focused)?.rect.center();
         let mut best: Option<(i64, usize)> = None;
@@ -1688,6 +1701,16 @@ mod tests {
         assert_eq!(layout.hover_focus(10, inner.row, true), None);
         assert_eq!(layout.hover_focus(10, inner.row, false), Some(0));
         assert_eq!(layout.hover_focus(10, inner.row + 1, true), Some(0));
+    }
+
+    #[test]
+    fn the_pointer_target_is_the_focused_panes_middle_unless_the_pointer_is_on_it() {
+        let mut layout: Layout = three_anchors();
+        assert_eq!(layout.pointer_target(10, 10, CELL), Some((750.0, 200.0)));
+        assert_eq!(layout.pointer_target(60, 5, CELL), None);
+        layout.focused = 0;
+        assert_eq!(layout.pointer_target(60, 5, CELL), Some((250.0, 400.0)));
+        assert_eq!(layout.pointer_target(200, 50, CELL), Some((250.0, 400.0)));
     }
 
     #[test]

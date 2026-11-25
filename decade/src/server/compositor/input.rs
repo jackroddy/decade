@@ -21,6 +21,7 @@ use crate::server::clients;
 use crate::server::workspace::{PaneAction, Workspace};
 use crate::wire::{
     self, BTN_BACK, BTN_LEFT, BTN_RIGHT, BTN_SIDE, KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT,
+    ServerMessage,
 };
 use decade_ui::{BarButton, Direction, Drop, Press, Update};
 
@@ -571,6 +572,7 @@ impl State {
             Key::Focus(direction) => {
                 if let Some(id) = self.layout().neighbour(direction) {
                     self.focus(id);
+                    self.pointer_to_focus();
                 }
             }
             Key::Move(direction) => {
@@ -578,6 +580,7 @@ impl State {
                 if let Some(id) = self.layout().neighbour(direction) {
                     self.layout_mut().apply_drop(focused, Drop::Swap(id));
                     self.relayout();
+                    self.pointer_to_focus();
                 }
             }
             Key::Resize(direction) => {
@@ -586,7 +589,10 @@ impl State {
                     .resize_toward(focused, direction, RESIZE_STEP);
                 self.relayout();
             }
-            Key::NewPane => self.new_terminal_pane(),
+            Key::NewPane => {
+                self.new_terminal_pane();
+                self.pointer_to_focus();
+            }
             Key::NewTab => self.new_tab(),
             Key::PreviousTab | Key::NextTab => {
                 let shown = &self.workspaces[self.current()];
@@ -743,6 +749,21 @@ impl State {
         (layout.pane_at(column, row))
             .and_then(|id| self.tab().toplevel(id))
             .is_some_and(|toplevel| popups_over(toplevel.wl_surface()).next().is_some())
+    }
+
+    /// Ask the active viewer to move the host's pointer to the middle of
+    /// the focused pane, so the next motion does not focus another pane.
+    fn pointer_to_focus(&mut self) {
+        if !self.settings.follow_pointer {
+            return;
+        }
+        let (column, row) = self.pointer_cell();
+        let target = self
+            .layout()
+            .pointer_target(column, row, self.chrome_cell());
+        if let (Some(active), Some((x, y))) = (self.active, target) {
+            self.send(active, ServerMessage::Warp { x, y });
+        }
     }
 
     /// Whether a popup is open over any pane on screen.
