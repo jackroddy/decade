@@ -127,7 +127,7 @@ exception.
 
 A pane verb may not be one of these names, which decade keeps for its own
 messages: `hello`, `agent`, `ended`, `panes`, `restore`, `screenshot`,
-`welcome`, `error` and `from`.
+`record`, `record.stop`, `welcome`, `error` and `from`.
 decade answers a message to a pane that uses one with an error and
 does not forward it.
 
@@ -218,7 +218,7 @@ name for `<pane>`:
 | `pane` or `file` is missing or not a string | `malformed screenshot: <what is wrong>` |
 | no pane answers to `pane` | `no pane named <pane>` |
 | the pane is in a tab that is not shown | `pane <pane> is in tab <n>, which is not shown` |
-| the dialog is up for another screenshot | `decade is already asking the person about another screenshot` |
+| the dialog is up for another capture | `decade is already asking the person about another capture` |
 | the person denies | `the person refused a screenshot of pane <pane>` |
 | no answer within 30 seconds | `the person did not answer within 30 seconds, so decade took no screenshot of pane <pane>` |
 | the workspace closed while decade asked | `workspace <id> is closed` |
@@ -232,18 +232,130 @@ person allows the screenshot. When the client disconnects while the
 dialog asks for it, decade closes the dialog, turns on no mode and sends
 nothing.
 
-Each pane has an accept saved screenshots mode, apart from its accept
-screenshots mode. decade checks the first for a `screenshot` message and
-the second for the MCP tool. Turning one on leaves the other as it was.
-The person turns the mode on and off as for accept screenshots, and
-decade never saves it. With the mode off, decade asks in the same
-dialog, with the same rules. Its question is then "coax asks to save a
-screenshot of pane code to shot.png", and its middle choice turns on
-accept saved screenshots. While the mode is on, the pane carries a save
-tag after the camera tag. The save tag flashes at each capture for a
-`screenshot` message, and the camera tag at each capture for the MCP
-tool, whether the mode was on or the person allowed the capture in the
-dialog.
+decade checks the pane's accept captures mode for a `screenshot`
+message, as it does for the MCP tool. With the mode off, decade asks in
+the same dialog, with the same rules. Its question is then "coax asks to save a screenshot of
+pane code to shot.png".
+
+`record` asks decade to record what a pane draws into a new mp4 or GIF
+file. `pane`, `file` and `for` work as for `screenshot`, except that
+decade writes `file` itself, so it must be an absolute path. The other
+fields are optional:
+
+```json
+{"record": {"pane": "code", "file": "/work/demo.gif", "for": "chat", "format": "gif", "fps": 15, "duration": 10, "width": 800, "pointer": true, "loop": true}}
+```
+
+| field | value |
+|---|---|
+| `format` | `mp4` or `gif`, which must match the file's extension; by default the extension's |
+| `fps` | frames a second, 1 to 60; 30 for an mp4 and 15 for a GIF by default |
+| `duration` | seconds to record; without it, decade records until a stop or the limit |
+| `width` | the video's width in pixels, 2 to 7680, the height following the pane's aspect ratio; by default the pane's width |
+| `quality` | an mp4's crf for ffmpeg, 0 to 51, lower for better quality; 23 by default |
+| `pointer` | whether decade draws the pointer into the frames while its tip is over the pane's client area; true by default |
+| `loop` | whether a GIF plays in a loop; true by default |
+
+An mp4 runs for at most 5 minutes and a GIF for at most 1 minute.
+decade cuts a longer `duration` to that limit and does not refuse it.
+decade checks the pane's accept captures mode and asks in the same
+dialog, as for `screenshot`. The dialog's question is "coax asks to
+record pane code for 10 seconds to /work/demo.gif", or "until stopped,
+up to 1 minute, to" without `duration`. A recording ends at its
+duration, at its limit, at a `record.stop`, or when one of these
+happens:
+
+- the pane closes
+- its tab stops being the workspace's shown tab
+- no viewer shows its workspace any more, when a viewer showed it at
+  the start
+- the workspace sleeps or closes
+- the client disconnects
+
+A recording follows its pane through a rename. decade keeps what it
+recorded in every case. It answers once ffmpeg has written the file,
+with the file, the frames written, the frames dropped because ffmpeg
+fell behind, the seconds recorded and what ended the recording:
+
+```json
+{"record": {"file": "/work/demo.gif", "frames": 150, "dropped": 0, "seconds": 10.0, "ended": "it ran for its duration"}}
+```
+
+A recording that ends before its first frame leaves no file and gets an
+error.
+
+decade renders the pane for each frame as it does for `screenshot`, with
+neither the pane's bar and outline nor the dialog, menus and Ctrl bar.
+It writes the frames to an `ffmpeg` on its `PATH`. ffmpeg stamps each
+frame with the time it reads it and writes the video at a constant
+`fps`, repeating a frame where one is missing. The video therefore runs
+as long as the recording did, even when frames are dropped or late. A
+frame is dropped while two wait for ffmpeg, and `dropped` counts only
+those. A frame that fails to render is left out without a count, and
+ffmpeg repeats the frame before it.
+
+An mp4 is H.264 in yuv420p, which needs an even width and height.
+Without `width`, decade cuts the last column or row off a pane whose
+width or height is odd. With `width`, ffmpeg scales the frames to it.
+ffmpeg makes a GIF's palette from all of its frames, so it holds them
+all in memory until the recording ends. decade estimates that memory
+as 90 MiB plus 4.5 bytes for each pixel of each frame the recording
+can hold, at the GIF's size. The estimate was within 10% of ffmpeg 9's
+peak memory at three frame sizes. decade refuses a GIF whose
+estimate is more than half of `MemAvailable` in `/proc/meminfo`.
+
+Each frame has the size the pane had at the start. When the pane grows,
+decade keeps the top left of each frame at that size. When the pane
+shrinks, decade fills the right and bottom with black. While the
+recording runs, the pane's outline pulses red and carries a red tag at
+the left of its top edge, after the camera tag when the mode is on. The
+tag holds a blinking recording icon and the time the recording has
+run, as `m:ss`. Neither shows in the frames.
+
+decade answers `record` with an error in these cases:
+
+| when | `reason` |
+|---|---|
+| the client has not said hello | `say hello first` |
+| `pane` or `file` is missing, or a field has the wrong type | `malformed record: <what is wrong>` |
+| `file` is not absolute | `<file> is not an absolute path` |
+| the extension is neither `.mp4` nor `.gif` | `<file> does not end in .mp4 or .gif` |
+| `format` and the extension disagree | `<file> does not end in .<format>, as format <format> needs` |
+| `quality` for a GIF, or `loop` for an mp4 | `quality is for an mp4, not a gif`, `loop is for a gif, not an mp4` |
+| a value out of range | `fps is 1 to 60, not <fps>`, `duration is a number of seconds above 0, not <duration>`, `width is 2 to 7680 pixels, not <width>`, `quality is 0 to 51, not <quality>` |
+| no pane answers to `pane` | `no pane named <pane>` |
+| the pane is in a tab that is not shown | `pane <pane> is in tab <n>, which is not shown` |
+| the pane is off the screen | `pane <pane> has no room to draw` |
+| the pane is being recorded | `pane <pane> is already being recorded` |
+| decade's `PATH` has no `ffmpeg` | `ffmpeg is not on decade's PATH` |
+| the file's directory is missing | `<dir> does not exist` |
+| a file or a symlink is at the path | `<file> already exists` |
+| the GIF's estimate is over half the memory available | `a GIF of <frames> frames at <width>x<height> needs about <n> MiB in ffmpeg, more than half of the <m> MiB available` |
+| the dialog is up for another capture | `decade is already asking the person about another capture` |
+| the person denies | `the person refused a recording of pane <pane>` |
+| no answer within 30 seconds | `the person did not answer within 30 seconds, so decade took no recording of pane <pane>` |
+| the workspace closed while decade asked | `workspace <id> is closed` |
+| the workspace went to sleep while decade asked | `workspace <name> went to sleep` |
+| ffmpeg could not start | `starting ffmpeg failed: <error>` |
+| the recording ended before its first frame | `the recording of pane <pane> ended before its first frame, as <what ended it>, so decade wrote no file` |
+| ffmpeg failed | `ffmpeg failed, <exit status>:` and the last 20 lines of its stderr |
+
+decade checks the pane, ffmpeg, the file and the memory before it asks.
+It checks the pane, ffmpeg and the file again when the person allows
+the recording.
+
+`record.stop` names the pane in `pane`, by its current name or a former
+one, and ends its recording. decade sends the answer to the client that
+sent `record`. A `record.stop` gets no reply of its own, unless no
+recording of the pane runs:
+
+```json
+{"record.stop": {"pane": "code"}}
+```
+
+| when | `reason` |
+|---|---|
+| the pane is not being recorded | `pane <pane> is not being recorded` |
 
 ## Agents
 
@@ -350,7 +462,7 @@ A program decade starts in a pane gets an address ending in
 `?workspace=<id>&pane=<name>` instead. In the `panes` reply to a call on
 that address, `you` marks that pane.
 Its tools are `panes`, `agents`, `point`, `show`, `highlight`, `clear`,
-`screenshot`, `scratch.open`, `scratch.send`, `scratch.status` and `scratch.rename`. decade delivers a pane verb from a tool
+`screenshot`, `record`, `record.stop`, `record.status`, `scratch.open`, `scratch.send`, `scratch.status` and `scratch.rename`. decade delivers a pane verb from a tool
 call with `"from": "agent"`. decade answers `panes` with the pane list, in the shape
 of the socket's `panes` reply, `agents` with the agent list below, `screenshot` with an image, and
 every other call with a line saying what it did. When decade cannot act on a call, the result is a tool error whose
@@ -394,8 +506,10 @@ pixels are the screen's. decade refuses the call when no pane has that name and 
 the pane is in a tab that is not shown. The workspace itself need not be
 shown.
 
-Each pane has an accept screenshots mode, which the person turns on and
-off from the pane's Ctrl bar or its right click menu. The mode starts off.
+Each pane has an accept captures mode, which the person turns on and
+off from the pane's Ctrl bar or its right click menu. The mode covers
+the MCP tools `screenshot` and `record` and the socket's `screenshot`
+and `record` messages. It starts off.
 decade never saves it. A restored workspace has it off on every pane. With
 the mode on, decade captures the pane at once. With it off, decade opens a
 dialog in the middle of the window and dims everything behind it. Every
@@ -407,10 +521,31 @@ pane, decade's chrome or decade's keybinds. The person answers with a
 click on a choice, or with y, a or n. Escape denies. Keys and clicks in
 the dialog's first half second do nothing. The first answer from any
 viewer counts. A deny, or no answer within 30 seconds, ends the call with
-a tool error that gives the reason. decade refuses a `screenshot` that
+a tool error that gives the reason. decade refuses a capture that
 would ask while the dialog is up. While
 the mode is on, the pane carries a camera tag at the left end of its
-outline's top edge. The tag flashes at each capture for the tool.
+outline's top edge. The tag flashes at each capture, whether the mode
+was on or the person allowed the capture in the dialog.
+
+`record` takes the fields of the socket's `record`, without `for`.
+decade records as for the socket, with the same refusals. The call
+returns as soon as the recording starts: at once when the pane accepts
+captures, or else once the person allows it. Its answer gives the
+video's size, its `fps`, the most frames the recording can hold before
+its duration or limit, and for a GIF the memory estimate. An mp4 has no
+estimate, as x264 holds a fixed number of frames however long the
+recording runs.
+
+`record.stop` and `record.status` take `pane`, by its current name or a
+former one. `record.stop` ends the recording, waits for ffmpeg to write
+the file, and answers with the file, the frames written, the frames
+dropped, the seconds recorded and what ended the recording.
+`record.status` answers with the time recorded and the frames so far
+while the recording runs, and says so while ffmpeg is still writing the
+file. Once ffmpeg has written it, both tools answer with that finished result, or with its error. decade
+keeps each pane's last finished result until the pane's next recording
+starts. A `record.status` for a pane with no recording fails with
+`pane <pane> has not been recorded`.
 
 The person may mark any number of panes in a workspace as scratch panes,
 from the Ctrl bar. Marking one leaves the others marked.

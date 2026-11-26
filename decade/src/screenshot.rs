@@ -4,6 +4,8 @@ use std::path::Path;
 
 use decade_channel::{Channel, Message, Screenshot};
 
+use crate::files;
+
 /// Ask decade for a PNG of pane `pane` and write it to the new file
 /// `file`.
 pub fn run(pane: &str, file: &str) -> Result<(), String> {
@@ -46,25 +48,10 @@ pub fn run(pane: &str, file: &str) -> Result<(), String> {
 /// Refuse `file` unless it ends in `.png`, its directory exists and
 /// nothing is at its path.
 fn check_file(file: &Path) -> Result<(), String> {
-    let shown = file.display();
     if file.extension().is_none_or(|extension| extension != "png") {
-        return Err(format!("{shown} does not end in .png"));
+        return Err(format!("{} does not end in .png", file.display()));
     }
-    if let Some(dir) = file.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-        match std::fs::metadata(dir) {
-            Ok(metadata) if metadata.is_dir() => {}
-            Ok(_) => return Err(format!("{} is not a directory", dir.display())),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Err(format!("{} does not exist", dir.display()));
-            }
-            Err(error) => return Err(format!("{}: {error}", dir.display())),
-        }
-    }
-    match std::fs::symlink_metadata(file) {
-        Ok(_) => Err(format!("{shown} already exists")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("{shown}: {error}")),
-    }
+    files::check_new(file)
 }
 
 fn write_new(file: &Path, png: &[u8]) -> io::Result<()> {

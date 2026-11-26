@@ -12,6 +12,50 @@ command line and what the tool writes.
 
 ### Added
 
+- `decade record PANE FILE` asks decade to record pane PANE into FILE, an
+  mp4 or a GIF, and prints what decade wrote. `--format`, `--fps`,
+  `--duration`, `--width` and `--quality` set those fields of the
+  request. `--no-pointer` leaves the pointer out, and `--once` makes a
+  GIF play once. The command makes FILE absolute. Before it connects, it
+  refuses a FILE whose extension is neither `.mp4` nor `.gif` or
+  disagrees with `--format`, a FILE that exists, and a FILE whose
+  directory is missing.
+- The socket takes `record` and `record.stop` messages to decade.
+  `record` names a pane and an absolute path, with optional `format`,
+  `fps`, `duration`, `width`, `quality`, `pointer` and `loop`. decade
+  renders the pane as for a screenshot and writes the frames to
+  `ffmpeg`. It answers once ffmpeg has written the file. A recording
+  ends at its duration, at its limit of 5 minutes for an mp4 or 1 minute
+  for a GIF, at `record.stop`, or when the pane closes, its tab or
+  workspace leaves the screen, the workspace sleeps or closes, or the
+  requester disconnects. decade cuts a longer duration to the limit. It
+  keeps what it recorded in every case. A recording that ends before its
+  first frame leaves no file and answers with an error. A recording
+  follows its pane through a rename. ffmpeg stamps each frame with the
+  time it reads it and writes a constant frame rate, so the video lasts
+  as long as the recording ran when frames are dropped or late.
+  `dropped` counts the frames left out while ffmpeg was behind. An mp4
+  without `width` loses an odd last column or row rather than being
+  scaled. When the pane changes size, decade keeps the top left of a
+  larger frame and pads a smaller one with black on the right and
+  bottom. decade refuses a recording without `ffmpeg` on its `PATH`, of
+  a pane already being recorded, into a file that exists or whose
+  directory is missing, and of a GIF whose memory estimate in ffmpeg
+  is over half of `MemAvailable`. The estimate is 90 MiB plus 4.5 bytes
+  for each pixel of each frame. The accept captures mode and its dialog
+  cover recordings. While a pane is being recorded, its outline pulses
+  red, and a red tag on its top edge holds a blinking recording icon
+  and the time recorded. The frames show neither. A pane verb may no
+  longer be named `record` or `record.stop`.
+- The MCP server has `record`, `record.stop` and `record.status` tools.
+  `record` takes the socket message's fields and returns as soon as the
+  recording starts. Its answer gives the video's size, its fps, the most
+  frames it can hold and, for a GIF, the memory estimate.
+  `record.stop` ends the recording, waits for ffmpeg, and answers with
+  the file, the frames written and dropped, the seconds and what ended
+  it. `record.status` gives the time and frames so far, and after the
+  end the same finished result. decade keeps each pane's last result
+  until its next recording starts.
 - `decade screenshot PANE FILE` asks decade for a PNG of pane PANE and
   writes it to FILE, relative to the directory the command runs in. It
   connects to the socket in `DECADE_SOCKET` and claims no pane. When
@@ -27,20 +71,11 @@ command line and what the tool writes.
   `for` is the pane of the agent asking. decade answers with
   `{"screenshot": {"png": ...}}`, the PNG in base64, or with an error.
   A pane verb may no longer be named `screenshot`.
-- Each pane has an accept saved screenshots mode beside accept
-  screenshots. Turning one on leaves the other as it was. decade checks
-  the new mode for a `screenshot` message and the old one for the MCP
-  tool. The person turns the new mode on and off from the pane's Ctrl
-  bar or its right click menu. It starts off and decade never saves it.
-  With it off, decade asks in a dialog whose question is "coax asks to
-  save a screenshot of pane code to shot.png". The choices are allow
-  once, allow and accept saved screenshots, and deny, with y, a and n.
-  As with the screenshot dialog, decade refuses after 30 seconds,
-  ignores keys and clicks in the first half second, and refuses a
-  request while a dialog is up. While the mode is on, the pane carries a
-  save tag after the camera tag. The save tag flashes at each capture
-  for a `screenshot` message and the camera tag at each capture for the
-  MCP tool. When the client of a save dialog disconnects, decade closes
+- decade checks the pane's accept captures mode for a `screenshot`
+  message, as it does for the MCP tool. With the mode off, decade asks in a dialog whose
+  question is "coax asks to save a screenshot of pane code to
+  shot.png". The dialog has the choices and rules of the MCP tool's
+  dialog. When the client of a save dialog disconnects, decade closes
   the dialog and turns on no mode.
 - An `agent` message may carry `subagents`, the list of sub-agents and
   background tasks the agent started, each with a name, an activity and
@@ -114,6 +149,13 @@ command line and what the tool writes.
 
 ### Changed
 
+- A capture asked for while the dialog is up for another is refused with
+  "decade is already asking the person about another capture". Before,
+  the reason said "screenshot".
+- The accept screenshots mode is now accept captures. It covers the MCP
+  tool `screenshot` and the socket's `screenshot` message. The pane's
+  right click menu offers Accept captures, and the dialog's middle choice
+  is Allow and accept captures. The camera tag flashes at every capture.
 - decade queues what it writes to a socket client and writes the rest
   each time the socket has room. Before, a line larger than the
   socket's buffer, such as a screenshot of a large pane, made decade

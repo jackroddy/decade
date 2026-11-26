@@ -11,6 +11,11 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 
 ### Added
 
+- `Chrome::recordings` lists the panes being recorded, each a
+  `Recording`. The layout mixes the pane's outline toward red by the
+  recording's `strength`. It draws a red tag after the left tag with the
+  recording's icon while `lit` and its `elapsed` text.
+
 - `Layout::hover_focus` gives the pane that pointer motion onto a cell
   focuses, or `None` during a drag, over a shown Ctrl bar or on the
   focused pane.

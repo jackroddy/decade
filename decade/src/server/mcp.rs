@@ -1,7 +1,7 @@
 use std::io;
 use std::net::TcpListener;
 
-use decade_channel::{Clear, Highlight, Show};
+use decade_channel::{Clear, Highlight, Record, Show};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
@@ -82,6 +82,20 @@ pub enum Call {
 
     /// Capture the client area of pane `pane` as a PNG.
     Screenshot {
+        pane: String,
+    },
+
+    /// Record a pane into a file, answering once the file is written.
+    Record(Record),
+
+    /// End the recording of pane `pane`, answering once the file is
+    /// written.
+    RecordStop {
+        pane: String,
+    },
+
+    /// How the recording of pane `pane` is going, or how it ended.
+    RecordStatus {
         pane: String,
     },
 }
@@ -234,11 +248,52 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "screenshot",
-            "Capture what a pane in the shown tab draws, without its bar or outline, as a PNG at the screen's pixels. Unless the user has turned on accept screenshots for the pane, decade asks the user first and waits up to 30 seconds. A refusal or no answer fails the call with the reason",
+            "Capture what a pane in the shown tab draws, without its bar or outline, as a PNG at the screen's pixels. Unless the user has turned on accept captures for the pane, decade asks the user first and waits up to 30 seconds. A refusal or no answer fails the call with the reason",
             schema(json!({
                 "type": "object",
                 "properties": {
                     "pane": {"type": "string", "description": "a pane name, as panes lists it"}
+                },
+                "required": ["pane"]
+            })),
+        ),
+        Tool::new(
+            "record",
+            "Start recording what a pane in the shown tab draws into a new mp4 or GIF file, without its bar or outline. Unless the user has turned on accept captures for the pane, decade asks the user first and waits up to 30 seconds. The call returns once the recording starts, with the video's size, its fps, the most frames it can hold and, for a GIF, the memory ffmpeg needs. The recording ends at its duration, at 5 minutes for an mp4 or 1 minute for a GIF, on record.stop, or when the pane closes or its tab or workspace leaves the screen. record.status reports on it, and record.stop ends it and returns the finished file. decade needs ffmpeg on its PATH, and refuses a file that exists or whose directory does not, and a GIF that would take more than half the memory available",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": {"type": "string", "description": "a pane name, as panes lists it"},
+                    "file": {"type": "string", "description": "the absolute path to write, ending in .mp4 or .gif"},
+                    "format": {"type": "string", "enum": ["mp4", "gif"], "description": "the file's format, which must match its extension; by default the extension's"},
+                    "fps": {"type": "integer", "description": "frames a second, 1 to 60; 30 for mp4 and 15 for gif by default"},
+                    "duration": {"type": "number", "description": "seconds to record, cut to 300 for an mp4 and 60 for a GIF; by default until record.stop or that limit"},
+                    "width": {"type": "integer", "description": "the width in pixels, the height following the pane's aspect ratio; by default the pane's width"},
+                    "quality": {"type": "integer", "description": "mp4 only: ffmpeg's crf, 0 to 51, lower for better quality; 23 by default"},
+                    "pointer": {"type": "boolean", "description": "draw the pointer while it is over the pane; true by default"},
+                    "loop": {"type": "boolean", "description": "gif only: play in a loop; true by default"}
+                },
+                "required": ["pane", "file"]
+            })),
+        ),
+        Tool::new(
+            "record.stop",
+            "End the recording of a pane and wait for ffmpeg to write the file. The answer gives the file, the frames written, the frames dropped because ffmpeg fell behind, the seconds recorded and what ended the recording. For a recording that has already ended, the answer is its finished result",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": {"type": "string", "description": "the pane being recorded"}
+                },
+                "required": ["pane"]
+            })),
+        ),
+        Tool::new(
+            "record.status",
+            "Tell how the recording of a pane is going: the time recorded and the frames so far. Once it has ended, for any reason, the answer is its finished result, as record.stop gives it, until the pane's next recording starts",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": {"type": "string", "description": "the pane recorded"}
                 },
                 "required": ["pane"]
             })),
@@ -286,7 +341,7 @@ struct ToPane<T> {
     payload: T,
 }
 
-/// The arguments of `screenshot`.
+/// The arguments of `screenshot`, `record.stop` and `record.status`.
 #[derive(Deserialize)]
 struct Screenshot {
     pane: String,
@@ -351,6 +406,15 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
         "screenshot" => {
             let Screenshot { pane } = parse(name, arguments)?;
             Ok(Call::Screenshot { pane })
+        }
+        "record" => Ok(Call::Record(parse(name, arguments)?)),
+        "record.stop" => {
+            let Screenshot { pane } = parse(name, arguments)?;
+            Ok(Call::RecordStop { pane })
+        }
+        "record.status" => {
+            let Screenshot { pane } = parse(name, arguments)?;
+            Ok(Call::RecordStatus { pane })
         }
         "scratch.send" => {
             let ScratchSend {
@@ -425,7 +489,9 @@ impl ServerHandler for Decade {
                  out while there are several. \
                  point draws the user's eye \
                  to a pane without taking keyboard focus. screenshot returns an image of what \
-                 a pane draws, once the user allows it. agents lists the agents in the \
+                 a pane draws, once the user allows it. record starts recording what it \
+                 draws to an mp4 or GIF file, record.status reports on the recording \
+                 and record.stop ends it. agents lists the agents in the \
                  workspace with what each last reported.",
             )
     }
@@ -634,6 +700,9 @@ mod tests {
                 "scratch.status",
                 "scratch.rename",
                 "screenshot",
+                "record",
+                "record.stop",
+                "record.status",
                 "scratch.send"
             ]
         );
@@ -739,6 +808,41 @@ mod tests {
             call_for("focus", Map::new()).err().unwrap(),
             "no tool named focus"
         );
+    }
+
+    #[test]
+    fn record_takes_a_pane_a_file_and_optional_settings_and_record_stop_and_status_a_pane() {
+        let Ok(Call::Record(record)) = call_for(
+            "record",
+            schema(json!({"pane": "code", "file": "/work/a.mp4", "duration": 4.5, "quality": 18})),
+        ) else {
+            panic!("a record call");
+        };
+        assert_eq!(
+            (record.pane.as_str(), record.file.as_str()),
+            ("code", "/work/a.mp4")
+        );
+        assert_eq!((record.duration, record.quality), (Some(4.5), Some(18)));
+        assert_eq!(
+            (record.fps, record.format, record.r#loop),
+            (None, None, None)
+        );
+        assert!(call_for("record", schema(json!({"pane": "code"}))).is_err());
+        assert!(
+            call_for(
+                "record",
+                schema(json!({"pane": "code", "file": "/a.gif", "fps": "fast"}))
+            )
+            .is_err()
+        );
+        assert!(matches!(
+            call_for("record.stop", schema(json!({"pane": "code"}))),
+            Ok(Call::RecordStop { pane }) if pane == "code"
+        ));
+        assert!(matches!(
+            call_for("record.status", schema(json!({"pane": "code"}))),
+            Ok(Call::RecordStatus { pane }) if pane == "code"
+        ));
     }
 
     #[test]

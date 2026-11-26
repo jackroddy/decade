@@ -2,6 +2,7 @@ mod channels;
 mod groups;
 mod input;
 mod pool;
+mod record;
 mod render;
 mod screenshot;
 mod selection;
@@ -171,6 +172,17 @@ pub struct State {
     /// The screenshot waiting on the person's answer to the dialog.
     asking: Option<screenshot::Asking>,
     capturing: Vec<screenshot::Capturing>,
+
+    /// The recordings, from their first frame until decade answers for
+    /// them.
+    recordings: Vec<record::Recording>,
+    next_recording: u64,
+
+    /// The result of each pane's last recording.
+    finished: Vec<record::Finished>,
+
+    /// Where the thread feeding a recording's ffmpeg sends its result.
+    recorded: calloop_channel::Sender<(u64, Result<(), String>)>,
     unplaced: Vec<ToplevelSurface>,
     popups: PopupManager,
 
@@ -248,6 +260,14 @@ pub fn run() {
     let runtime = files::runtime_dir();
     remove_stale_sockets(&runtime);
     let mcp = start_mcp(&handle);
+    let (recorded, written) = calloop_channel::channel();
+    handle
+        .insert_source(written, |event, _, state: &mut State| {
+            if let ChannelEvent::Msg((id, result)) = event {
+                state.recording_written(id, result);
+            }
+        })
+        .unwrap();
     let mut state = State {
         repeat,
         repeating: None,
@@ -284,6 +304,10 @@ pub fn run() {
         next_group: 0,
         asking: None,
         capturing: Vec::new(),
+        recordings: Vec::new(),
+        next_recording: 0,
+        finished: Vec::new(),
+        recorded,
         unplaced: Vec::new(),
         popups: PopupManager::default(),
         popup_grab: None,
@@ -1059,8 +1083,7 @@ impl State {
             Command::Pin(id) => self.toggle_pin(id),
             Command::Zoom(id) => self.toggle_zoom(id),
             Command::Scratch(id) => self.toggle_scratch(id),
-            Command::Screenshots(id) => self.toggle_screenshots(id),
-            Command::SavedScreenshots(id) => self.toggle_saved_screenshots(id),
+            Command::Captures(id) => self.toggle_captures(id),
             Command::Clear(id) => {
                 if let Some(index) = self.workspace_index(id) {
                     self.clear_agents(index);
@@ -1478,6 +1501,7 @@ impl State {
                 pulsing |= shown.keep_point(now);
                 steady |= shown.keep_flash(now);
             }
+            steady |= state.recording();
             pulsing |= steady;
             tick = tick.wrapping_add(1);
             if steady || tick.is_multiple_of(CARD_PULSE_TICKS) {

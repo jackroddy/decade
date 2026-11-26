@@ -9,6 +9,23 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 
 ## [Unreleased]
 
+### Added
+
+- `Channel::record` sends a `record` message carrying a `Record`: the
+  pane, the absolute path of the file decade writes, the optional pane
+  of the agent asking, and the optional `Format`, frame rate, duration,
+  width, quality, pointer and loop settings. decade's answer arrives
+  once the file is written, as `Message::Record` with a `Recorded`, or
+  as `Message::Error`. `Recorded` gives the file, the frames written and
+  dropped, the seconds recorded and what ended the recording.
+- `Channel::record_stop` sends a `record.stop` message carrying a
+  `RecordStop`, which ends the recording of a pane.
+
+### Changed
+
+- `Message` and `Reply` each have a `Record` variant. A `match` over
+  either without a wildcard arm no longer compiles.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added

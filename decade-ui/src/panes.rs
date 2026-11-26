@@ -161,9 +161,8 @@ pub struct Marks<A> {
     /// close.
     pub buttons: Vec<Button<A>>,
 
-    /// The icons tagged at the left of the outline's top edge, left to
-    /// right.
-    pub left_tags: Vec<char>,
+    /// The icon tagged at the left of the outline's top edge.
+    pub left_tag: Option<char>,
 
     /// The tags at the right of the outline's top edge, from the corner in.
     pub tags: Vec<Tag>,
@@ -174,7 +173,7 @@ impl<A> Default for Marks<A> {
     fn default() -> Marks<A> {
         Marks {
             buttons: Vec::new(),
-            left_tags: Vec::new(),
+            left_tag: None,
             tags: Vec::new(),
             placeholder: Placeholder {
                 lines: Vec::new(),
@@ -305,8 +304,11 @@ pub struct Chrome<'a, A> {
     /// The pane whose outline pulses to draw the eye.
     pub pulse: Option<Pulse<'a>>,
 
-    /// The left tag that flashes.
-    pub flash: Option<Flash>,
+    /// The pane whose left tag flashes, and how bright, from 0 to 1.
+    pub flash: Option<(usize, f32)>,
+
+    /// The panes being recorded.
+    pub recordings: &'a [Recording<'a>],
 }
 
 impl<A> Default for Chrome<'_, A> {
@@ -317,20 +319,26 @@ impl<A> Default for Chrome<'_, A> {
             tab_hover: None,
             pulse: None,
             flash: None,
+            recordings: &[],
         }
     }
 }
 
-/// A left tag of a pane, brightened after the program used what it marks.
+/// A pane being recorded: its outline pulses red, and a red tag after its
+/// left tag holds a blinking icon and the time the recording has run.
 #[derive(Clone, Copy)]
-pub struct Flash {
+pub struct Recording<'a> {
     pub pane: usize,
 
-    /// The icon of the tag, among the pane's `left_tags`.
-    pub tag: char,
-
-    /// How bright, from 0 to 1.
+    /// How far the outline's pulse is toward red, from 0 to 1.
     pub strength: f32,
+
+    /// The icon, drawn while `lit`.
+    pub icon: char,
+    pub lit: bool,
+
+    /// The time the recording has run, such as `0:07`.
+    pub elapsed: &'a str,
 }
 
 /// A pane whose outline pulses to draw the eye.
@@ -827,8 +835,11 @@ impl<A: Copy + PartialEq> Layout<A> {
                 palette::get().muted
             };
             let pulse = chrome.pulse.filter(|pulse| pulse.pane == pane.id);
-            let flash = chrome.flash.filter(|flash| flash.pane == pane.id);
-            self.draw_outline(scene, pane, outline, flash, pulse);
+            let flash = (chrome.flash)
+                .filter(|&(id, _)| id == pane.id)
+                .map_or(0.0, |(_, flash)| flash);
+            let recording = (chrome.recordings.iter()).find(|recording| recording.pane == pane.id);
+            self.draw_outline(scene, pane, outline, flash, pulse, recording);
             draw_placeholder(scene, pane, pane.rect.inner());
             let hover = (chrome.tab_hover)
                 .filter(|&(id, _)| id == pane.id)
@@ -845,15 +856,16 @@ impl<A: Copy + PartialEq> Layout<A> {
     }
 
     /// The pane's outline with its tags on its top edge, the left one
-    /// the one `flash` names brightened, pulsing with its note when `pulse`
-    /// is at it.
+    /// brightened by `flash`, pulsing with its note when `pulse` is at it,
+    /// and red with the recording's tag while `recording` is at it.
     fn draw_outline(
         &self,
         scene: &mut Scene,
         pane: &Pane<A>,
         color: Rgba,
-        flash: Option<Flash>,
+        flash: f32,
         pulse: Option<Pulse>,
+        recording: Option<&Recording>,
     ) {
         let (cell_width, cell_height) = scene.cell();
         let line = scene.line_width();
@@ -873,6 +885,8 @@ impl<A: Copy + PartialEq> Layout<A> {
         let bottom = inset(rect.row + rect.rows == area.row + area.rows, cell_height);
         let strength = pulse.map_or(0.0, |pulse| pulse.strength);
         let color = palette::mix(color, palette::get().magenta, strength);
+        let red = recording.map_or(0.0, |recording| recording.strength);
+        let color = palette::mix(color, palette::get().red, red);
         scene.outline(rect, [left, top, right, bottom], color);
         if pulse.is_some() {
             let [r, g, b, _] = palette::get().magenta;
@@ -888,18 +902,17 @@ impl<A: Copy + PartialEq> Layout<A> {
         let height = cell_height - 2 * scene.scaled(TAG_INSET);
         let pill_y = line_y + line / 2 - height / 2;
 
-        // the left tags take their room first, so the
-        // tags on the right are dropped before they are
+        // the left tag takes its room first, so the
+        // tags on the right are dropped before it is
         let mut limit = x + left + cell_width;
-        let mut left_tag = x + left + cell_width * 2;
-        for &icon in &pane.marks.left_tags {
-            let left_end = left_tag + cell_width;
-            if left_end + padding >= x + width - right - cell_width * 2 {
-                break;
-            }
+        let left_tag = x + left + cell_width * 2;
+        let left_end = left_tag + cell_width;
+        let left_fits = left_end + padding < x + width - right - cell_width * 2;
+        if let Some(icon) = pane.marks.left_tag
+            && left_fits
+        {
             let size = (cell_width + padding * 2, height);
-            let strength = (flash.filter(|flash| flash.tag == icon)).map_or(0.0, |f| f.strength);
-            let fill = palette::mix(color, palette::get().foreground, strength);
+            let fill = palette::mix(color, palette::get().foreground, flash);
             scene.rounded(left_tag - padding, pill_y, size, radius, fill, fill);
             let icon = icon.to_string();
             scene.text_px(
@@ -910,7 +923,24 @@ impl<A: Copy + PartialEq> Layout<A> {
                 palette::get().dark_background,
             );
             limit = left_end + padding + scene.scaled(TAG_GAP);
-            left_tag = limit + padding;
+        }
+        if let Some(recording) = recording {
+            let start = limit + padding;
+            let cells = 2 + recording.elapsed.chars().count() as i32;
+            let end = start + cells * cell_width;
+            if end + padding < x + width - right - cell_width * 2 {
+                let size = (end - start + padding * 2, height);
+                let red = palette::get().red;
+                scene.rounded(start - padding, pill_y, size, radius, red, red);
+                let ink = palette::get().dark_background;
+                if recording.lit {
+                    let icon = recording.icon.to_string();
+                    scene.text_px(start, text_y, &icon, Face::Icon, ink);
+                }
+                let time = start + cell_width * 2;
+                scene.text_px(time, text_y, recording.elapsed, Face::Chrome, ink);
+                limit = end + padding + scene.scaled(TAG_GAP);
+            }
         }
         let mut end = x + width - right - cell_width * 2;
         let zoomed = self.zoom == Some(pane.id);
@@ -2336,14 +2366,9 @@ mod tests {
     fn a_pane_with_a_left_tag_has_it_at_the_left_of_its_top_line_and_it_flashes() {
         let mut layout: Layout = three_anchors();
         layout.focused = 0;
-        layout.panes[0].marks.left_tags = vec!['s'];
+        layout.panes[0].marks.left_tag = Some('s');
         let font = crate::Font::load(14.0);
         let tags = |flash: Option<(usize, f32)>| {
-            let flash = flash.map(|(pane, strength)| Flash {
-                pane,
-                tag: 's',
-                strength,
-            });
             let mut scene = Scene::new(&font);
             layout.draw(
                 &mut scene,
@@ -2368,34 +2393,45 @@ mod tests {
     }
 
     #[test]
-    fn two_left_tags_sit_in_their_own_pills_left_to_right_and_only_the_named_one_flashes() {
+    fn a_recorded_pane_has_a_red_tag_after_its_left_tag_with_the_time_and_a_blinking_icon() {
         let mut layout: Layout = three_anchors();
         layout.focused = 0;
-        layout.panes[0].marks.left_tags = vec!['s', 'v'];
+        layout.panes[0].marks.left_tag = Some('s');
         let font = crate::Font::load(14.0);
-        let fills = |tag: char| {
-            let mut scene = Scene::new(&font);
-            let flash = Flash {
+        let drawn = |lit: bool, strength: f32| {
+            let recordings = [Recording {
                 pane: 0,
-                tag,
-                strength: 1.0,
+                strength,
+                icon: 'r',
+                lit,
+                elapsed: "0:07",
+            }];
+            let mut scene = Scene::new(&font);
+            let chrome = Chrome {
+                recordings: &recordings,
+                ..Chrome::default()
             };
-            layout.draw(
-                &mut scene,
-                Chrome {
-                    flash: Some(flash),
-                    ..Chrome::default()
-                },
-            );
-            let [(first, _, width, _, a), (second, _, _, _, b)] = rounded(&scene)[..] else {
-                panic!("two tags");
-            };
-            assert!(first + width < second);
-            [a, b]
+            layout.draw(&mut scene, chrome);
+            scene
         };
-        let (plain, bright) = (palette::get().cyan, palette::get().foreground);
-        assert_eq!(fills('s'), [bright, plain]);
-        assert_eq!(fills('v'), [plain, bright]);
+        let scene = drawn(true, 0.0);
+        let [(camera, ..), (tag, _, _, _, fill)] = rounded(&scene)[..] else {
+            panic!("two tags");
+        };
+        assert!(camera < tag);
+        assert_eq!(fill, palette::get().red);
+        let lit = texts(&scene);
+        assert!(lit.contains(&"r".to_string()) && lit.contains(&"0:07".to_string()));
+        let unlit = texts(&drawn(false, 0.0));
+        assert!(!unlit.contains(&"r".to_string()) && unlit.contains(&"0:07".to_string()));
+        let outline = |scene: &Scene| {
+            (scene.shapes.iter()).find_map(|shape| match shape {
+                crate::Shape::Rect { color, .. } => Some(*color),
+                _ => None,
+            })
+        };
+        assert_eq!(outline(&drawn(true, 0.0)), Some(palette::get().cyan));
+        assert_eq!(outline(&drawn(true, 1.0)), Some(palette::get().red));
     }
 
     #[test]
@@ -2406,7 +2442,7 @@ mod tests {
         };
         let mut layout = Layout::new(narrow, "terminal".to_string());
         layout.toggle_zoom(0);
-        layout.panes[0].marks.left_tags = vec!['s'];
+        layout.panes[0].marks.left_tag = Some('s');
         layout.panes[0].marks.tags = vec![Tag::Icon('p'), Tag::Zoom];
         let font = crate::Font::load(14.0);
         let mut scene = Scene::new(&font);

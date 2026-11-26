@@ -35,6 +35,26 @@ pub fn read(path: &Path) -> Result<Option<String>, String> {
     }
 }
 
+/// Refuse a path to write a new file at unless its directory exists and
+/// nothing is at the path, not even a dangling symlink.
+pub fn check_new(file: &Path) -> Result<(), String> {
+    if let Some(dir) = file.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        match std::fs::metadata(dir) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err(format!("{} is not a directory", dir.display())),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(format!("{} does not exist", dir.display()));
+            }
+            Err(error) => return Err(format!("{}: {error}", dir.display())),
+        }
+    }
+    match std::fs::symlink_metadata(file) {
+        Ok(_) => Err(format!("{} already exists", file.display())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("{}: {error}", file.display())),
+    }
+}
+
 /// The top-level `version` of a TOML file.
 pub fn version(text: &str) -> Result<u32, String> {
     let version: Version = toml::from_str(text).map_err(|error| error.to_string())?;

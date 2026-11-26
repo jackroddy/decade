@@ -1,13 +1,12 @@
 use decade_ui::overlay::{Choice, Dialog};
 
-/// How the person answers decade's question whether an agent may take or
-/// save a screenshot of a pane.
+/// How the person answers decade's question whether an agent may capture
+/// a pane.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Answer {
     Once,
 
-    /// Allow this one and turn on the pane's accept screenshots mode, or
-    /// its accept saved screenshots mode for a screenshot to save.
+    /// Allow this one and turn on the pane's accept captures mode.
     Always,
     Deny,
 }
@@ -23,13 +22,7 @@ const fn choice(answer: Answer, label: &'static str, key: char) -> Choice<Answer
 
 static CHOICES: [Choice<Answer>; 3] = [
     choice(Answer::Once, "Allow once", 'y'),
-    choice(Answer::Always, "Allow and accept screenshots", 'a'),
-    choice(Answer::Deny, "Deny", 'n'),
-];
-
-static SAVE_CHOICES: [Choice<Answer>; 3] = [
-    choice(Answer::Once, "Allow once", 'y'),
-    choice(Answer::Always, "Allow and accept saved screenshots", 'a'),
+    choice(Answer::Always, "Allow and accept captures", 'a'),
     choice(Answer::Deny, "Deny", 'n'),
 ];
 
@@ -63,7 +56,34 @@ pub fn save_dialog(agent: &str, pane: &str, file: &str) -> Dialog<'static, Answe
         question: format!("{agent} asks to save a screenshot"),
         detail: format!("of pane {pane} to"),
         path: Some(file.to_string()),
-        choices: &SAVE_CHOICES,
+        choices: &CHOICES,
+        escape: Answer::Deny,
+        armed: false,
+        selected: 0,
+        window: (0, 0),
+        cell: (0, 0),
+    }
+}
+
+/// The dialog that asks the person whether `agent` may record pane `pane`
+/// into `file` for `duration`, or until stopped, up to `limit`, when
+/// `duration` is `None`. The caller sets the rest.
+pub fn record_dialog(
+    agent: &str,
+    pane: &str,
+    duration: Option<&str>,
+    limit: &str,
+    file: &str,
+) -> Dialog<'static, Answer> {
+    let detail = match duration {
+        Some(duration) => format!("for {duration} to"),
+        None => format!("until stopped, up to {limit}, to"),
+    };
+    Dialog {
+        question: format!("{agent} asks to record pane {pane}"),
+        detail,
+        path: Some(file.to_string()),
+        choices: &CHOICES,
         escape: Answer::Deny,
         armed: false,
         selected: 0,
@@ -105,18 +125,24 @@ mod tests {
             "coax asks to save a screenshot of pane code to /work/shot.png"
         );
         let labels: Vec<&str> = dialog.choices.iter().map(|choice| choice.label).collect();
-        assert_eq!(
-            labels,
-            ["Allow once", "Allow and accept saved screenshots", "Deny"]
-        );
+        assert_eq!(labels, ["Allow once", "Allow and accept captures", "Deny"]);
         assert_eq!(dialog.escape, Answer::Deny);
     }
 
     #[test]
-    fn the_save_dialog_answers_to_the_same_keys_as_the_screenshot_dialog() {
-        let keys = |choices: &[Choice<Answer>]| -> Vec<(char, Answer)> {
-            choices.iter().map(|c| (c.key, c.answer)).collect()
+    fn the_record_dialog_names_the_pane_the_time_and_the_file() {
+        let text = |duration| {
+            let dialog = record_dialog("coax", "code", duration, "1 minute", "/work/demo.gif");
+            let path = dialog.path.as_deref().unwrap_or_default();
+            format!("{} {} {path}", dialog.question, dialog.detail)
         };
-        assert_eq!(keys(&SAVE_CHOICES), keys(&CHOICES));
+        assert_eq!(
+            text(Some("4.5 seconds")),
+            "coax asks to record pane code for 4.5 seconds to /work/demo.gif"
+        );
+        assert_eq!(
+            text(None),
+            "coax asks to record pane code until stopped, up to 1 minute, to /work/demo.gif"
+        );
     }
 }
