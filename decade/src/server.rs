@@ -5,6 +5,7 @@ mod children;
 pub(super) mod chrome;
 mod clients;
 pub(super) mod compositor;
+mod drive;
 mod mcp;
 mod proc;
 mod save;

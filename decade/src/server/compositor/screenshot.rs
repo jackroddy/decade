@@ -19,6 +19,7 @@ use crate::server::mcp;
 use super::record;
 use crate::server::workspace::PaneInfo;
 
+use super::driving::Played;
 use super::record::{Plan, Requester};
 use super::{State, popups_over, send_frames_surface_tree, waits_for_frame};
 
@@ -50,14 +51,31 @@ pub(super) enum Asker {
     /// The MCP tool `record` or the socket's `record`, which records the
     /// pane by `plan`.
     Record { to: Requester, plan: Plan },
+
+    /// The MCP tool `scratch.input`.
+    Input(Played),
 }
 
 impl Asker {
-    /// What the asker asked for, as the refusals name it.
-    fn noun(&self) -> &'static str {
-        match self {
+    /// Why decade turned the asker down when the person said no, or did
+    /// not answer for `unanswered`.
+    fn refusal(&self, pane: &str, unanswered: Option<Duration>) -> String {
+        let noun = match self {
             Asker::Record { .. } => "recording",
+            Asker::Input(_) => "input",
             _ => "screenshot",
+        };
+        match (self, unanswered) {
+            (Asker::Input(_), Some(ask_for)) => format!(
+                "the person did not answer within {} seconds, so decade played no input in pane {pane}",
+                ask_for.as_secs()
+            ),
+            (Asker::Input(_), None) => format!("the person refused input to pane {pane}"),
+            (_, Some(ask_for)) => format!(
+                "the person did not answer within {} seconds, so decade took no {noun} of pane {pane}",
+                ask_for.as_secs()
+            ),
+            (_, None) => format!("the person refused a {noun} of pane {pane}"),
         }
     }
 }
@@ -116,6 +134,7 @@ impl State {
     fn allowed(&mut self, workspace: usize, pane: String, asker: Asker) {
         match asker {
             Asker::Record { to, plan } => self.start_recording(workspace, pane, to, plan),
+            Asker::Input(played) => self.drive(workspace, &pane, played),
             asker => self.capture_fresh(workspace, pane, asker),
         }
     }
@@ -124,6 +143,9 @@ impl State {
     pub(super) fn refuse(&mut self, asker: Asker, reason: String) {
         match asker {
             Asker::Record { to, .. } => self.answer_record(to, Err(reason)),
+            Asker::Input(played) => {
+                let _ = played.reply.send(Err(reason));
+            }
             asker => self.answer_asker(asker, Err(reason)),
         }
     }
@@ -145,7 +167,9 @@ impl State {
                 };
                 self.channel_send(client, &serde_json::to_string(&reply).unwrap());
             }
-            Asker::Record { .. } => unreachable!("refuse answers a recording"),
+            Asker::Record { .. } | Asker::Input(_) => {
+                unreachable!("refuse answers a recording and input")
+            }
         }
     }
 
@@ -188,11 +212,15 @@ impl State {
             self.refuse(asker, reason);
             return;
         }
-        let shown = &self.workspaces[workspace];
-        let id = shown.id;
-        let agent = (shown.router.agents.list.iter())
-            .find(|agent| agent.connected && caller.is_some() && agent.pane.as_deref() == caller)
-            .map_or_else(|| "An agent".to_string(), |agent| agent.name.clone());
+        if let Some(pane) = self.driven_pane() {
+            let reason = format!(
+                "an agent's input is playing in pane {pane}, and decade asks the person nothing until it ends"
+            );
+            self.refuse(asker, reason);
+            return;
+        }
+        let id = self.workspaces[workspace].id;
+        let agent = self.agent_name(workspace, caller);
         let timer = Timer::from_duration(ASK_FOR);
         let timer = self.loop_handle.insert_source(timer, |_, _, state| {
             if let Some(asking) = &mut state.asking {
@@ -209,6 +237,7 @@ impl State {
         let now = Instant::now();
         let note = Some(match asker {
             Asker::Record { .. } => "record?".to_string(),
+            Asker::Input(_) => "input?".to_string(),
             _ => "screenshot?".to_string(),
         });
 
@@ -243,20 +272,13 @@ impl State {
         let workspace = self.workspace_index(asking.workspace);
         let refusal = match (workspace, answer) {
             (None, _) => format!("workspace {} is closed", asking.workspace),
-            (Some(_), None) => format!(
-                "the person did not answer within {} seconds, so decade took no {} of pane {pane}",
-                ASK_FOR.as_secs(),
-                asking.asker.noun()
-            ),
-            (Some(_), Some(Answer::Deny)) => {
-                format!(
-                    "the person refused a {} of pane {pane}",
-                    asking.asker.noun()
-                )
-            }
+            (Some(_), None) => asking.asker.refusal(pane, Some(ASK_FOR)),
+            (Some(_), Some(Answer::Deny)) => asking.asker.refusal(pane, None),
             (Some(workspace), Some(answer)) => {
-                if answer == Answer::Always {
-                    self.accept_captures(workspace, pane);
+                match (answer, &asking.asker) {
+                    (Answer::Always, Asker::Input(_)) => self.accept_input(workspace, pane),
+                    (Answer::Always, _) => self.accept_captures(workspace, pane),
+                    _ => {}
                 }
                 self.allowed(workspace, asking.pane, asking.asker);
                 return;
@@ -385,6 +407,34 @@ impl State {
         shown.mark_panes();
     }
 
+    /// The name decade gives the agent in workspace `workspace` that runs
+    /// in pane `caller`.
+    pub(super) fn agent_name(&self, workspace: usize, caller: Option<&str>) -> String {
+        (self.workspaces[workspace].router.agents.list.iter())
+            .find(|agent| agent.connected && caller.is_some() && agent.pane.as_deref() == caller)
+            .map_or_else(|| "An agent".to_string(), |agent| agent.name.clone())
+    }
+
+    fn accept_input(&mut self, workspace: usize, pane: &str) {
+        let shown = &mut self.workspaces[workspace];
+        if let Some((tab, id)) = shown.by_name(pane)
+            && let Some(info) = shown.tabs[tab].info.get_mut(&id)
+        {
+            info.input = true;
+        }
+        shown.mark_panes();
+    }
+
+    /// Turn the accept input mode of pane `id` on screen on or off.
+    pub(super) fn toggle_input(&mut self, id: usize) {
+        if let Some(info) = self.tab_mut().info.get_mut(&id) {
+            info.input = !info.input;
+            let current = self.current();
+            self.workspaces[current].mark_panes();
+            self.request_redraw();
+        }
+    }
+
     /// Turn the accept captures mode of pane `id` on screen on or off.
     pub(super) fn toggle_captures(&mut self, id: usize) {
         if let Some(info) = self.tab_mut().info.get_mut(&id) {
@@ -411,6 +461,14 @@ impl State {
                 plan.duration.map(record::span).as_deref(),
                 &record::span(record::limit(plan.format)),
                 &plan.file.display().to_string(),
+            ),
+            Asker::Input(played) => prompt::input_dialog(
+                &asking.agent,
+                &asking.pane,
+                played.script.steps.len(),
+                (played.ms > 0)
+                    .then(|| record::span(Duration::from_millis(played.ms.div_ceil(100) * 100)))
+                    .as_deref(),
             ),
         };
         Some(Dialog {
@@ -478,10 +536,11 @@ impl State {
     }
 
     /// The workspace rendered off screen without the overlay, the
-    /// screenshot dialog, a drag, the Ctrl bar, hover or the marks of a
-    /// recording, as RGBA rows, top first.
+    /// screenshot dialog, a drag, the Ctrl bar, hover, the marks of a
+    /// recording or of an agent's input, as RGBA rows, top first.
     pub(super) fn render_plain(&mut self, workspace: usize) -> Result<Vec<u8>, String> {
         let recordings = std::mem::take(&mut self.recordings);
+        let driving = self.driving.take();
         let overlay = self.overlay.take();
         let asking = self.asking.take();
         let sidebar_drag = self.sidebar_drag.take();
@@ -495,6 +554,7 @@ impl State {
         );
         let rendered = self.render_offscreen(workspace);
         self.recordings = recordings;
+        self.driving = driving;
         self.workspaces[workspace].flash = flash;
         self.overlay = overlay;
         self.asking = asking;
@@ -561,6 +621,39 @@ mod tests {
         assert!(!armed(since, since + Duration::from_millis(499)));
         assert!(armed(since, since + ARMED_AFTER));
         assert!(!armed(since + Duration::from_secs(1), since));
+    }
+
+    #[test]
+    fn a_refused_or_unanswered_script_says_no_input_was_played_and_a_capture_says_what_was_not_taken()
+     {
+        let (reply, _) = tokio::sync::oneshot::channel();
+        let input = Asker::Input(Played {
+            reply,
+            script: crate::server::drive::Script {
+                cell: None,
+                steps: Vec::new(),
+            },
+            agent: "coax".to_string(),
+            ms: 0,
+        });
+        assert_eq!(
+            input.refusal("scratch", None),
+            "the person refused input to pane scratch"
+        );
+        assert_eq!(
+            input.refusal("scratch", Some(ASK_FOR)),
+            "the person did not answer within 30 seconds, so decade played no input in pane scratch"
+        );
+        let (reply, _) = tokio::sync::oneshot::channel();
+        let screenshot = Asker::Mcp(reply);
+        assert_eq!(
+            screenshot.refusal("code", None),
+            "the person refused a screenshot of pane code"
+        );
+        assert_eq!(
+            screenshot.refusal("code", Some(ASK_FOR)),
+            "the person did not answer within 30 seconds, so decade took no screenshot of pane code"
+        );
     }
 
     #[test]

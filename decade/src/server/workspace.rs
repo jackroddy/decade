@@ -24,6 +24,8 @@ const SCRATCH_ICON: char = '\u{f0093}';
 const UNSCRATCHED_ICON: char = '\u{f0096}';
 const CAPTURES_ICON: char = '\u{f0100}';
 const NO_CAPTURES_ICON: char = '\u{f05df}';
+const INPUT_ICON: char = '\u{f037d}';
+const NO_INPUT_ICON: char = '\u{f037e}';
 
 pub type Layout = decade_ui::Layout<PaneAction>;
 pub type Pane = decade_ui::Pane<PaneAction>;
@@ -32,6 +34,7 @@ pub type Pane = decade_ui::Pane<PaneAction>;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PaneAction {
     Captures,
+    Input,
     Scratch,
     Pin,
     Restart,
@@ -125,6 +128,9 @@ pub struct PaneInfo {
 
     /// Whether an agent may capture the pane without asking.
     pub captures: bool,
+
+    /// Whether an agent may play input in the pane without asking.
+    pub input: bool,
 }
 
 impl Default for PaneInfo {
@@ -138,6 +144,7 @@ impl Default for PaneInfo {
             restore: None,
             agent: None,
             captures: false,
+            input: false,
         }
     }
 }
@@ -371,23 +378,30 @@ fn marks(info: &PaneInfo, scratched: bool, asleep: bool) -> Marks<PaneAction> {
         on,
         action,
     };
-    let buttons = vec![
-        button(
+    let input = button(info.input, (INPUT_ICON, NO_INPUT_ICON), PaneAction::Input);
+    let buttons = [
+        Some(button(
             info.captures,
             (CAPTURES_ICON, NO_CAPTURES_ICON),
             PaneAction::Captures,
-        ),
-        button(
+        )),
+        scratched.then_some(input),
+        Some(button(
             scratched,
             (SCRATCH_ICON, UNSCRATCHED_ICON),
             PaneAction::Scratch,
-        ),
-        button(info.pinned, (PIN_ICON, UNPINNED_ICON), PaneAction::Pin),
+        )),
+        Some(button(
+            info.pinned,
+            (PIN_ICON, UNPINNED_ICON),
+            PaneAction::Pin,
+        )),
     ];
     let tags = [
         info.pinned.then_some(Tag::Icon(PIN_ICON)),
         Some(Tag::Zoom),
         scratched.then(|| Tag::Text("scratch".to_string())),
+        (info.input && scratched).then_some(Tag::Icon(INPUT_ICON)),
     ];
 
     // `Tab::restartable` without its check for no tabs, since
@@ -418,7 +432,7 @@ fn marks(info: &PaneInfo, scratched: bool, asleep: bool) -> Marks<PaneAction> {
         }
     };
     Marks {
-        buttons,
+        buttons: buttons.into_iter().flatten().collect(),
         left_tag: info.captures.then_some(CAPTURES_ICON),
         tags: tags.into_iter().flatten().collect(),
         placeholder,
@@ -1016,11 +1030,17 @@ impl Workspace {
         })
     }
 
-    /// Mark the pane as a scratch pane, or unmark it if it is one.
+    /// Mark the pane as a scratch pane, or unmark it if it is one and
+    /// turn off its accept input mode.
     pub fn toggle_scratch(&mut self, name: &str) {
         match self.scratch.iter().position(|scratch| scratch.pane == name) {
             Some(index) => {
                 self.scratch.remove(index);
+                if let Some((tab, id)) = self.by_name(name)
+                    && let Some(info) = self.tabs[tab].info.get_mut(&id)
+                {
+                    info.input = false;
+                }
             }
             None => self.scratch.push(Scratch::new(name.to_string())),
         }
@@ -1807,10 +1827,44 @@ pub(super) mod tests {
             bar_icons(workspace.layout(), 0),
             [
                 (CAPTURES_ICON, bright),
+                (NO_INPUT_ICON, muted),
                 (SCRATCH_ICON, bright),
                 (PIN_ICON, bright),
             ]
         );
+    }
+
+    #[test]
+    fn only_a_scratch_pane_has_the_input_button_and_unmarking_it_turns_accept_input_off() {
+        let mut workspace = at_home();
+        workspace.tab_mut().info_mut(0).input = true;
+        workspace.mark_panes();
+        let actions = |workspace: &Workspace| -> Vec<PaneAction> {
+            let pane = workspace.layout().pane(0).unwrap();
+            pane.marks
+                .buttons
+                .iter()
+                .map(|button| button.action)
+                .collect()
+        };
+        assert!(!actions(&workspace).contains(&PaneAction::Input));
+        assert!(tags(workspace.layout(), 0).is_empty());
+        workspace.toggle_scratch("terminal");
+        assert_eq!(
+            actions(&workspace),
+            [
+                PaneAction::Captures,
+                PaneAction::Input,
+                PaneAction::Scratch,
+                PaneAction::Pin
+            ]
+        );
+        assert_eq!(
+            tags(workspace.layout(), 0),
+            [INPUT_ICON.to_string(), "scratch".to_string()]
+        );
+        workspace.toggle_scratch("terminal");
+        assert!(!workspace.tab().info(0).input);
     }
 
     #[test]

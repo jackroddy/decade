@@ -19,8 +19,8 @@ const MAX_KEYCODE: u32 = 0xffff;
 const MAX_LOGICAL: u32 = 16384;
 const MAX_SCALE: u32 = SCALE * 8;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
-const KEY_CAPSLOCK: u32 = 58;
-const KEY_NUMLOCK: u32 = 69;
+pub(super) const KEY_CAPSLOCK: u32 = 58;
+pub(super) const KEY_NUMLOCK: u32 = 69;
 
 impl State {
     pub(super) fn request_redraw(&mut self) {
@@ -434,9 +434,17 @@ impl State {
 
     /// Match the seat's lock state and held keys to the viewer's host,
     /// whose window has just gained keyboard focus.
-    fn sync_keys(&mut self, id: usize, locked: u32, keycodes: Vec<u32>, time: u32) {
+    pub(super) fn sync_keys(&mut self, id: usize, locked: u32, keycodes: Vec<u32>, time: u32) {
         if let Some(viewer) = self.viewers.get_mut(&id) {
             viewer.focused = true;
+        }
+
+        // the person's keys held while an agent's script plays
+        // would reach the pane the script drives, so the script
+        // syncs them when it ends
+        if let Some(driving) = &mut self.driving {
+            driving.sync_later(id, locked, keycodes);
+            return;
         }
         let modifiers = self.seat.get_keyboard().unwrap().modifier_state();
         let locks = [
