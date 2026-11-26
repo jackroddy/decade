@@ -1,0 +1,28 @@
+{
+  "id": "decade-22e4ae",
+  "title": "decade-channel 0.2.0 is released, with READMEs written to the readme skill",
+  "body": "coax depends on `decade-channel` through a path into this repository, so coax builds only beside a checkout of it. crates.io has `decade-channel` 0.1.0, but coax uses changes that are only on `dev`: `Agent::args`, `Restore`, `Subagent` and the `Screenshot` message. coax can drop the path once 0.2.0 is published, which is the last step of coax-550b84 in coax's foam. cmr, coax's other path dependency, is already out as 0.3.0.\n\n`dev` is 43 commits ahead of `main`, and those commits change the `decade` binary as well as `decade-channel`. The workspace `README.md` is 22 lines, `decade/README.md` 20 and `decade-channel/README.md` 4.\n\n## Proposal\n\n- Write the workspace's and both crates' READMEs to the `readme` skill in Jack's skills repository. cmr's README, in that skill's `examples/`, is the model so far.\n- Release `decade-channel` 0.2.0. The minor moves, because `Agent` gained a field and `Message` gained a variant, which breaks code that builds them or matches them without a wildcard.\n- Merge `dev` into `main` for the release, tag it `decade-channel-v0.2.0`, and Jack publishes.\n\n## Open\n\n- Whether the `decade` binary gets a release in the same merge, since `main` takes its changes too.",
+  "type": "feature",
+  "status": "open",
+  "priority": 1,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T01:28:20.367973105Z",
+  "updated_at": "2026-11-26T01:28:20.367973105Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
