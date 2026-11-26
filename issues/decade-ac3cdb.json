@@ -1,0 +1,30 @@
+{
+  "id": "decade-ac3cdb",
+  "title": "A sleeping workspace's card collapses to one row",
+  "body": "Every card in the open sidebar has the same height. `sidebar_rows` in `decade/src/chrome/frame.rs` gives each card `2 * padding + CARD_LINES * row` pixels, where `CARD_LINES` is 5: the name, the path, the state, the message and the usage. `draw_card` draws a sleeping workspace (`Entry::asleep`) at that height, with the sleep mark on its disc and the state line \"asleep\". Its path, message and usage lines say little while it sleeps.\n\nCards have kept one height so far. Jack decided that a sleeping card is an exception: it shows less, and a short card lets more awake workspaces fit.\n\n## Proposal\n\nA sleeping workspace's card is one row tall: the name, with the disc and its sleep mark at the right. A click on the disc wakes the workspace as it does now. Once awake, the card returns to full height. `sidebar_rows` gives the card its height from `entry.asleep`, and every hit test that reads card rows follows the new heights.\n\n## Open\n\n- Does the one-row card keep the left stripe and the hover popover?\n- Does the closed sidebar's rail of tiles change at all, or only the open sidebar?",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T01:32:23.313254922Z",
+  "updated_at": "2026-11-26T01:32:23.313254922Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
