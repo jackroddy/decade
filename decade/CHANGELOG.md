@@ -12,6 +12,30 @@ command line and what the tool writes.
 
 ### Added
 
+- `decade record PANE FILE` asks decade to record pane PANE into FILE, an
+  mp4 or a GIF, and prints what decade wrote. `--format`, `--fps`,
+  `--duration`, `--width` and `--quality` set those fields of the
+  request. `--no-pointer` leaves the pointer out, and `--once` makes a
+  GIF play once. The command makes FILE absolute. Before it connects, it
+  refuses a FILE whose extension is neither `.mp4` nor `.gif` or
+  disagrees with `--format`, a FILE that exists, and a FILE whose
+  directory is missing.
+- The socket takes `record` and `record.stop` messages to decade, and
+  the MCP server has `record` and `record.stop` tools. `record` names a
+  pane and an absolute path, with optional `format`, `fps`, `duration`,
+  `width`, `quality`, `pointer` and `loop`. decade renders the pane as
+  for a screenshot and writes the frames to `ffmpeg`. It answers once
+  ffmpeg has written the file. A recording ends at its duration, after 5
+  minutes, at `record.stop`, or when the pane closes, its tab or
+  workspace leaves the screen, the workspace sleeps or closes, or the
+  requester disconnects. decade keeps what it recorded in every case. It
+  refuses a recording without `ffmpeg` on its `PATH`, of a pane already
+  being recorded, and into a file that exists or whose directory is
+  missing. The accept captures mode and its dialog cover recordings.
+  While a pane is being recorded, its outline pulses red, and a red tag
+  on its top edge holds a blinking recording icon and the time recorded.
+  The frames show neither. A pane verb may no longer be named `record`
+  or `record.stop`.
 - `decade screenshot PANE FILE` asks decade for a PNG of pane PANE and
   writes it to FILE, relative to the directory the command runs in. It
   connects to the socket in `DECADE_SOCKET` and claims no pane. When
@@ -105,6 +129,9 @@ command line and what the tool writes.
 
 ### Changed
 
+- A capture asked for while the dialog is up for another is refused with
+  "decade is already asking the person about another capture". Before,
+  the reason said "screenshot".
 - The accept screenshots mode is now accept captures. It covers the MCP
   tool `screenshot` and the socket's `screenshot` message. The pane's
   right click menu offers Accept captures, and the dialog's middle choice

@@ -1,7 +1,7 @@
 use std::io;
 use std::net::TcpListener;
 
-use decade_channel::{Clear, Highlight, Show};
+use decade_channel::{Clear, Highlight, Record, Show};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
     InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
@@ -82,6 +82,14 @@ pub enum Call {
 
     /// Capture the client area of pane `pane` as a PNG.
     Screenshot {
+        pane: String,
+    },
+
+    /// Record a pane into a file, answering once the file is written.
+    Record(Record),
+
+    /// End the recording of pane `pane`.
+    RecordStop {
         pane: String,
     },
 }
@@ -244,6 +252,36 @@ fn tools() -> Vec<Tool> {
             })),
         ),
         Tool::new(
+            "record",
+            "Record what a pane in the shown tab draws into a new mp4 or GIF file, without its bar or outline. Unless the user has turned on accept captures for the pane, decade asks the user first and waits up to 30 seconds. The call returns once the file is written: at the duration, at 5 minutes, on record.stop, or when the pane closes, its tab or workspace leaves the screen or this call is cancelled. decade needs ffmpeg on its PATH and refuses a file that exists or whose directory does not",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": {"type": "string", "description": "a pane name, as panes lists it"},
+                    "file": {"type": "string", "description": "the absolute path to write, ending in .mp4 or .gif"},
+                    "format": {"type": "string", "enum": ["mp4", "gif"], "description": "the file's format, which must match its extension; by default the extension's"},
+                    "fps": {"type": "integer", "description": "frames a second, 1 to 60; 30 for mp4 and 15 for gif by default"},
+                    "duration": {"type": "number", "description": "seconds to record, up to 300; by default until record.stop or 5 minutes"},
+                    "width": {"type": "integer", "description": "the width in pixels, the height following the pane's aspect ratio; by default the pane's width"},
+                    "quality": {"type": "integer", "description": "mp4 only: ffmpeg's crf, 0 to 51, lower for better quality; 23 by default"},
+                    "pointer": {"type": "boolean", "description": "draw the pointer while it is over the pane; true by default"},
+                    "loop": {"type": "boolean", "description": "gif only: play in a loop; true by default"}
+                },
+                "required": ["pane", "file"]
+            })),
+        ),
+        Tool::new(
+            "record.stop",
+            "End the recording of a pane. The record call that started it returns with the file",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": {"type": "string", "description": "the pane being recorded"}
+                },
+                "required": ["pane"]
+            })),
+        ),
+        Tool::new(
             "scratch.send",
             "Send a message to the program in a scratch pane. panes lists the verbs that program accepts under accepts, each a name or a name with a description of what it does",
             schema(json!({
@@ -286,7 +324,7 @@ struct ToPane<T> {
     payload: T,
 }
 
-/// The arguments of `screenshot`.
+/// The arguments of `screenshot` and `record.stop`.
 #[derive(Deserialize)]
 struct Screenshot {
     pane: String,
@@ -351,6 +389,11 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
         "screenshot" => {
             let Screenshot { pane } = parse(name, arguments)?;
             Ok(Call::Screenshot { pane })
+        }
+        "record" => Ok(Call::Record(parse(name, arguments)?)),
+        "record.stop" => {
+            let Screenshot { pane } = parse(name, arguments)?;
+            Ok(Call::RecordStop { pane })
         }
         "scratch.send" => {
             let ScratchSend {
@@ -425,7 +468,8 @@ impl ServerHandler for Decade {
                  out while there are several. \
                  point draws the user's eye \
                  to a pane without taking keyboard focus. screenshot returns an image of what \
-                 a pane draws, once the user allows it. agents lists the agents in the \
+                 a pane draws, once the user allows it, and record writes what it draws \
+                 over time to an mp4 or GIF file. agents lists the agents in the \
                  workspace with what each last reported.",
             )
     }
@@ -634,6 +678,8 @@ mod tests {
                 "scratch.status",
                 "scratch.rename",
                 "screenshot",
+                "record",
+                "record.stop",
                 "scratch.send"
             ]
         );
@@ -739,6 +785,37 @@ mod tests {
             call_for("focus", Map::new()).err().unwrap(),
             "no tool named focus"
         );
+    }
+
+    #[test]
+    fn record_takes_a_pane_a_file_and_optional_settings_and_record_stop_a_pane() {
+        let Ok(Call::Record(record)) = call_for(
+            "record",
+            schema(json!({"pane": "code", "file": "/work/a.mp4", "duration": 4.5, "quality": 18})),
+        ) else {
+            panic!("a record call");
+        };
+        assert_eq!(
+            (record.pane.as_str(), record.file.as_str()),
+            ("code", "/work/a.mp4")
+        );
+        assert_eq!((record.duration, record.quality), (Some(4.5), Some(18)));
+        assert_eq!(
+            (record.fps, record.format, record.r#loop),
+            (None, None, None)
+        );
+        assert!(call_for("record", schema(json!({"pane": "code"}))).is_err());
+        assert!(
+            call_for(
+                "record",
+                schema(json!({"pane": "code", "file": "/a.gif", "fps": "fast"}))
+            )
+            .is_err()
+        );
+        assert!(matches!(
+            call_for("record.stop", schema(json!({"pane": "code"}))),
+            Ok(Call::RecordStop { pane }) if pane == "code"
+        ));
     }
 
     #[test]

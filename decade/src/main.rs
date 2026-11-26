@@ -11,6 +11,8 @@ mod lines;
 #[cfg(target_os = "linux")]
 mod png;
 #[cfg(target_os = "linux")]
+mod record;
+#[cfg(target_os = "linux")]
 mod screenshot;
 #[cfg(target_os = "linux")]
 mod script;
@@ -25,6 +27,8 @@ const USAGE: &str = "usage: decade [--class <app id>]
        decade start | stop | restart | status | list
        decade script FILE
        decade screenshot PANE FILE
+       decade record PANE FILE [--format mp4|gif] [--fps N] [--duration SECONDS]
+                     [--width N] [--quality N] [--no-pointer] [--once]
        decade server";
 
 #[cfg(target_os = "linux")]
@@ -51,6 +55,13 @@ fn main() {
         }
         (Some("screenshot"), Some(pane), Some(file)) if args.next().is_none() => {
             if let Err(error) = screenshot::run(&pane, &file) {
+                eprintln!("decade: {error}");
+                std::process::exit(1);
+            }
+        }
+        (Some("record"), Some(pane), Some(file)) => {
+            let flags: Vec<String> = args.collect();
+            if let Err(error) = record::run(&pane, &file, &flags) {
                 eprintln!("decade: {error}");
                 std::process::exit(1);
             }

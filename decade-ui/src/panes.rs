@@ -306,6 +306,9 @@ pub struct Chrome<'a, A> {
 
     /// The pane whose left tag flashes, and how bright, from 0 to 1.
     pub flash: Option<(usize, f32)>,
+
+    /// The panes being recorded.
+    pub recordings: &'a [Recording<'a>],
 }
 
 impl<A> Default for Chrome<'_, A> {
@@ -316,8 +319,26 @@ impl<A> Default for Chrome<'_, A> {
             tab_hover: None,
             pulse: None,
             flash: None,
+            recordings: &[],
         }
     }
+}
+
+/// A pane being recorded: its outline pulses red, and a red tag after its
+/// left tag holds a blinking icon and the time the recording has run.
+#[derive(Clone, Copy)]
+pub struct Recording<'a> {
+    pub pane: usize,
+
+    /// How far the outline's pulse is toward red, from 0 to 1.
+    pub strength: f32,
+
+    /// The icon, drawn while `lit`.
+    pub icon: char,
+    pub lit: bool,
+
+    /// The time the recording has run, such as `0:07`.
+    pub elapsed: &'a str,
 }
 
 /// A pane whose outline pulses to draw the eye.
@@ -817,7 +838,8 @@ impl<A: Copy + PartialEq> Layout<A> {
             let flash = (chrome.flash)
                 .filter(|&(id, _)| id == pane.id)
                 .map_or(0.0, |(_, flash)| flash);
-            self.draw_outline(scene, pane, outline, flash, pulse);
+            let recording = (chrome.recordings.iter()).find(|recording| recording.pane == pane.id);
+            self.draw_outline(scene, pane, outline, flash, pulse, recording);
             draw_placeholder(scene, pane, pane.rect.inner());
             let hover = (chrome.tab_hover)
                 .filter(|&(id, _)| id == pane.id)
@@ -834,7 +856,8 @@ impl<A: Copy + PartialEq> Layout<A> {
     }
 
     /// The pane's outline with its tags on its top edge, the left one
-    /// brightened by `flash`, pulsing with its note when `pulse` is at it.
+    /// brightened by `flash`, pulsing with its note when `pulse` is at it,
+    /// and red with the recording's tag while `recording` is at it.
     fn draw_outline(
         &self,
         scene: &mut Scene,
@@ -842,6 +865,7 @@ impl<A: Copy + PartialEq> Layout<A> {
         color: Rgba,
         flash: f32,
         pulse: Option<Pulse>,
+        recording: Option<&Recording>,
     ) {
         let (cell_width, cell_height) = scene.cell();
         let line = scene.line_width();
@@ -861,6 +885,8 @@ impl<A: Copy + PartialEq> Layout<A> {
         let bottom = inset(rect.row + rect.rows == area.row + area.rows, cell_height);
         let strength = pulse.map_or(0.0, |pulse| pulse.strength);
         let color = palette::mix(color, palette::get().magenta, strength);
+        let red = recording.map_or(0.0, |recording| recording.strength);
+        let color = palette::mix(color, palette::get().red, red);
         scene.outline(rect, [left, top, right, bottom], color);
         if pulse.is_some() {
             let [r, g, b, _] = palette::get().magenta;
@@ -897,6 +923,24 @@ impl<A: Copy + PartialEq> Layout<A> {
                 palette::get().dark_background,
             );
             limit = left_end + padding + scene.scaled(TAG_GAP);
+        }
+        if let Some(recording) = recording {
+            let start = limit + padding;
+            let cells = 2 + recording.elapsed.chars().count() as i32;
+            let end = start + cells * cell_width;
+            if end + padding < x + width - right - cell_width * 2 {
+                let size = (end - start + padding * 2, height);
+                let red = palette::get().red;
+                scene.rounded(start - padding, pill_y, size, radius, red, red);
+                let ink = palette::get().dark_background;
+                if recording.lit {
+                    let icon = recording.icon.to_string();
+                    scene.text_px(start, text_y, &icon, Face::Icon, ink);
+                }
+                let time = start + cell_width * 2;
+                scene.text_px(time, text_y, recording.elapsed, Face::Chrome, ink);
+                limit = end + padding + scene.scaled(TAG_GAP);
+            }
         }
         let mut end = x + width - right - cell_width * 2;
         let zoomed = self.zoom == Some(pane.id);
@@ -2346,6 +2390,48 @@ mod tests {
         };
         assert_eq!(flashed, palette::get().foreground);
         assert_eq!(tags(Some((1, 1.0)))[0].4, palette::get().cyan);
+    }
+
+    #[test]
+    fn a_recorded_pane_has_a_red_tag_after_its_left_tag_with_the_time_and_a_blinking_icon() {
+        let mut layout: Layout = three_anchors();
+        layout.focused = 0;
+        layout.panes[0].marks.left_tag = Some('s');
+        let font = crate::Font::load(14.0);
+        let drawn = |lit: bool, strength: f32| {
+            let recordings = [Recording {
+                pane: 0,
+                strength,
+                icon: 'r',
+                lit,
+                elapsed: "0:07",
+            }];
+            let mut scene = Scene::new(&font);
+            let chrome = Chrome {
+                recordings: &recordings,
+                ..Chrome::default()
+            };
+            layout.draw(&mut scene, chrome);
+            scene
+        };
+        let scene = drawn(true, 0.0);
+        let [(camera, ..), (tag, _, _, _, fill)] = rounded(&scene)[..] else {
+            panic!("two tags");
+        };
+        assert!(camera < tag);
+        assert_eq!(fill, palette::get().red);
+        let lit = texts(&scene);
+        assert!(lit.contains(&"r".to_string()) && lit.contains(&"0:07".to_string()));
+        let unlit = texts(&drawn(false, 0.0));
+        assert!(!unlit.contains(&"r".to_string()) && unlit.contains(&"0:07".to_string()));
+        let outline = |scene: &Scene| {
+            (scene.shapes.iter()).find_map(|shape| match shape {
+                crate::Shape::Rect { color, .. } => Some(*color),
+                _ => None,
+            })
+        };
+        assert_eq!(outline(&drawn(true, 0.0)), Some(palette::get().cyan));
+        assert_eq!(outline(&drawn(true, 1.0)), Some(palette::get().red));
     }
 
     #[test]

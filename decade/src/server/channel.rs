@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use decade_channel::{
-    AgentUpdate, Clear, Error, Hello, Highlight, Pane, Reply, Restore, Screenshot, Show, Shows,
-    VERSION, Verb, Welcome,
+    AgentUpdate, Clear, Error, Hello, Highlight, Pane, Record, RecordStop, Reply, Restore,
+    Screenshot, Show, Shows, VERSION, Verb, Welcome,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -12,13 +12,15 @@ use crate::server::agents::Agents;
 
 /// The keys a pane verb may not take: decade's own verbs and the
 /// names decade's replies and forwarded messages use.
-const RESERVED: [&str; 9] = [
+const RESERVED: [&str; 11] = [
     "hello",
     "agent",
     "ended",
     "panes",
     "restore",
     "screenshot",
+    "record",
+    "record.stop",
     "welcome",
     "error",
     "from",
@@ -72,6 +74,21 @@ pub enum Out {
     Screenshot {
         client: usize,
         screenshot: Screenshot,
+        message: Value,
+    },
+
+    /// Client `client` asks to record a pane; `message` is its line, for
+    /// the error reply.
+    Record {
+        client: usize,
+        record: Record,
+        message: Value,
+    },
+
+    /// Client `client` asks to end the recording of a pane.
+    RecordStop {
+        client: usize,
+        stop: RecordStop,
         message: Value,
     },
 }
@@ -244,9 +261,25 @@ impl Router {
                 }],
                 Err(error) => malformed(error),
             },
+            "record" => match serde_json::from_value(payload) {
+                Ok(record) => vec![Out::Record {
+                    client: id,
+                    record,
+                    message: value,
+                }],
+                Err(error) => malformed(error),
+            },
+            "record.stop" => match serde_json::from_value(payload) {
+                Ok(stop) => vec![Out::RecordStop {
+                    client: id,
+                    stop,
+                    message: value,
+                }],
+                Err(error) => malformed(error),
+            },
             _ => vec![error_line(
                 id,
-                "a message needs \"to\", or one of \"hello\", \"agent\", \"ended\", \"panes\", \"restore\" and \"screenshot\"",
+                "a message needs \"to\", or one of \"hello\", \"agent\", \"ended\", \"panes\", \"restore\", \"screenshot\", \"record\" and \"record.stop\"",
                 value,
             )],
         }
@@ -657,6 +690,60 @@ mod tests {
     }
 
     #[test]
+    fn record_and_record_stop_go_to_decade_with_their_settings_and_bad_ones_are_malformed() {
+        let mut r = Router::default();
+        r.handle(1, r#"{"hello": {"name": "decade record"}}"#, &names(), &[]);
+        let line = r#"{"record": {"pane": "code", "file": "/work/a.gif", "for": "chat", "fps": 10, "loop": false}}"#;
+        let out = r.handle(1, line, &names(), &[]);
+        let [
+            Out::Record {
+                client,
+                record,
+                message,
+            },
+        ] = &out[..]
+        else {
+            panic!("one record request");
+        };
+        assert_eq!(*client, 1);
+        assert_eq!(
+            *record,
+            Record {
+                pane: "code".into(),
+                file: "/work/a.gif".into(),
+                caller: Some("chat".into()),
+                fps: Some(10),
+                r#loop: Some(false),
+                ..Record::default()
+            }
+        );
+        assert_eq!(*message, serde_json::from_str::<Value>(line).unwrap());
+        let out = r.handle(1, r#"{"record.stop": {"pane": "code"}}"#, &names(), &[]);
+        assert!(
+            matches!(&out[..], [Out::RecordStop { client: 1, stop, .. }] if stop.pane == "code")
+        );
+        let out = lines(r.handle(
+            1,
+            r#"{"record": {"pane": "code", "file": "/work/a.gif", "format": "webm"}}"#,
+            &names(),
+            &[],
+        ));
+        assert!(
+            out[0].1["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("malformed record: unknown variant `webm`")
+        );
+        let out = lines(r.handle(1, r#"{"record.stop": {}}"#, &names(), &[]));
+        assert!(
+            out[0].1["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("malformed record.stop: missing field `pane`")
+        );
+    }
+
+    #[test]
     fn a_reserved_name_sent_to_a_pane_is_refused_and_not_forwarded() {
         let mut r = Router::default();
         r.handle(
@@ -671,7 +758,16 @@ mod tests {
             &names(),
             &[],
         );
-        for verb in ["agent", "ended", "restore", "screenshot", "error", "from"] {
+        for verb in [
+            "agent",
+            "ended",
+            "restore",
+            "screenshot",
+            "record",
+            "record.stop",
+            "error",
+            "from",
+        ] {
             let line = format!(r#"{{"to": "code", "{verb}": {{"pane": "chat"}}}}"#);
             let out = lines(r.handle(2, &line, &names(), &[]));
             assert_eq!(out.len(), 1);

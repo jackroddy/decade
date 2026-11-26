@@ -25,6 +25,9 @@ pub enum Message {
     Screenshot {
         png: Vec<u8>,
     },
+
+    /// The answer to `record`, once the file is written.
+    Record(Recorded),
     Show {
         from: String,
         show: Show,
@@ -368,6 +371,81 @@ pub struct Captured {
     pub png: String,
 }
 
+/// The kind of file a recording writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Format {
+    Mp4,
+    Gif,
+}
+
+/// The payload of `record`: ask decade to record pane `pane` into the new
+/// file `file`. decade picks a default for each setting left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Record {
+    pub pane: String,
+
+    /// The absolute path decade writes.
+    pub file: String,
+
+    /// The pane of the agent asking, which the dialog names.
+    #[serde(rename = "for", default, skip_serializing_if = "Option::is_none")]
+    pub caller: Option<String>,
+
+    /// The format, which must match the file's extension.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
+
+    /// Frames a second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fps: Option<u32>,
+
+    /// Seconds to record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
+
+    /// The width of the video in pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+
+    /// ffmpeg's crf for an mp4, lower for better quality.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<u32>,
+
+    /// Whether the pointer is drawn into the frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer: Option<bool>,
+
+    /// Whether a GIF plays in a loop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#loop: Option<bool>,
+}
+
+/// The payload of `record.stop`: end the recording of pane `pane`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordStop {
+    pub pane: String,
+}
+
+/// The payload of decade's answer to `record`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Recorded {
+    /// The file decade wrote.
+    pub file: String,
+
+    /// The frames written to the file.
+    pub frames: u64,
+
+    /// The frames decade rendered and left out because ffmpeg was behind.
+    pub dropped: u64,
+
+    /// How long the recording ran, in seconds.
+    pub seconds: f64,
+
+    /// What ended the recording.
+    pub ended: String,
+}
+
 /// A line decade writes to a client, other than a forwarded verb.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -376,6 +454,7 @@ pub enum Reply {
     Error(Error),
     Panes(Vec<Pane>),
     Screenshot(Captured),
+    Record(Recorded),
 }
 
 #[derive(Serialize)]
@@ -387,6 +466,9 @@ enum Request<'a> {
     Panes {},
     Restore(&'a Restore),
     Screenshot(&'a Screenshot),
+    Record(&'a Record),
+    #[serde(rename = "record.stop")]
+    RecordStop(&'a RecordStop),
 }
 
 pub fn parse(line: &str) -> Result<Message, String> {
@@ -413,6 +495,10 @@ pub fn parse(line: &str) -> Result<Message, String> {
             serde_json::from_value(captured).map_err(|e| format!("bad screenshot: {e}"))?;
         let png = decode_base64(&png).map_err(|e| format!("bad screenshot: {e}"))?;
         return Ok(Message::Screenshot { png });
+    }
+    if let Some(recorded) = object.remove("record") {
+        let recorded = serde_json::from_value(recorded).map_err(|e| format!("bad record: {e}"))?;
+        return Ok(Message::Record(recorded));
     }
     let from = object
         .remove("from")
@@ -520,6 +606,21 @@ impl Channel {
     /// `Message::Screenshot` or else as `Message::Error`.
     pub fn screenshot(&mut self, screenshot: &Screenshot) -> io::Result<()> {
         self.write(&Request::Screenshot(screenshot))
+    }
+
+    /// Ask decade to record a pane into a file. The answer arrives once
+    /// the file is written, as `Message::Record` or else as
+    /// `Message::Error`.
+    pub fn record(&mut self, record: &Record) -> io::Result<()> {
+        self.write(&Request::Record(record))
+    }
+
+    /// End the recording of pane `pane`. The client that asked for it
+    /// gets the answer to its `record`.
+    pub fn record_stop(&mut self, pane: &str) -> io::Result<()> {
+        self.write(&Request::RecordStop(&RecordStop {
+            pane: pane.to_string(),
+        }))
     }
 
     fn write(&mut self, message: &impl Serialize) -> io::Result<()> {
@@ -883,6 +984,71 @@ mod tests {
             request,
             json!({"screenshot": {"pane": "code", "file": "shot.png", "for": "chat"}})
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn record_and_record_stop_send_their_requests_and_the_answer_arrives_parsed() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixListener;
+
+        let dir =
+            std::env::temp_dir().join(format!("decade-channel-record-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("decade.sock");
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut lines = Vec::new();
+            for _ in 0..3 {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                lines.push(line);
+            }
+            let mut writer = &stream;
+            writer
+                .write_all(b"{\"welcome\":{\"pane\":null,\"version\":1}}\n")
+                .unwrap();
+            writer
+                .write_all(
+                    b"{\"record\":{\"file\":\"/work/demo.gif\",\"frames\":30,\"dropped\":1,\"seconds\":2.0,\"ended\":\"a stop call ended it\"}}\n",
+                )
+                .unwrap();
+            lines
+        });
+        let (mut channel, rx) =
+            Channel::connect(&path, "decade record", &[], &[], None, None).unwrap();
+        channel
+            .record(&Record {
+                pane: "code".into(),
+                file: "/work/demo.gif".into(),
+                format: Some(Format::Gif),
+                fps: Some(15),
+                r#loop: Some(false),
+                ..Record::default()
+            })
+            .unwrap();
+        channel.record_stop("code").unwrap();
+        assert!(matches!(rx.recv().unwrap(), Message::Welcome { .. }));
+        assert_eq!(
+            rx.recv().unwrap(),
+            Message::Record(Recorded {
+                file: "/work/demo.gif".into(),
+                frames: 30,
+                dropped: 1,
+                seconds: 2.0,
+                ended: "a stop call ended it".into(),
+            })
+        );
+        let lines = server.join().unwrap();
+        let line = |i: usize| serde_json::from_str::<Value>(&lines[i]).unwrap();
+        assert_eq!(
+            line(1),
+            json!({"record": {"pane": "code", "file": "/work/demo.gif", "format": "gif", "fps": 15, "loop": false}})
+        );
+        assert_eq!(line(2), json!({"record.stop": {"pane": "code"}}));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

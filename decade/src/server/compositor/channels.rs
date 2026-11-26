@@ -16,6 +16,7 @@ use crate::server::mcp;
 use crate::server::scratch::{self, Launch, Started, Waiting};
 
 use super::State;
+use super::record::Requester;
 use super::screenshot::Asker;
 
 /// A connection to a socket client.
@@ -129,6 +130,9 @@ impl State {
             mcp::Call::Screenshot { pane } => {
                 self.screenshot(workspace, &pane, caller, Asker::Mcp(request.reply))
             }
+            mcp::Call::Record(record) => {
+                self.record(workspace, &record, caller, Requester::Mcp(request.reply))
+            }
             call => {
                 let answer = self.mcp_call(workspace, call, caller);
                 let _ = request.reply.send(answer.map(mcp::Answer::Text));
@@ -192,8 +196,9 @@ impl State {
                 let panes = Reply::Panes(shown.pane_list(caller));
                 return Ok(serde_json::to_string(&panes).unwrap());
             }
-            mcp::Call::ScratchOpen { .. } | mcp::Call::Screenshot { .. } => {
-                unreachable!("mcp_request answers scratch.open and screenshot")
+            mcp::Call::RecordStop { pane } => return self.stop_record(workspace, &pane),
+            mcp::Call::ScratchOpen { .. } | mcp::Call::Screenshot { .. } | mcp::Call::Record(_) => {
+                unreachable!("mcp_request answers scratch.open, screenshot and record")
             }
         };
         let sent = format!("sent {verb} to pane {to}");
@@ -518,6 +523,24 @@ impl State {
                     };
                     let caller = screenshot.caller.as_deref();
                     self.screenshot(workspace, &screenshot.pane, caller, asker);
+                }
+                Out::Record {
+                    client,
+                    record,
+                    message,
+                } => {
+                    let to = Requester::Socket { client, message };
+                    self.record(workspace, &record, record.caller.as_deref(), to);
+                }
+                Out::RecordStop {
+                    client,
+                    stop,
+                    message,
+                } => {
+                    if let Err(reason) = self.stop_record(workspace, &stop.pane) {
+                        let error = Reply::Error(decade_channel::Error { reason, message });
+                        self.channel_send(client, &serde_json::to_string(&error).unwrap());
+                    }
                 }
             }
         }

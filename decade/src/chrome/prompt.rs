@@ -65,6 +65,33 @@ pub fn save_dialog(agent: &str, pane: &str, file: &str) -> Dialog<'static, Answe
     }
 }
 
+/// The dialog that asks the person whether `agent` may record pane `pane`
+/// for `seconds` into `file`, or until stopped, up to `longest` seconds,
+/// when `seconds` is `None`. The caller sets the rest.
+pub fn record_dialog(
+    agent: &str,
+    pane: &str,
+    seconds: Option<f64>,
+    longest: u64,
+    file: &str,
+) -> Dialog<'static, Answer> {
+    let detail = match seconds {
+        Some(seconds) => format!("for {seconds} seconds to"),
+        None => format!("until stopped, up to {} minutes, to", longest / 60),
+    };
+    Dialog {
+        question: format!("{agent} asks to record pane {pane}"),
+        detail,
+        path: Some(file.to_string()),
+        choices: &CHOICES,
+        escape: Answer::Deny,
+        armed: false,
+        selected: 0,
+        window: (0, 0),
+        cell: (0, 0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +127,22 @@ mod tests {
         let labels: Vec<&str> = dialog.choices.iter().map(|choice| choice.label).collect();
         assert_eq!(labels, ["Allow once", "Allow and accept captures", "Deny"]);
         assert_eq!(dialog.escape, Answer::Deny);
+    }
+
+    #[test]
+    fn the_record_dialog_names_the_pane_the_time_and_the_file() {
+        let text = |seconds| {
+            let dialog = record_dialog("coax", "code", seconds, 300, "/work/demo.gif");
+            let path = dialog.path.as_deref().unwrap_or_default();
+            format!("{} {} {path}", dialog.question, dialog.detail)
+        };
+        assert_eq!(
+            text(Some(4.5)),
+            "coax asks to record pane code for 4.5 seconds to /work/demo.gif"
+        );
+        assert_eq!(
+            text(None),
+            "coax asks to record pane code until stopped, up to 5 minutes, to /work/demo.gif"
+        );
     }
 }

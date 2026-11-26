@@ -52,6 +52,8 @@ impl State {
         }
         let frame = picker_grid.is_none().then(|| self.frame(workspace));
         let prompt = self.prompt();
+        let mut times = Vec::new();
+        let recordings = self.recording_marks(workspace, Instant::now(), &mut times);
         let State {
             gpu,
             size,
@@ -96,11 +98,13 @@ impl State {
                 tab_hover: *tab_hover,
                 pulse,
                 flash,
+                recordings: &recordings,
             }
         } else {
             Chrome {
                 pulse,
                 flash,
+                recordings: &recordings,
                 ..Chrome::default()
             }
         };
