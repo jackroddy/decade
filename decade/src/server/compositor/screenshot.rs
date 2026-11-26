@@ -466,7 +466,9 @@ impl State {
                 &asking.agent,
                 &asking.pane,
                 played.script.steps.len(),
-                &record::span(Duration::from_millis(played.ms.div_ceil(100) * 100)),
+                (played.ms > 0)
+                    .then(|| record::span(Duration::from_millis(played.ms.div_ceil(100) * 100)))
+                    .as_deref(),
             ),
         };
         Some(Dialog {

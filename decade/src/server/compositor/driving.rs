@@ -2,10 +2,10 @@ use std::time::{Duration, Instant};
 
 use decade_ui::Driven;
 use smithay::backend::input::KeyState;
-use smithay::input::keyboard::{FilterResult, Keycode};
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-use smithay::utils::{Logical, Physical, Point, SERIAL_COUNTER};
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::utils::{Logical, Physical, Point, Rectangle};
 
 use crate::server::drive::{self, Event, Input, Script};
 use crate::server::mcp;
@@ -13,9 +13,12 @@ use crate::server::workspace;
 
 use super::State;
 use super::screenshot::Asker;
-use super::viewers::hold;
+use super::viewers::{KEY_CAPSLOCK, KEY_NUMLOCK, hold};
 
 const KEY_ESC: u32 = 1;
+
+/// The evdev Ctrl, Shift, Alt and Super keys, left and right.
+const MODIFIERS: [u32; 8] = [29, 97, 42, 54, 56, 100, 125, 126];
 
 /// The glyph of the driven tag, `md-robot` in the Nerd Font.
 const ICON: char = '\u{f06a9}';
@@ -36,12 +39,30 @@ pub(super) struct Played {
     pub(super) ms: u64,
 }
 
+/// A script ready to play in a scratch pane.
+struct Planned {
+    /// The pane's own name.
+    name: String,
+
+    /// The pane's client area on screen.
+    rect: Rectangle<i32, Physical>,
+
+    /// Where the script's pointer starts, in pane pixels.
+    start: (f64, f64),
+    events: Vec<Event>,
+}
+
 /// An agent's script playing in a scratch pane.
 pub(super) struct Driving {
     workspace: u32,
     tab: usize,
     pane_id: usize,
+
+    /// The pane's name when the script started.
     pane: String,
+
+    /// The window the script plays in.
+    surface: WlSurface,
     events: Vec<Event>,
     next: usize,
     steps: usize,
@@ -62,6 +83,21 @@ pub(super) struct Driving {
 
     /// The driven tag's text.
     label: String,
+
+    /// The lock keys the person pressed an odd number of times, and the
+    /// viewer's last report of its held keys, to apply when the script
+    /// ends.
+    locks: Vec<u32>,
+    sync: Option<(usize, u32, Vec<u32>)>,
+}
+
+impl Driving {
+    /// Keep viewer `id`'s report of its locks and held keys for the end
+    /// of the script.
+    pub(super) fn sync_later(&mut self, id: usize, locked: u32, keycodes: Vec<u32>) {
+        self.sync = Some((id, locked, keycodes));
+        self.locks.clear();
+    }
 }
 
 impl State {
@@ -108,6 +144,9 @@ impl State {
                 "an agent's input is already playing in pane {pane}"
             ));
         }
+        if self.asking.is_some() {
+            return Err("decade is already asking the person about another capture".to_string());
+        }
         let shown = &self.workspaces[workspace];
         let index = shown.find_scratch(pane)?;
         let (name, info) = self.screenshot_target(workspace, &shown.scratch[index].pane)?;
@@ -130,27 +169,27 @@ impl State {
 
     /// Start playing `played` in pane `pane`, which the person allowed.
     pub(super) fn drive(&mut self, workspace: usize, pane: &str, played: Played) {
-        let started = (self.input_target(workspace, Some(pane), &played.script))
-            .and_then(|(name, _, _)| Ok((self.client_px(workspace, &name)?.1, name)))
-            .and_then(|(rect, name)| {
-                let at = self.pointer.to_physical(self.scale);
-                let start = (
-                    (at.x - rect.loc.x as f64).clamp(0.0, rect.size.w as f64 - 1.0),
-                    (at.y - rect.loc.y as f64).clamp(0.0, rect.size.h as f64 - 1.0),
-                );
-                let size = (rect.size.w as f64, rect.size.h as f64);
-                Ok((drive::plan(&played.script, size, start)?, name))
-            });
-        let (events, name) = match started {
-            Ok(started) => started,
+        let Planned {
+            name,
+            rect,
+            start,
+            events,
+        } = match self.drive_plan(workspace, pane, &played.script) {
+            Ok(planned) => planned,
             Err(reason) => {
                 let _ = played.reply.send(Err(reason));
                 return;
             }
         };
         let shown = &self.workspaces[workspace];
-        let Some((tab, pane_id)) = shown.by_name(&name) else {
-            let _ = played.reply.send(Err(format!("no pane named {name}")));
+        let window = (shown.by_name(&name)).and_then(|(tab, id)| {
+            let surface = shown.tabs[tab].toplevel(id)?.wl_surface().clone();
+            Some((tab, id, surface))
+        });
+        let Some((tab, pane_id, surface)) = window else {
+            let _ = played
+                .reply
+                .send(Err(format!("pane {name} has no window to take the input")));
             return;
         };
         let workspace_id = shown.id;
@@ -168,7 +207,13 @@ impl State {
         }
         self.dismiss_popups();
         self.block_input();
+        self.release_held_keys(time);
         self.focus(pane_id);
+        let at = Point::<f64, Physical>::from((
+            rect.loc.x as f64 + start.0,
+            rect.loc.y as f64 + start.1,
+        ));
+        self.agent_motion(at.to_logical(self.scale), time);
         let timer = self
             .loop_handle
             .insert_source(Timer::immediate(), |_, _, state| match state.drive_tick() {
@@ -184,6 +229,7 @@ impl State {
             tab,
             pane_id,
             pane: name,
+            surface,
             events,
             next: 0,
             steps: played.script.steps.len(),
@@ -196,9 +242,39 @@ impl State {
             focused,
             person,
             label: format!("{agent} · Esc stops"),
+            locks: Vec::new(),
+            sync: None,
         });
         self.start_pulse();
         self.request_redraw();
+    }
+
+    /// `script` ready to play in pane `pane`, or why it cannot.
+    fn drive_plan(&self, workspace: usize, pane: &str, script: &Script) -> Result<Planned, String> {
+        let (name, _, _) = self.input_target(workspace, Some(pane), script)?;
+        let (_, rect) = self.client_px(workspace, &name)?;
+        let at = self.pointer.to_physical(self.scale);
+        let start = (
+            (at.x - rect.loc.x as f64).clamp(0.0, rect.size.w as f64 - 1.0),
+            (at.y - rect.loc.y as f64).clamp(0.0, rect.size.h as f64 - 1.0),
+        );
+        let size = (rect.size.w as f64, rect.size.h as f64);
+        let events = drive::plan(script, size, start)?;
+        Ok(Planned {
+            name,
+            rect,
+            start,
+            events,
+        })
+    }
+
+    /// Let go of every key decade holds, while no client has keyboard
+    /// focus, so the driven client starts with no keys or modifiers held.
+    fn release_held_keys(&mut self, time: u32) {
+        let keyboard = self.seat.get_keyboard().unwrap();
+        for keycode in keyboard.pressed_keys() {
+            self.forward_key(keycode.raw() - 8, KeyState::Released, time);
+        }
     }
 
     /// Play the events that are due, and return when to play the next, or
@@ -238,11 +314,11 @@ impl State {
         };
         match input {
             Input::Motion(x, y) => {
-                let (pane, workspace) = (driving.pane.clone(), driving.workspace);
+                let (workspace, tab, id) = (driving.workspace, driving.tab, driving.pane_id);
                 let Some(workspace) = self.workspace_index(workspace) else {
                     return;
                 };
-                let Ok((_, rect)) = self.client_px(workspace, &pane) else {
+                let Some(rect) = self.pane_px(workspace, tab, id) else {
                     return;
                 };
                 let x = rect.loc.x as f64 + x.min(rect.size.w as f64 - 1.0);
@@ -271,7 +347,7 @@ impl State {
     /// it can.
     fn drive_lost(&self) -> Option<String> {
         let driving = self.driving.as_ref()?;
-        let pane = &driving.pane;
+        let pane = self.driven_pane()?;
         let Some(index) = self.workspace_index(driving.workspace) else {
             return Some(format!("workspace {} closed", driving.workspace));
         };
@@ -288,8 +364,10 @@ impl State {
             .is_none()
         {
             format!("pane {pane} closed")
-        } else if shown.tabs[driving.tab].toplevel(driving.pane_id).is_none() {
-            format!("the window in pane {pane} closed")
+        } else if !(shown.tabs[driving.tab].toplevel(driving.pane_id))
+            .is_some_and(|toplevel| *toplevel.wl_surface() == driving.surface)
+        {
+            format!("the window the script played in left pane {pane}")
         } else {
             return None;
         };
@@ -299,6 +377,7 @@ impl State {
     /// End the script, letting go of what it holds and giving the person
     /// back keyboard focus and the pointer, and answer the agent.
     fn stop_drive(&mut self, reason: &str, finished: bool) {
+        let name = self.driven_pane().map(str::to_string);
         let Some(driving) = self.driving.take() else {
             return;
         };
@@ -321,13 +400,14 @@ impl State {
             self.layout().focused
         };
         self.focus(focused);
+        self.sync_after_drive(driving.sync, &driving.locks, time);
         self.pointer_moved(driving.person, time);
         self.request_redraw();
         let text = format!(
             "played {} of {} steps in pane {} over {:.1} s; {reason}",
             driving.done,
             driving.steps,
-            driving.pane,
+            name.unwrap_or(driving.pane),
             driving.started.elapsed().as_secs_f64()
         );
         let answer = if finished {
@@ -339,29 +419,52 @@ impl State {
     }
 
     /// Take a key from the person while a script plays: Escape stops the
-    /// script, and every other press is dropped. A release reaches
-    /// decade's keyboard state and no client.
-    pub(super) fn driven_key(&mut self, evdev: u32, pressed: bool, time: u32) {
-        if pressed {
-            if evdev == KEY_ESC {
-                self.stop_drive("the person pressed Escape", false);
-            }
+    /// script, a lock key is kept to apply when it ends, and every other
+    /// press and every release is dropped.
+    pub(super) fn driven_key(&mut self, evdev: u32, pressed: bool) {
+        if !pressed {
             return;
         }
-        let keyboard = self.seat.get_keyboard().unwrap();
-        keyboard.input::<(), _>(
-            self,
-            Keycode::new(evdev + 8),
-            KeyState::Released,
-            SERIAL_COUNTER.next_serial(),
-            time,
-            |_, _, _| FilterResult::Intercept(()),
-        );
+        if evdev == KEY_ESC {
+            self.stop_drive("the person pressed Escape", false);
+        } else if let Some(driving) = &mut self.driving
+            && (evdev == KEY_CAPSLOCK || evdev == KEY_NUMLOCK)
+        {
+            let pressed_twice = driving.locks.contains(&evdev);
+            hold(&mut driving.locks, evdev, !pressed_twice);
+        }
     }
 
-    /// The name of the pane a script plays in.
+    /// Bring decade's keys into line with the person's after a script:
+    /// apply viewer `sync`'s report and the lock keys in `locks`, and press
+    /// again the modifiers the active viewer still holds.
+    fn sync_after_drive(&mut self, sync: Option<(usize, u32, Vec<u32>)>, locks: &[u32], time: u32) {
+        if let Some((id, locked, keycodes)) = sync {
+            self.sync_keys(id, locked, keycodes, time);
+        }
+        for &lock in locks {
+            self.forward_key(lock, KeyState::Pressed, time);
+            self.forward_key(lock, KeyState::Released, time);
+        }
+        let pressed = self.seat.get_keyboard().unwrap().pressed_keys();
+        let held: Vec<u32> = (self.active.and_then(|id| self.viewers.get(&id)))
+            .map(|viewer| viewer.keys.clone())
+            .unwrap_or_default();
+        for key in held {
+            if MODIFIERS.contains(&key) && !pressed.iter().any(|code| code.raw() == key + 8) {
+                self.forward_key(key, KeyState::Pressed, time);
+            }
+        }
+    }
+
+    /// The current name of the pane a script plays in.
     pub(super) fn driven_pane(&self) -> Option<&str> {
-        self.driving.as_ref().map(|driving| driving.pane.as_str())
+        let driving = self.driving.as_ref()?;
+        let current = (self.workspace_index(driving.workspace))
+            .and_then(|index| self.workspaces[index].tabs.get(driving.tab))
+            .and_then(|tab| tab.layout.pane(driving.pane_id))
+            .map(|pane| pane.name.as_str());
+        Some(current.unwrap_or(&driving.pane))
     }
 
     /// The driven pane of workspace `workspace`'s shown tab, how long the

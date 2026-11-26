@@ -20,7 +20,9 @@ command line and what the tool writes.
   decade sends the input to the pane's program as `wl_pointer` and
   `wl_keyboard` events. None of it reaches decade's chrome or keybinds.
   While a script plays, decade holds the person's pointer and keyboard.
-  The person's Escape stops the script. The pane's outline pulses yellow
+  It lets go of the keys the person held as the script started. The
+  person's Escape stops the script. A script stops when its window
+  leaves the pane. The pane's outline pulses yellow
   under a tag that names the agent. When the script ends, keyboard focus
   and the pointer go back to the person. A script holds at most 500
   steps and plays for at most 5 minutes. The call returns when the

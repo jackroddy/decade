@@ -557,7 +557,12 @@ impl State {
 
     /// The client area of pane `id` of tab `tab` in pixels on screen,
     /// while it has room to draw.
-    fn pane_px(&self, workspace: usize, tab: usize, id: usize) -> Option<Rectangle<i32, Physical>> {
+    pub(super) fn pane_px(
+        &self,
+        workspace: usize,
+        tab: usize,
+        id: usize,
+    ) -> Option<Rectangle<i32, Physical>> {
         let pane = self.workspaces[workspace].tabs.get(tab)?.layout.pane(id)?;
         let rect = self.text.px_rect(pane.client_rect());
         rect.intersection(Rectangle::from_size(self.size))
@@ -802,7 +807,10 @@ pub(super) fn span(duration: Duration) -> String {
     let seconds = duration.as_secs_f64();
     match duration.as_secs() {
         60 => "1 minute".to_string(),
-        whole if whole as f64 == seconds && whole % 60 == 0 => format!("{} minutes", whole / 60),
+        whole if whole > 0 && whole as f64 == seconds && whole % 60 == 0 => {
+            format!("{} minutes", whole / 60)
+        }
+        _ if seconds == 1.0 => "1 second".to_string(),
         _ => format!("{seconds} seconds"),
     }
 }
@@ -1218,6 +1226,8 @@ mod tests {
         assert_eq!(span(MP4_LIMIT), "5 minutes");
         assert_eq!(span(Duration::from_millis(4500)), "4.5 seconds");
         assert_eq!(span(Duration::from_secs(90)), "90 seconds");
+        assert_eq!(span(Duration::from_secs(1)), "1 second");
+        assert_eq!(span(Duration::ZERO), "0 seconds");
     }
 
     #[test]

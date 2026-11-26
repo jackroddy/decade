@@ -641,8 +641,9 @@ terminal cell, counted from 0. decade aims at the cell's centre. The
 cell grid depends on the terminal's font and padding, and decade does
 not know it. A cell point therefore needs `cell` in the call. `width`
 and `height` give a cell's size in pixels. `left` and `top` give where
-column 0 and row 0 start, and are 0 by default. The script's pointer
-starts at the person's pointer, moved inside the pane if it is outside.
+column 0 and row 0 start, and are 0 by default. Before the first step,
+decade puts the script's pointer where the person's pointer is, moved
+inside the pane if it is outside.
 
 decade plays the input through its own input path, as `wl_pointer` and
 `wl_keyboard` events to the pane's program. None of it reaches decade's
@@ -656,32 +657,39 @@ or its right click menu. It starts off. decade never saves it. A
 restored workspace has it off on every pane. Unmarking a scratch pane
 turns it off. With the mode on, decade plays the script at once. With it
 off, decade asks in the dialog `screenshot` uses. Its question is "coax
-asks to control pane scratch", over the number of steps and the time
-they take. The choices are allow once, allow and accept input, and
+asks to control pane scratch". The line under it reads "Escape stops it
+· 12 steps over 4.5 seconds". The warning comes first, as a narrow
+dialog cuts the end of the line. The choices are allow once, allow and accept input, and
 deny. The keys y, a and n answer them. While the mode is on, the pane
 carries a mouse tag beside its scratch tag.
 
 While a script plays, decade holds the person's pointer and keyboard as
 the dialog does. None of their keys, clicks or scrolls reach a pane or
-decade's chrome. Their Escape stops the script. decade moves keyboard
-focus to the scratch pane. The pane's outline pulses yellow. A yellow
+decade's chrome. Their Escape stops the script. As the script starts,
+decade lets go of the keys the person holds, so the program sees none of
+them held. decade then moves keyboard focus to the scratch pane. The pane's outline pulses yellow. A yellow
 tag on its top edge names the agent and says that Escape stops the
 script. decade draws the script's pointer over the pane for the person
 to see. A screenshot or recording shows neither the tag nor that drawn
 pointer. A recording shows only the pointer `record` draws. When the
 script ends, decade lets go of every button and key the script still
 holds. Keyboard focus goes back to the pane that had it. The pointer
-goes back to where the person's pointer is.
+goes back to where the person's pointer is. decade presses again the
+Ctrl, Shift, Alt and Super keys the person still holds. It applies the
+Caps Lock and Num Lock presses the person made while the script played.
 
 A script holds at most 500 steps and plays for at most 5 minutes. A
 glide takes at most 10 seconds and a wait at most 60. The call returns
 when the script ends, with the steps played, the steps in the script,
 the seconds it ran and why it ended: "played 5 of 5 steps in pane b over
 4.1 s; it finished". A script that stops early ends the call with a
-tool error in the same form, for one of these reasons:
+tool error in the same form, for one of these reasons. The answer gives
+the pane's name at the end, which a rename during the script changes.
 
 - the person pressed Escape
-- the window in the pane closed, or the pane closed
+- the window the script played in left the pane, because it closed or
+  another of the pane's tabs took its place
+- the pane closed
 - the pane's tab stopped being shown
 - the workspace left the screen, went to sleep or closed
 

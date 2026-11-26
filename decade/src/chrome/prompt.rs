@@ -99,15 +99,28 @@ pub fn record_dialog(
 }
 
 /// The dialog that asks the person whether `agent` may play a script of
-/// `steps` steps lasting `span` in pane `pane`. The caller sets the rest.
-pub fn input_dialog(agent: &str, pane: &str, steps: usize, span: &str) -> Dialog<'static, Answer> {
+/// `steps` steps lasting `span`, or taking no time for `None`, in pane
+/// `pane`. The caller sets the rest.
+pub fn input_dialog(
+    agent: &str,
+    pane: &str,
+    steps: usize,
+    span: Option<&str>,
+) -> Dialog<'static, Answer> {
     let steps = match steps {
         1 => "1 step".to_string(),
         steps => format!("{steps} steps"),
     };
+
+    // the warning leads, as the dialog cuts the line's end
+    // when the window is narrow
+    let detail = match span {
+        Some(span) => format!("Escape stops it · {steps} over {span}"),
+        None => format!("Escape stops it · {steps} at once"),
+    };
     Dialog {
         question: format!("{agent} asks to control pane {pane}"),
-        detail: format!("{steps}, {span}; Escape stops it"),
+        detail,
         path: None,
         choices: &INPUT_CHOICES,
         escape: Answer::Deny,
@@ -157,16 +170,16 @@ mod tests {
 
     #[test]
     fn the_input_dialog_names_the_agent_the_pane_the_steps_and_its_own_mode() {
-        let dialog = input_dialog("coax", "scratch", 12, "4.5 seconds");
+        let dialog = input_dialog("coax", "scratch", 12, Some("4.5 seconds"));
         assert_eq!(dialog.question, "coax asks to control pane scratch");
-        assert_eq!(dialog.detail, "12 steps, 4.5 seconds; Escape stops it");
+        assert_eq!(dialog.detail, "Escape stops it · 12 steps over 4.5 seconds");
         let labels: Vec<&str> = dialog.choices.iter().map(|choice| choice.label).collect();
         assert_eq!(labels, ["Allow once", "Allow and accept input", "Deny"]);
         let keys: Vec<char> = dialog.choices.iter().map(|choice| choice.key).collect();
         assert_eq!(keys, ['y', 'a', 'n']);
         assert_eq!(dialog.escape, Answer::Deny);
-        let one = input_dialog("An agent", "scratch", 1, "0.2 seconds");
-        assert_eq!(one.detail, "1 step, 0.2 seconds; Escape stops it");
+        let one = input_dialog("An agent", "scratch", 1, None);
+        assert_eq!(one.detail, "Escape stops it · 1 step at once");
     }
 
     #[test]

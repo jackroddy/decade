@@ -458,7 +458,7 @@ impl State {
 
     pub(super) fn keyboard(&mut self, evdev: u32, pressed: bool, time: u32) {
         if self.driving.is_some() {
-            self.driven_key(evdev, pressed, time);
+            self.driven_key(evdev, pressed);
             return;
         }
         let keyboard = self.seat.get_keyboard().unwrap();
