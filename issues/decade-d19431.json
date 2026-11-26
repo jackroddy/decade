@@ -1,0 +1,28 @@
+{
+  "id": "decade-d19431",
+  "title": "A buffer drawn at one texel per pixel is one level off in some columns",
+  "body": "decade's compositor draws a client's buffer that is shown at exactly one texel per pixel with a small blend in some columns. una's `examples/canvas.rs` draws a checkerboard of single black and white pixels inside a magenta frame. Its `--verify` flag checks a capture pixel by pixel. Run inside a decade pane on 2026-11-26 and captured from the host output, it gave:\n\n| | result |\n|---|---|\n| frame | whole on all four sides, 795 by 1155 pixels |\n| squares | every one at the right place, with no column doubled or missing |\n| wrong pixels | 19,055, all 254 where 255 belongs or 1 where 0 belongs |\n| where | 20 whole columns, about 40 pixels apart (one gap of 29) |\n\nA buffer drawn at a size other than its own would show grey columns under a linear filter, or a doubled column under nearest-neighbour sampling. Neither happened, so the size is right. The pattern fits a linear filter at one texel per pixel, where the texture coordinates drift by a few thousandths of a texel across the surface. Most columns land on texel centres and some do not. Hyprland 0.56.2 samples nearest-neighbour when it draws a surface at its buffer's size, and the same pane was exact there. Nobody has yet read decade's renderer to see where it sets the filter.\n\n## Proposal\n\nWhen decade draws a client surface at one texel per pixel, sample with nearest-neighbour. Keep linear filtering for surfaces it scales.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T18:47:29.533022831Z",
+  "updated_at": "2026-11-26T18:47:29.533022831Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "9efedb9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
