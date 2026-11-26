@@ -1,0 +1,30 @@
+{
+  "id": "decade-82390f",
+  "title": "Sleeping workspaces sort to the bottom of the sidebar",
+  "body": "`Frame::new` in `decade/src/chrome/frame.rs` orders the sidebar's workspace cards. It sorts `entries` by section first: the ungrouped workspaces come first, then each group's in the order of `groups`. Within a section it sorts by `Reverse(entry.state())`, so the card whose first agent has the most urgent state comes first. Ties keep the picker's order. `Entry::asleep` marks a sleeping workspace, which the card draws with the sleep mark on its disc and the state \"asleep\". The sort never reads `asleep`, so a sleeping card can sit above awake ones.\n\n## Proposal\n\nSleeping workspaces sort below every awake workspace. The sort key becomes `(section, entry.asleep, Reverse(entry.state()))`, and sleeping cards keep the picker's order among themselves.\n\n## Open\n\n- With groups, does a sleeping workspace go to the bottom of its own group, as the key above does, or to the bottom of the whole sidebar, out of its group?",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T01:30:51.60600478Z",
+  "updated_at": "2026-11-26T01:30:51.60600478Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
