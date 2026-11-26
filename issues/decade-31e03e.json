@@ -1,0 +1,30 @@
+{
+  "id": "decade-31e03e",
+  "title": "What should connecting look like in decade-channel?",
+  "body": "A client connects with one of two functions:\n\n```rust\npub fn connect(path: &Path, name: &str, accepts: &[Verb], shows: &[Shows],\n    pane: Option<&str>, agent: Option<&Agent>)\n    -> io::Result<(Channel, Receiver<Message>)>\n\npub fn from_env(name: &str, accepts: &[Verb], shows: &[Shows], agent: Option<&Agent>)\n    -> Option<io::Result<(Channel, Receiver<Message>)>>\n```\n\nMost callers pass `&[]` or `None` for most arguments, so a call reads as a row of blanks. `from_env` returns `None` when `DECADE_SOCKET` is unset, wrapped around an `io::Result`, so every example writes `.expect(...)?`. Neither takes a restore block (see \"A client cannot send its restore block in its hello\").\n\n## Options\n\n- A builder: `Channel::builder(\"name\").accepts(...).shows(...).agent(...).from_env()`.\n- Connecting takes a `Hello` the caller fills in with `..Default::default()`.\n- Keep the functions, and make `from_env` return `io::Result` with an error kind for a missing socket.\n\n## Open\n\n- Should a program that decade did not start get a typed error, or `None`?",
+  "type": "decision",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade-channel"
+  ],
+  "parent": "decade-168095",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T03:22:20.714914282Z",
+  "updated_at": "2026-11-26T03:22:20.714914282Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
