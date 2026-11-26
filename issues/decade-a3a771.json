@@ -1,0 +1,31 @@
+{
+  "id": "decade-a3a771",
+  "title": "How does a client match a reply to the request that asked for it?",
+  "body": "Every message from decade arrives on the one `Receiver<Message>` that `connect` returns: replies to `panes` and `screenshot`, errors, and verbs from other panes, in arrival order. Nothing ties a reply to the request that caused it. The README's examples loop over the receiver until the variant they want arrives, and skip the rest. A client with its own event loop, such as coax, has to keep track of which requests are outstanding.\n\n## Options\n\n- Requests carry an id that decade echoes in the reply. This changes the protocol, so both crates' minors move.\n- `Channel` gets blocking helpers that wait for one reply and queue what arrives meanwhile.\n- Leave it, and document that each request kind has at most one reply in flight.",
+  "type": "decision",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade-channel",
+    "decade"
+  ],
+  "parent": "decade-168095",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T03:22:20.726943364Z",
+  "updated_at": "2026-11-26T03:22:20.726943364Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
