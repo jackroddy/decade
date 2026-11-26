@@ -22,10 +22,8 @@ const NO_SCRATCH: &str =
 
 const SCRATCH_ICON: char = '\u{f0093}';
 const UNSCRATCHED_ICON: char = '\u{f0096}';
-pub const SCREENSHOTS_ICON: char = '\u{f0100}';
-const NO_SCREENSHOTS_ICON: char = '\u{f05df}';
-pub const SAVED_SCREENSHOTS_ICON: char = '\u{f0193}';
-const NO_SAVED_SCREENSHOTS_ICON: char = '\u{f1643}';
+const CAPTURES_ICON: char = '\u{f0100}';
+const NO_CAPTURES_ICON: char = '\u{f05df}';
 
 pub type Layout = decade_ui::Layout<PaneAction>;
 pub type Pane = decade_ui::Pane<PaneAction>;
@@ -33,8 +31,7 @@ pub type Pane = decade_ui::Pane<PaneAction>;
 /// What a button decade puts on a pane runs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PaneAction {
-    Screenshots,
-    SavedScreenshots,
+    Captures,
     Scratch,
     Pin,
     Restart,
@@ -65,9 +62,8 @@ pub struct Workspace {
     /// The id of the sidebar group the workspace is in.
     pub group: Option<u32>,
 
-    /// The pane whose screenshot was taken last, the left tag of the mode
-    /// the screenshot went by, and when, while that tag flashes.
-    pub flash: Option<(String, char, Instant)>,
+    /// The pane captured last, and when, while its camera tag flashes.
+    pub flash: Option<(String, Instant)>,
 
     /// The terminal tabs to start on wake, or `None` while the workspace
     /// is awake.
@@ -127,11 +123,8 @@ pub struct PaneInfo {
     /// The name of the live agent in the pane, which labels its first tab.
     pub agent: Option<String>,
 
-    /// Whether an agent may take a screenshot of the pane without asking.
-    pub screenshots: bool,
-
-    /// Whether an agent may save a screenshot of the pane without asking.
-    pub saved_screenshots: bool,
+    /// Whether an agent may capture the pane without asking.
+    pub captures: bool,
 }
 
 impl Default for PaneInfo {
@@ -144,8 +137,7 @@ impl Default for PaneInfo {
             pid: None,
             restore: None,
             agent: None,
-            screenshots: false,
-            saved_screenshots: false,
+            captures: false,
         }
     }
 }
@@ -381,14 +373,9 @@ fn marks(info: &PaneInfo, scratched: bool, asleep: bool) -> Marks<PaneAction> {
     };
     let buttons = vec![
         button(
-            info.screenshots,
-            (SCREENSHOTS_ICON, NO_SCREENSHOTS_ICON),
-            PaneAction::Screenshots,
-        ),
-        button(
-            info.saved_screenshots,
-            (SAVED_SCREENSHOTS_ICON, NO_SAVED_SCREENSHOTS_ICON),
-            PaneAction::SavedScreenshots,
+            info.captures,
+            (CAPTURES_ICON, NO_CAPTURES_ICON),
+            PaneAction::Captures,
         ),
         button(
             scratched,
@@ -432,13 +419,7 @@ fn marks(info: &PaneInfo, scratched: bool, asleep: bool) -> Marks<PaneAction> {
     };
     Marks {
         buttons,
-        left_tags: [
-            info.screenshots.then_some(SCREENSHOTS_ICON),
-            info.saved_screenshots.then_some(SAVED_SCREENSHOTS_ICON),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
+        left_tag: info.captures.then_some(CAPTURES_ICON),
         tags: tags.into_iter().flatten().collect(),
         placeholder,
     }
@@ -476,7 +457,7 @@ const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 /// How long a point lasts unless something ends it sooner.
 const POINT_FOR: Duration = Duration::from_secs(30);
 
-/// How long a pane's screenshot tag flashes after a capture.
+/// How long a pane's camera tag flashes after a capture.
 const FLASH_FOR: Duration = Duration::from_millis(700);
 
 /// How opaque the white layer over a captured pane starts.
@@ -919,19 +900,19 @@ impl Workspace {
         self.point.is_some()
     }
 
-    /// The pane whose screenshot tag flashes at `now`, that tag, and how
-    /// bright it is, fading from 1 to 0 over `FLASH_FOR`.
-    pub fn flash_at(&self, now: Instant) -> Option<(&str, char, f32)> {
-        let (pane, tag, since) = self.flash.as_ref()?;
+    /// The pane whose camera tag flashes at `now`, and how bright it is,
+    /// fading from 1 to 0 over `FLASH_FOR`.
+    pub fn flash_at(&self, now: Instant) -> Option<(&str, f32)> {
+        let (pane, since) = self.flash.as_ref()?;
         let elapsed = now.saturating_duration_since(*since);
         let left = 1.0 - elapsed.as_secs_f32() / FLASH_FOR.as_secs_f32();
-        (left > 0.0).then_some((pane.as_str(), *tag, left))
+        (left > 0.0).then_some((pane.as_str(), left))
     }
 
     /// The pane under the white layer of a capture at `now`, and the
     /// layer's opacity.
     pub fn shutter_at(&self, now: Instant) -> Option<(&str, f32)> {
-        let (pane, _, since) = self.flash.as_ref()?;
+        let (pane, since) = self.flash.as_ref()?;
         let alpha = shutter(now.saturating_duration_since(*since));
         (alpha > 0.0).then_some((pane.as_str(), alpha))
     }
@@ -1077,7 +1058,7 @@ pub(super) mod tests {
         let mut shown = at_home();
         let now = Instant::now();
         assert!(!shown.keep_flash(now));
-        shown.flash = Some(("terminal".to_string(), SCREENSHOTS_ICON, now));
+        shown.flash = Some(("terminal".to_string(), now));
         assert!(shown.keep_flash(now + SHUTTER_FOR));
         assert!(shown.shutter_at(now + SHUTTER_FOR).is_none());
         assert!(shown.keep_flash(now + FLASH_FOR / 2));
@@ -1789,36 +1770,15 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_pane_accepting_screenshots_has_the_screenshot_tag_at_the_left() {
+    fn a_pane_accepting_captures_has_the_camera_tag_at_the_left() {
         let mut workspace = at_home();
-        workspace.tab_mut().info_mut(0).screenshots = true;
+        workspace.tab_mut().info_mut(0).captures = true;
         workspace.mark_panes();
-        assert_eq!(tags(workspace.layout(), 0), [SCREENSHOTS_ICON.to_string()]);
+        assert_eq!(tags(workspace.layout(), 0), [CAPTURES_ICON.to_string()]);
     }
 
     #[test]
-    fn a_pane_accepting_saved_screenshots_has_the_save_tag_after_the_camera_tag() {
-        let mut workspace = at_home();
-        workspace.tab_mut().info_mut(0).saved_screenshots = true;
-        workspace.mark_panes();
-        assert_eq!(
-            tags(workspace.layout(), 0),
-            [SAVED_SCREENSHOTS_ICON.to_string()]
-        );
-        workspace.tab_mut().info_mut(0).screenshots = true;
-        workspace.mark_panes();
-        assert_eq!(
-            tags(workspace.layout(), 0),
-            [
-                SCREENSHOTS_ICON.to_string(),
-                SAVED_SCREENSHOTS_ICON.to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn the_bar_has_screenshots_saved_screenshots_scratch_and_pin_buttons_bright_when_on_or_focused()
-    {
+    fn the_bar_has_captures_scratch_and_pin_buttons_bright_when_on_or_focused() {
         let mut workspace = at_home();
         workspace.add_pane(0, 0, "code", None);
         workspace.layout_mut().focused = 1;
@@ -1827,8 +1787,7 @@ pub(super) mod tests {
         assert_eq!(
             bar_icons(workspace.layout(), 0),
             [
-                (NO_SCREENSHOTS_ICON, muted),
-                (NO_SAVED_SCREENSHOTS_ICON, muted),
+                (NO_CAPTURES_ICON, muted),
                 (UNSCRATCHED_ICON, muted),
                 (UNPINNED_ICON, muted),
             ]
@@ -1836,21 +1795,18 @@ pub(super) mod tests {
         assert_eq!(
             bar_icons(workspace.layout(), 1),
             [
-                (NO_SCREENSHOTS_ICON, bright),
-                (NO_SAVED_SCREENSHOTS_ICON, bright),
+                (NO_CAPTURES_ICON, bright),
                 (UNSCRATCHED_ICON, bright),
                 (UNPINNED_ICON, bright),
             ]
         );
-        workspace.tab_mut().info_mut(0).screenshots = true;
-        workspace.tab_mut().info_mut(0).saved_screenshots = true;
+        workspace.tab_mut().info_mut(0).captures = true;
         workspace.tab_mut().pin(0, "decade.w0.terminal".to_string());
         workspace.toggle_scratch("terminal");
         assert_eq!(
             bar_icons(workspace.layout(), 0),
             [
-                (SCREENSHOTS_ICON, bright),
-                (SAVED_SCREENSHOTS_ICON, bright),
+                (CAPTURES_ICON, bright),
                 (SCRATCH_ICON, bright),
                 (PIN_ICON, bright),
             ]
@@ -1868,15 +1824,8 @@ pub(super) mod tests {
         assert_eq!(hit(end - 5), Some(BarButton::Zoom));
         assert_eq!(hit(end - 9), Some(BarButton::Action(PaneAction::Pin)));
         assert_eq!(hit(end - 13), Some(BarButton::Action(PaneAction::Scratch)));
-        assert_eq!(
-            hit(end - 17),
-            Some(BarButton::Action(PaneAction::SavedScreenshots))
-        );
-        assert_eq!(
-            hit(end - 21),
-            Some(BarButton::Action(PaneAction::Screenshots))
-        );
-        assert_eq!(hit(end - 25), Some(BarButton::Name));
+        assert_eq!(hit(end - 17), Some(BarButton::Action(PaneAction::Captures)));
+        assert_eq!(hit(end - 21), Some(BarButton::Name));
     }
 
     #[test]

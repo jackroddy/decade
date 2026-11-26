@@ -13,8 +13,7 @@ pub enum Place {
         pinned: bool,
         zoomed: bool,
         scratch: bool,
-        screenshots: bool,
-        saved_screenshots: bool,
+        captures: bool,
     },
 
     /// A workspace's card or tile in the sidebar, with the id of its group.
@@ -52,11 +51,8 @@ pub enum Command {
     Zoom(usize),
     Scratch(usize),
 
-    /// Turn the pane's accept screenshots mode on or off.
-    Screenshots(usize),
-
-    /// Turn the pane's accept saved screenshots mode on or off.
-    SavedScreenshots(usize),
+    /// Turn the pane's accept captures mode on or off.
+    Captures(usize),
 
     /// Return the workspace's agents that are done or need attention to idle.
     Clear(u32),
@@ -111,8 +107,7 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry<Command>> {
             pinned,
             zoomed,
             scratch,
-            screenshots,
-            saved_screenshots,
+            captures,
         } => vec![
             entry(if pinned { "Unpin" } else { "Pin" }, Command::Pin(id)),
             entry(if zoomed { "Unzoom" } else { "Zoom" }, Command::Zoom(id)),
@@ -125,20 +120,12 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry<Command>> {
                 Command::Scratch(id),
             ),
             entry(
-                if screenshots {
-                    "Stop accepting screenshots"
+                if captures {
+                    "Stop accepting captures"
                 } else {
-                    "Accept screenshots"
+                    "Accept captures"
                 },
-                Command::Screenshots(id),
-            ),
-            entry(
-                if saved_screenshots {
-                    "Stop accepting saved screenshots"
-                } else {
-                    "Accept saved screenshots"
-                },
-                Command::SavedScreenshots(id),
+                Command::Captures(id),
             ),
             entry("Rename", Command::Rename(Named::Pane(id))),
         ],
@@ -231,14 +218,13 @@ mod tests {
     }
 
     #[test]
-    fn a_pane_offers_pin_zoom_scratch_screenshots_and_rename_labelled_for_what_a_click_does() {
+    fn a_pane_offers_pin_zoom_scratch_captures_and_rename_labelled_for_what_a_click_does() {
         let plain = Place::Pane {
             id: 4,
             pinned: false,
             zoomed: false,
             scratch: false,
-            screenshots: false,
-            saved_screenshots: false,
+            captures: false,
         };
         assert_eq!(
             labels(&plain),
@@ -246,8 +232,7 @@ mod tests {
                 "Pin",
                 "Zoom",
                 "Mark as scratch",
-                "Accept screenshots",
-                "Accept saved screenshots",
+                "Accept captures",
                 "Rename"
             ]
         );
@@ -258,8 +243,7 @@ mod tests {
                 Command::Pin(4),
                 Command::Zoom(4),
                 Command::Scratch(4),
-                Command::Screenshots(4),
-                Command::SavedScreenshots(4),
+                Command::Captures(4),
                 Command::Rename(Named::Pane(4))
             ]
         );
@@ -268,8 +252,7 @@ mod tests {
             pinned: true,
             zoomed: true,
             scratch: true,
-            screenshots: true,
-            saved_screenshots: true,
+            captures: true,
         };
         assert_eq!(
             labels(&set),
@@ -277,8 +260,7 @@ mod tests {
                 "Unpin",
                 "Unzoom",
                 "Unmark as scratch",
-                "Stop accepting screenshots",
-                "Stop accepting saved screenshots",
+                "Stop accepting captures",
                 "Rename"
             ]
         );
@@ -456,8 +438,7 @@ mod tests {
             pinned: false,
             zoomed: false,
             scratch: false,
-            screenshots: false,
-            saved_screenshots: false,
+            captures: false,
         };
         assert!(!entries(pane, &[]).iter().any(|entry| entry.destructive));
     }

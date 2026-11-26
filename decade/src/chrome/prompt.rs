@@ -1,13 +1,12 @@
 use decade_ui::overlay::{Choice, Dialog};
 
-/// How the person answers decade's question whether an agent may take or
-/// save a screenshot of a pane.
+/// How the person answers decade's question whether an agent may capture
+/// a pane.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Answer {
     Once,
 
-    /// Allow this one and turn on the pane's accept screenshots mode, or
-    /// its accept saved screenshots mode for a screenshot to save.
+    /// Allow this one and turn on the pane's accept captures mode.
     Always,
     Deny,
 }
@@ -23,13 +22,7 @@ const fn choice(answer: Answer, label: &'static str, key: char) -> Choice<Answer
 
 static CHOICES: [Choice<Answer>; 3] = [
     choice(Answer::Once, "Allow once", 'y'),
-    choice(Answer::Always, "Allow and accept screenshots", 'a'),
-    choice(Answer::Deny, "Deny", 'n'),
-];
-
-static SAVE_CHOICES: [Choice<Answer>; 3] = [
-    choice(Answer::Once, "Allow once", 'y'),
-    choice(Answer::Always, "Allow and accept saved screenshots", 'a'),
+    choice(Answer::Always, "Allow and accept captures", 'a'),
     choice(Answer::Deny, "Deny", 'n'),
 ];
 
@@ -63,7 +56,7 @@ pub fn save_dialog(agent: &str, pane: &str, file: &str) -> Dialog<'static, Answe
         question: format!("{agent} asks to save a screenshot"),
         detail: format!("of pane {pane} to"),
         path: Some(file.to_string()),
-        choices: &SAVE_CHOICES,
+        choices: &CHOICES,
         escape: Answer::Deny,
         armed: false,
         selected: 0,
@@ -105,18 +98,7 @@ mod tests {
             "coax asks to save a screenshot of pane code to /work/shot.png"
         );
         let labels: Vec<&str> = dialog.choices.iter().map(|choice| choice.label).collect();
-        assert_eq!(
-            labels,
-            ["Allow once", "Allow and accept saved screenshots", "Deny"]
-        );
+        assert_eq!(labels, ["Allow once", "Allow and accept captures", "Deny"]);
         assert_eq!(dialog.escape, Answer::Deny);
-    }
-
-    #[test]
-    fn the_save_dialog_answers_to_the_same_keys_as_the_screenshot_dialog() {
-        let keys = |choices: &[Choice<Answer>]| -> Vec<(char, Answer)> {
-            choices.iter().map(|c| (c.key, c.answer)).collect()
-        };
-        assert_eq!(keys(&SAVE_CHOICES), keys(&CHOICES));
     }
 }

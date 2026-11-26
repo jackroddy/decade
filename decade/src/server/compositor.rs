@@ -1059,8 +1059,7 @@ impl State {
             Command::Pin(id) => self.toggle_pin(id),
             Command::Zoom(id) => self.toggle_zoom(id),
             Command::Scratch(id) => self.toggle_scratch(id),
-            Command::Screenshots(id) => self.toggle_screenshots(id),
-            Command::SavedScreenshots(id) => self.toggle_saved_screenshots(id),
+            Command::Captures(id) => self.toggle_captures(id),
             Command::Clear(id) => {
                 if let Some(index) = self.workspace_index(id) {
                     self.clear_agents(index);

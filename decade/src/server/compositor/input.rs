@@ -675,8 +675,7 @@ impl State {
 
     fn pane_action(&mut self, id: usize, action: PaneAction) {
         match action {
-            PaneAction::Screenshots => self.toggle_screenshots(id),
-            PaneAction::SavedScreenshots => self.toggle_saved_screenshots(id),
+            PaneAction::Captures => self.toggle_captures(id),
             PaneAction::Scratch => self.toggle_scratch(id),
             PaneAction::Pin => self.toggle_pin(id),
             PaneAction::Restart => {
@@ -837,8 +836,7 @@ impl State {
             pinned: info.pinned,
             zoomed: layout.zoom == Some(id),
             scratch: shown.is_scratch(pane),
-            screenshots: info.screenshots,
-            saved_screenshots: info.saved_screenshots,
+            captures: info.captures,
         })
     }
 

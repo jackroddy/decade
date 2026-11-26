@@ -232,18 +232,10 @@ person allows the screenshot. When the client disconnects while the
 dialog asks for it, decade closes the dialog, turns on no mode and sends
 nothing.
 
-Each pane has an accept saved screenshots mode, apart from its accept
-screenshots mode. decade checks the first for a `screenshot` message and
-the second for the MCP tool. Turning one on leaves the other as it was.
-The person turns the mode on and off as for accept screenshots, and
-decade never saves it. With the mode off, decade asks in the same
-dialog, with the same rules. Its question is then "coax asks to save a
-screenshot of pane code to shot.png", and its middle choice turns on
-accept saved screenshots. While the mode is on, the pane carries a save
-tag after the camera tag. The save tag flashes at each capture for a
-`screenshot` message, and the camera tag at each capture for the MCP
-tool, whether the mode was on or the person allowed the capture in the
-dialog.
+decade checks the pane's accept captures mode for a `screenshot`
+message, as it does for the MCP tool. With the mode off, decade asks in
+the same dialog, with the same rules. Its question is then "coax asks to save a screenshot of
+pane code to shot.png".
 
 ## Agents
 
@@ -394,8 +386,10 @@ pixels are the screen's. decade refuses the call when no pane has that name and 
 the pane is in a tab that is not shown. The workspace itself need not be
 shown.
 
-Each pane has an accept screenshots mode, which the person turns on and
-off from the pane's Ctrl bar or its right click menu. The mode starts off.
+Each pane has an accept captures mode, which the person turns on and
+off from the pane's Ctrl bar or its right click menu. The mode covers
+the MCP tool `screenshot` and the socket's `screenshot` message. It
+starts off.
 decade never saves it. A restored workspace has it off on every pane. With
 the mode on, decade captures the pane at once. With it off, decade opens a
 dialog in the middle of the window and dims everything behind it. Every
@@ -410,7 +404,8 @@ viewer counts. A deny, or no answer within 30 seconds, ends the call with
 a tool error that gives the reason. decade refuses a `screenshot` that
 would ask while the dialog is up. While
 the mode is on, the pane carries a camera tag at the left end of its
-outline's top edge. The tag flashes at each capture for the tool.
+outline's top edge. The tag flashes at each capture, whether the mode
+was on or the person allowed the capture in the dialog.
 
 The person may mark any number of panes in a workspace as scratch panes,
 from the Ctrl bar. Marking one leaves the others marked.

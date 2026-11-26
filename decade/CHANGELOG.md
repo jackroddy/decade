@@ -27,20 +27,11 @@ command line and what the tool writes.
   `for` is the pane of the agent asking. decade answers with
   `{"screenshot": {"png": ...}}`, the PNG in base64, or with an error.
   A pane verb may no longer be named `screenshot`.
-- Each pane has an accept saved screenshots mode beside accept
-  screenshots. Turning one on leaves the other as it was. decade checks
-  the new mode for a `screenshot` message and the old one for the MCP
-  tool. The person turns the new mode on and off from the pane's Ctrl
-  bar or its right click menu. It starts off and decade never saves it.
-  With it off, decade asks in a dialog whose question is "coax asks to
-  save a screenshot of pane code to shot.png". The choices are allow
-  once, allow and accept saved screenshots, and deny, with y, a and n.
-  As with the screenshot dialog, decade refuses after 30 seconds,
-  ignores keys and clicks in the first half second, and refuses a
-  request while a dialog is up. While the mode is on, the pane carries a
-  save tag after the camera tag. The save tag flashes at each capture
-  for a `screenshot` message and the camera tag at each capture for the
-  MCP tool. When the client of a save dialog disconnects, decade closes
+- decade checks the pane's accept captures mode for a `screenshot`
+  message, as it does for the MCP tool. With the mode off, decade asks in a dialog whose
+  question is "coax asks to save a screenshot of pane code to
+  shot.png". The dialog has the choices and rules of the MCP tool's
+  dialog. When the client of a save dialog disconnects, decade closes
   the dialog and turns on no mode.
 - An `agent` message may carry `subagents`, the list of sub-agents and
   background tasks the agent started, each with a name, an activity and
@@ -114,6 +105,10 @@ command line and what the tool writes.
 
 ### Changed
 
+- The accept screenshots mode is now accept captures. It covers the MCP
+  tool `screenshot` and the socket's `screenshot` message. The pane's
+  right click menu offers Accept captures, and the dialog's middle choice
+  is Allow and accept captures. The camera tag flashes at every capture.
 - decade queues what it writes to a socket client and writes the rest
   each time the socket has room. Before, a line larger than the
   socket's buffer, such as a screenshot of a large pane, made decade

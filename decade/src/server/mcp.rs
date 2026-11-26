@@ -234,7 +234,7 @@ fn tools() -> Vec<Tool> {
         ),
         Tool::new(
             "screenshot",
-            "Capture what a pane in the shown tab draws, without its bar or outline, as a PNG at the screen's pixels. Unless the user has turned on accept screenshots for the pane, decade asks the user first and waits up to 30 seconds. A refusal or no answer fails the call with the reason",
+            "Capture what a pane in the shown tab draws, without its bar or outline, as a PNG at the screen's pixels. Unless the user has turned on accept captures for the pane, decade asks the user first and waits up to 30 seconds. A refusal or no answer fails the call with the reason",
             schema(json!({
                 "type": "object",
                 "properties": {
