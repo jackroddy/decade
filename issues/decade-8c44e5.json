@@ -1,0 +1,33 @@
+{
+  "id": "decade-8c44e5",
+  "title": "Jack messages every agent at once, as in a group chat",
+  "body": "Jack has no way to ask every agent something at once. A case from 2026-11-26: a terminal window opened on his screen outside decade, and he wanted to ask all running agents which of them started it and whether he could close it. Today he would have to go to each agent's pane and ask it there.\n\ndecade already tracks every agent. One server holds all workspaces, and each workspace's agent list, which the `agents` MCP tool returns, names each agent, its pane and whether a client holds its session. decade has no way yet to put a message in front of an agent unasked. decade-9418f7 proposes a `notify` message to the client in an agent's pane, and coax-87ae62 in coax's foam has coax pass such a notice to its agent, waking an idle one.\n\n## Proposal\n\n- Jack writes a message to the group from decade. It might be a field opened from the palette or a keybind, or a command such as `decade chat \"...\"`.\n- decade sends it as a notice to every connected agent in every workspace, through the `notify` path of decade-9418f7.\n- An agent answers with a new MCP tool, `chat`, that posts a line to the group. Every agent and Jack see each line.\n- decade keeps the conversation in one place Jack can read, with each line marked by who wrote it: Jack, or an agent and its workspace.\n- The notice tells agents this is a group chat and asks them to answer briefly and informally, like people in a group chat. Agents with nothing to add stay quiet.\n\n## Open\n\n- Where Jack reads the chat: an overlay, a pane of its own, or a strip in the sidebar.\n- Whether agents see each other's replies as new notices, which could set off agents answering each other in a loop, or only Jack's messages.\n- Whether a message can go to one workspace's agents as well as to all.\n- How long decade keeps the conversation, and whether it survives a restart.",
+  "type": "feature",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade",
+    "decade-channel"
+  ],
+  "parent": null,
+  "blocked_by": [
+    "decade-9418f7"
+  ],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T07:43:50.176538825Z",
+  "updated_at": "2026-11-26T07:43:50.176538825Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "10d8d65",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
