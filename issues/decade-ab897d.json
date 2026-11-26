@@ -1,0 +1,30 @@
+{
+  "id": "decade-ab897d",
+  "title": "A client cannot send its restore block in its hello",
+  "body": "`Hello` has a public `restore: Option<Restore>` field, and decade reads a restore block from a hello (see \"Messages to decade\" in `docs/protocol.md`). But `Channel::connect` builds the `Hello` itself and always sets `restore: None` (`decade-channel/src/lib.rs`, in `connect`). A client can only set its restore block with a separate `Channel::restore` call after connecting, so the field is unusable from the client side.\n\n## Proposal\n\n`connect` and `from_env` take the restore block, or connecting takes a `Hello` the caller fills in. The choice belongs with \"What should connecting look like in decade-channel?\".",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade-channel"
+  ],
+  "parent": "decade-168095",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T03:22:20.70290088Z",
+  "updated_at": "2026-11-26T03:22:20.70290088Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
