@@ -438,6 +438,12 @@ impl State {
         if let Some(viewer) = self.viewers.get_mut(&id) {
             viewer.focused = true;
         }
+
+        // the person's keys held while an agent's script plays
+        // would reach the pane the script drives
+        if self.driving.is_some() {
+            return;
+        }
         let modifiers = self.seat.get_keyboard().unwrap().modifier_state();
         let locks = [
             (modifiers.caps_lock, locked & CAPS_LOCK != 0, KEY_CAPSLOCK),

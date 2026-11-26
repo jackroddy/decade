@@ -1,4 +1,5 @@
 mod channels;
+mod driving;
 mod groups;
 mod input;
 mod pool;
@@ -173,6 +174,9 @@ pub struct State {
     asking: Option<screenshot::Asking>,
     capturing: Vec<screenshot::Capturing>,
 
+    /// The agent's script playing in a scratch pane.
+    driving: Option<driving::Driving>,
+
     /// The recordings, from their first frame until decade answers for
     /// them.
     recordings: Vec<record::Recording>,
@@ -304,6 +308,7 @@ pub fn run() {
         next_group: 0,
         asking: None,
         capturing: Vec::new(),
+        driving: None,
         recordings: Vec::new(),
         next_recording: 0,
         finished: Vec::new(),
@@ -1084,6 +1089,7 @@ impl State {
             Command::Zoom(id) => self.toggle_zoom(id),
             Command::Scratch(id) => self.toggle_scratch(id),
             Command::Captures(id) => self.toggle_captures(id),
+            Command::Input(id) => self.toggle_input(id),
             Command::Clear(id) => {
                 if let Some(index) = self.workspace_index(id) {
                     self.clear_agents(index);
@@ -1501,7 +1507,7 @@ impl State {
                 pulsing |= shown.keep_point(now);
                 steady |= shown.keep_flash(now);
             }
-            steady |= state.recording();
+            steady |= state.recording() || state.driving.is_some();
             pulsing |= steady;
             tick = tick.wrapping_add(1);
             if steady || tick.is_multiple_of(CARD_PULSE_TICKS) {

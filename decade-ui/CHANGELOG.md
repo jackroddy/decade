@@ -11,6 +11,10 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 
 ### Added
 
+- `Chrome::driven` names the pane an agent's input plays in, as a
+  `Driven`. The layout mixes the pane's outline toward yellow by its
+  `strength` and draws a yellow tag after the recording tag with its
+  `icon` and `label`.
 - `Chrome::recordings` lists the panes being recorded, each a
   `Recording`. The layout mixes the pane's outline toward red by the
   recording's `strength`. It draws a red tag after the left tag with the

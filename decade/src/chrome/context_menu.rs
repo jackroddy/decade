@@ -14,6 +14,7 @@ pub enum Place {
         zoomed: bool,
         scratch: bool,
         captures: bool,
+        input: bool,
     },
 
     /// A workspace's card or tile in the sidebar, with the id of its group.
@@ -53,6 +54,9 @@ pub enum Command {
 
     /// Turn the pane's accept captures mode on or off.
     Captures(usize),
+
+    /// Turn the scratch pane's accept input mode on or off.
+    Input(usize),
 
     /// Return the workspace's agents that are done or need attention to idle.
     Clear(u32),
@@ -108,27 +112,39 @@ pub fn entries(place: Place, groups: &[Group]) -> Vec<Entry<Command>> {
             zoomed,
             scratch,
             captures,
-        } => vec![
-            entry(if pinned { "Unpin" } else { "Pin" }, Command::Pin(id)),
-            entry(if zoomed { "Unzoom" } else { "Zoom" }, Command::Zoom(id)),
-            entry(
-                if scratch {
-                    "Unmark as scratch"
+            input,
+        } => {
+            let mut entries = vec![
+                entry(if pinned { "Unpin" } else { "Pin" }, Command::Pin(id)),
+                entry(if zoomed { "Unzoom" } else { "Zoom" }, Command::Zoom(id)),
+                entry(
+                    if scratch {
+                        "Unmark as scratch"
+                    } else {
+                        "Mark as scratch"
+                    },
+                    Command::Scratch(id),
+                ),
+                entry(
+                    if captures {
+                        "Stop accepting captures"
+                    } else {
+                        "Accept captures"
+                    },
+                    Command::Captures(id),
+                ),
+            ];
+            if scratch {
+                let label = if input {
+                    "Stop accepting input"
                 } else {
-                    "Mark as scratch"
-                },
-                Command::Scratch(id),
-            ),
-            entry(
-                if captures {
-                    "Stop accepting captures"
-                } else {
-                    "Accept captures"
-                },
-                Command::Captures(id),
-            ),
-            entry("Rename", Command::Rename(Named::Pane(id))),
-        ],
+                    "Accept input"
+                };
+                entries.push(entry(label, Command::Input(id)));
+            }
+            entries.push(entry("Rename", Command::Rename(Named::Pane(id))));
+            entries
+        }
         Place::Workspace {
             id,
             name,
@@ -218,13 +234,15 @@ mod tests {
     }
 
     #[test]
-    fn a_pane_offers_pin_zoom_scratch_captures_and_rename_labelled_for_what_a_click_does() {
+    fn a_pane_offers_pin_zoom_scratch_captures_input_on_a_scratch_pane_and_rename_labelled_for_what_a_click_does()
+     {
         let plain = Place::Pane {
             id: 4,
             pinned: false,
             zoomed: false,
             scratch: false,
             captures: false,
+            input: false,
         };
         assert_eq!(
             labels(&plain),
@@ -253,6 +271,7 @@ mod tests {
             zoomed: true,
             scratch: true,
             captures: true,
+            input: true,
         };
         assert_eq!(
             labels(&set),
@@ -261,9 +280,21 @@ mod tests {
                 "Unzoom",
                 "Unmark as scratch",
                 "Stop accepting captures",
+                "Stop accepting input",
                 "Rename"
             ]
         );
+        let scratch = Place::Pane {
+            id: 4,
+            pinned: true,
+            zoomed: true,
+            scratch: true,
+            captures: true,
+            input: false,
+        };
+        assert_eq!(labels(&scratch)[4], "Accept input");
+        let commands: Vec<Command> = entries(scratch, &[]).iter().map(|e| e.action).collect();
+        assert_eq!(commands[4], Command::Input(4));
     }
 
     fn workspace(clearable: bool, group: Option<u32>) -> Place {
@@ -439,6 +470,7 @@ mod tests {
             zoomed: false,
             scratch: false,
             captures: false,
+            input: false,
         };
         assert!(!entries(pane, &[]).iter().any(|entry| entry.destructive));
     }

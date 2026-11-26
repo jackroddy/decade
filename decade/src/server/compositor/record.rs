@@ -61,7 +61,7 @@ const BLINK: Duration = Duration::from_millis(500);
 
 /// The pointer drawn into the frames at scale 1, its tip at the top left:
 /// `#` is its black edge, `.` its white fill.
-const ARROW: [&str; 17] = [
+pub(super) const ARROW: [&str; 17] = [
     "#",
     "##",
     "#.#",

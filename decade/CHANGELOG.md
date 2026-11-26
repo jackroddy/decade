@@ -12,6 +12,26 @@ command line and what the tool writes.
 
 ### Added
 
+- The MCP tool `scratch.input` plays a script of pointer and key input
+  in a scratch pane in the shown tab. Its steps are `move`, `click`,
+  `press`, `release`, `drag`, `key`, `type` and `wait`. A point is in
+  pane pixels or names a terminal cell. A cell point needs the cell size
+  in the call. Moves and drags glide over a duration the step sets.
+  decade sends the input to the pane's program as `wl_pointer` and
+  `wl_keyboard` events. None of it reaches decade's chrome or keybinds.
+  While a script plays, decade holds the person's pointer and keyboard.
+  The person's Escape stops the script. The pane's outline pulses yellow
+  under a tag that names the agent. When the script ends, keyboard focus
+  and the pointer go back to the person. A script holds at most 500
+  steps and plays for at most 5 minutes. The call returns when the
+  script ends, with the steps played and why it ended. `record` draws
+  the pointer the script moves.
+- A scratch pane has an accept input mode. Its Ctrl bar has a button
+  for it and its right click menu an entry. A mouse tag shows the mode
+  is on. With the mode off, decade asks before a script plays, in the
+  dialog captures use. The choices are allow once, allow and accept
+  input, and deny. decade never saves the mode. Unmarking the scratch
+  pane turns it off.
 - `decade record PANE FILE` asks decade to record pane PANE into FILE, an
   mp4 or a GIF, and prints what decade wrote. `--format`, `--fps`,
   `--duration`, `--width` and `--quality` set those fields of the

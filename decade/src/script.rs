@@ -328,7 +328,7 @@ fn read(gpu: &mut Gpu, dmabuf: &mut Dmabuf) -> Result<Image, String> {
     Ok(Image { width, height, rgb })
 }
 
-fn chord(text: &str) -> Result<(Vec<u32>, u32), String> {
+pub(crate) fn chord(text: &str) -> Result<(Vec<u32>, u32), String> {
     let mut modifiers = Vec::new();
     let mut parts: Vec<&str> = text.split('+').collect();
     let key = parts.pop().ok_or("an empty chord")?;
@@ -373,7 +373,7 @@ fn named_key(name: &str) -> Option<u32> {
 }
 
 /// The evdev key that types `ch` on a US layout, and whether it needs Shift.
-fn char_key(ch: char) -> Option<(u32, bool)> {
+pub(crate) fn char_key(ch: char) -> Option<(u32, bool)> {
     const ROWS: [(&str, &str, u32); 4] = [
         ("1234567890-=", "!@#$%^&*()_+", 2),
         ("qwertyuiop[]", "QWERTYUIOP{}", 16),

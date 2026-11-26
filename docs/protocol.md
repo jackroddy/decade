@@ -462,7 +462,7 @@ A program decade starts in a pane gets an address ending in
 `?workspace=<id>&pane=<name>` instead. In the `panes` reply to a call on
 that address, `you` marks that pane.
 Its tools are `panes`, `agents`, `point`, `show`, `highlight`, `clear`,
-`screenshot`, `record`, `record.stop`, `record.status`, `scratch.open`, `scratch.send`, `scratch.status` and `scratch.rename`. decade delivers a pane verb from a tool
+`screenshot`, `record`, `record.stop`, `record.status`, `scratch.open`, `scratch.send`, `scratch.status`, `scratch.rename` and `scratch.input`. decade delivers a pane verb from a tool
 call with `"from": "agent"`. decade answers `panes` with the pane list, in the shape
 of the socket's `panes` reply, `agents` with the agent list below, `screenshot` with an image, and
 every other call with a line saying what it did. When decade cannot act on a call, the result is a tool error whose
@@ -549,7 +549,7 @@ starts. A `record.status` for a pane with no recording fails with
 
 The person may mark any number of panes in a workspace as scratch panes,
 from the Ctrl bar. Marking one leaves the others marked.
-`scratch.open`, `scratch.send`, `scratch.status` and `scratch.rename` reach them, and every
+`scratch.open`, `scratch.send`, `scratch.status`, `scratch.rename` and `scratch.input` reach them, and every
 agent in the workspace reaches every scratch pane. Each tool takes an
 optional `pane`, the name of a scratch pane, which may be a name the pane
 had before a rename. `pane` may be left out when the workspace has exactly
@@ -598,6 +598,115 @@ the person can from the chrome. The old name stays an alias. decade refuses
 a name that another pane answers to, or that holds `&`, `=` or a space, and
 the result is a tool error giving the reason. No tool renames a pane that is
 not a scratch pane.
+
+
+`scratch.input` plays a script of pointer and key input in a scratch pane,
+so that an agent can drive a program there and record it. It takes an
+optional `pane`, `steps` and an optional `cell`:
+
+```json
+{"cell": {"width": 10, "height": 21, "left": 2, "top": 2}, "steps": [
+  {"do": "type", "text": "echo blah", "ms": 60},
+  {"do": "key", "key": "Return"},
+  {"do": "move", "to": {"col": 2, "row": 4}, "ms": 500},
+  {"do": "click", "double": true},
+  {"do": "wait", "ms": 700},
+  {"do": "drag", "from": {"x": 2, "y": 128}, "to": {"col": 30, "row": 7}, "ms": 900}
+]}
+```
+
+| step | fields | what decade does |
+|---|---|---|
+| `move` | `to`, optional `ms` | glides the pointer to `to` over `ms`, 400 by default |
+| `click` | optional `at`, `button`, `double`, `ms` | glides to `at` over `ms` when given, then presses and lets go of `button`, twice for `double` |
+| `press` | `button` or `key` | presses the button or the one key and holds it |
+| `release` | `button` or `key` | lets go of the button or key |
+| `drag` | optional `from`, `to`, optional `button`, `ms` | glides to `from` when given, presses `button`, glides to `to` over `ms`, 600 by default, and lets go |
+| `key` | `key` | presses a key or chord and lets go |
+| `type` | `text`, optional `ms` | types each character, one every `ms`, 60 by default |
+| `wait` | `ms` | waits |
+
+`button` is `left`, `right` or `middle`. It is `left` by default. A
+`key` is a key's name, such as `Return`, `Escape`, `Tab`, `BackSpace`,
+`Up` or `a`. It may also be a chord, such as `ctrl+c` or `ctrl+shift+c`.
+The names are the ones `decade script` takes. `type` takes the
+characters of a US keyboard. A newline in its text types Return and a
+tab types Tab. During a glide, decade moves the pointer about 60 times a
+second, slowly at the start and the end. With `ms` 0 the pointer jumps.
+
+A point is either `{"x": .., "y": ..}` or `{"col": .., "row": ..}`.
+`x` and `y` are pixels from the top left of the pane's client area. They
+are the pixels of a `screenshot` of the pane. `col` and `row` name a
+terminal cell, counted from 0. decade aims at the cell's centre. The
+cell grid depends on the terminal's font and padding, and decade does
+not know it. A cell point therefore needs `cell` in the call. `width`
+and `height` give a cell's size in pixels. `left` and `top` give where
+column 0 and row 0 start, and are 0 by default. The script's pointer
+starts at the person's pointer, moved inside the pane if it is outside.
+
+decade plays the input through its own input path, as `wl_pointer` and
+`wl_keyboard` events to the pane's program. None of it reaches decade's
+chrome or keybinds. A chord that is a decade keybind, such as `super+b`,
+goes to the program and decade's binding does not run. `record` draws
+the pointer the script moves, so a recording shows each move and click.
+
+Each pane has an accept input mode of its own, apart from accept
+captures. The person turns it on and off from a scratch pane's Ctrl bar
+or its right click menu. It starts off. decade never saves it. A
+restored workspace has it off on every pane. Unmarking a scratch pane
+turns it off. With the mode on, decade plays the script at once. With it
+off, decade asks in the dialog `screenshot` uses. Its question is "coax
+asks to control pane scratch", over the number of steps and the time
+they take. The choices are allow once, allow and accept input, and
+deny. The keys y, a and n answer them. While the mode is on, the pane
+carries a mouse tag beside its scratch tag.
+
+While a script plays, decade holds the person's pointer and keyboard as
+the dialog does. None of their keys, clicks or scrolls reach a pane or
+decade's chrome. Their Escape stops the script. decade moves keyboard
+focus to the scratch pane. The pane's outline pulses yellow. A yellow
+tag on its top edge names the agent and says that Escape stops the
+script. decade draws the script's pointer over the pane for the person
+to see. A screenshot or recording shows neither the tag nor that drawn
+pointer. A recording shows only the pointer `record` draws. When the
+script ends, decade lets go of every button and key the script still
+holds. Keyboard focus goes back to the pane that had it. The pointer
+goes back to where the person's pointer is.
+
+A script holds at most 500 steps and plays for at most 5 minutes. A
+glide takes at most 10 seconds and a wait at most 60. The call returns
+when the script ends, with the steps played, the steps in the script,
+the seconds it ran and why it ended: "played 5 of 5 steps in pane b over
+4.1 s; it finished". A script that stops early ends the call with a
+tool error in the same form, for one of these reasons:
+
+- the person pressed Escape
+- the window in the pane closed, or the pane closed
+- the pane's tab stopped being shown
+- the workspace left the screen, went to sleep or closed
+
+decade refuses arguments it cannot read, such as an unknown step or
+field, as invalid parameters. It refuses a script it can read before it
+asks, or once the person answers, with a tool error:
+
+| when | reason |
+|---|---|
+| `pane` names a pane that is not a scratch pane | `<pane> is not a scratch pane; the scratch panes are: <names>` |
+| the workspace has no scratch pane, or several and `pane` is left out | as for the other scratch tools |
+| the pane is in a tab that is not shown | `pane <pane> is in tab <n>, which is not shown` |
+| the active viewer does not show the workspace | `workspace <name> is not on screen, so the person could not watch or stop the input` |
+| the pane holds no window | `pane <pane> has no window to take the input` |
+| a script already plays | `an agent's input is already playing in pane <pane>` |
+| the dialog is up for something else | `decade is already asking the person about another capture` |
+| a step is wrong | `step <n>: <what is wrong>`, such as `step 2: no key types 'é'` or `step 1: a point by col and row needs cell in the call` |
+| the script is too long | `the script has <n> steps, more than the 500 decade plays`, or `the script runs past step <n> for longer than 5 minutes` |
+| the person denies | `the person refused input to pane <pane>` |
+| no answer within 30 seconds | `the person did not answer within 30 seconds, so decade played no input in pane <pane>` |
+
+While a script plays, decade refuses a `screenshot` or `record` that
+would ask the person, with `an agent's input is playing in pane <pane>,
+and decade asks the person nothing until it ends`. One with accept
+captures on goes ahead.
 
 ## Version
 

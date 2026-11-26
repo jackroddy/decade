@@ -1,12 +1,12 @@
 use decade_ui::overlay::{Choice, Dialog};
 
 /// How the person answers decade's question whether an agent may capture
-/// a pane.
+/// a pane or play input in it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Answer {
     Once,
 
-    /// Allow this one and turn on the pane's accept captures mode.
+    /// Allow this one and turn on the pane's mode the dialog names.
     Always,
     Deny,
 }
@@ -23,6 +23,12 @@ const fn choice(answer: Answer, label: &'static str, key: char) -> Choice<Answer
 static CHOICES: [Choice<Answer>; 3] = [
     choice(Answer::Once, "Allow once", 'y'),
     choice(Answer::Always, "Allow and accept captures", 'a'),
+    choice(Answer::Deny, "Deny", 'n'),
+];
+
+static INPUT_CHOICES: [Choice<Answer>; 3] = [
+    choice(Answer::Once, "Allow once", 'y'),
+    choice(Answer::Always, "Allow and accept input", 'a'),
     choice(Answer::Deny, "Deny", 'n'),
 ];
 
@@ -92,6 +98,26 @@ pub fn record_dialog(
     }
 }
 
+/// The dialog that asks the person whether `agent` may play a script of
+/// `steps` steps lasting `span` in pane `pane`. The caller sets the rest.
+pub fn input_dialog(agent: &str, pane: &str, steps: usize, span: &str) -> Dialog<'static, Answer> {
+    let steps = match steps {
+        1 => "1 step".to_string(),
+        steps => format!("{steps} steps"),
+    };
+    Dialog {
+        question: format!("{agent} asks to control pane {pane}"),
+        detail: format!("{steps}, {span}; Escape stops it"),
+        path: None,
+        choices: &INPUT_CHOICES,
+        escape: Answer::Deny,
+        armed: false,
+        selected: 0,
+        window: (0, 0),
+        cell: (0, 0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,6 +153,20 @@ mod tests {
         let labels: Vec<&str> = dialog.choices.iter().map(|choice| choice.label).collect();
         assert_eq!(labels, ["Allow once", "Allow and accept captures", "Deny"]);
         assert_eq!(dialog.escape, Answer::Deny);
+    }
+
+    #[test]
+    fn the_input_dialog_names_the_agent_the_pane_the_steps_and_its_own_mode() {
+        let dialog = input_dialog("coax", "scratch", 12, "4.5 seconds");
+        assert_eq!(dialog.question, "coax asks to control pane scratch");
+        assert_eq!(dialog.detail, "12 steps, 4.5 seconds; Escape stops it");
+        let labels: Vec<&str> = dialog.choices.iter().map(|choice| choice.label).collect();
+        assert_eq!(labels, ["Allow once", "Allow and accept input", "Deny"]);
+        let keys: Vec<char> = dialog.choices.iter().map(|choice| choice.key).collect();
+        assert_eq!(keys, ['y', 'a', 'n']);
+        assert_eq!(dialog.escape, Answer::Deny);
+        let one = input_dialog("An agent", "scratch", 1, "0.2 seconds");
+        assert_eq!(one.detail, "1 step, 0.2 seconds; Escape stops it");
     }
 
     #[test]

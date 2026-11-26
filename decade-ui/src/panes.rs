@@ -309,6 +309,9 @@ pub struct Chrome<'a, A> {
 
     /// The panes being recorded.
     pub recordings: &'a [Recording<'a>],
+
+    /// The pane an agent's input is playing in.
+    pub driven: Option<Driven<'a>>,
 }
 
 impl<A> Default for Chrome<'_, A> {
@@ -320,6 +323,7 @@ impl<A> Default for Chrome<'_, A> {
             pulse: None,
             flash: None,
             recordings: &[],
+            driven: None,
         }
     }
 }
@@ -339,6 +343,18 @@ pub struct Recording<'a> {
 
     /// The time the recording has run, such as `0:07`.
     pub elapsed: &'a str,
+}
+
+/// A pane an agent's input is playing in: its outline pulses yellow, and
+/// a yellow tag after its other left tags holds an icon and a label.
+#[derive(Clone, Copy)]
+pub struct Driven<'a> {
+    pub pane: usize,
+
+    /// How far the outline's pulse is toward yellow, from 0 to 1.
+    pub strength: f32,
+    pub icon: char,
+    pub label: &'a str,
 }
 
 /// A pane whose outline pulses to draw the eye.
@@ -839,7 +855,8 @@ impl<A: Copy + PartialEq> Layout<A> {
                 .filter(|&(id, _)| id == pane.id)
                 .map_or(0.0, |(_, flash)| flash);
             let recording = (chrome.recordings.iter()).find(|recording| recording.pane == pane.id);
-            self.draw_outline(scene, pane, outline, flash, pulse, recording);
+            let driven = chrome.driven.filter(|driven| driven.pane == pane.id);
+            self.draw_outline(scene, pane, outline, flash, pulse, (recording, driven));
             draw_placeholder(scene, pane, pane.rect.inner());
             let hover = (chrome.tab_hover)
                 .filter(|&(id, _)| id == pane.id)
@@ -857,7 +874,8 @@ impl<A: Copy + PartialEq> Layout<A> {
 
     /// The pane's outline with its tags on its top edge, the left one
     /// brightened by `flash`, pulsing with its note when `pulse` is at it,
-    /// and red with the recording's tag while `recording` is at it.
+    /// red with the recording's tag while `recording` is at it, and yellow
+    /// with the driven tag while `driven` is at it.
     fn draw_outline(
         &self,
         scene: &mut Scene,
@@ -865,7 +883,7 @@ impl<A: Copy + PartialEq> Layout<A> {
         color: Rgba,
         flash: f32,
         pulse: Option<Pulse>,
-        recording: Option<&Recording>,
+        (recording, driven): (Option<&Recording>, Option<Driven>),
     ) {
         let (cell_width, cell_height) = scene.cell();
         let line = scene.line_width();
@@ -887,6 +905,8 @@ impl<A: Copy + PartialEq> Layout<A> {
         let color = palette::mix(color, palette::get().magenta, strength);
         let red = recording.map_or(0.0, |recording| recording.strength);
         let color = palette::mix(color, palette::get().red, red);
+        let yellow = driven.map_or(0.0, |driven| driven.strength);
+        let color = palette::mix(color, palette::get().yellow, yellow);
         scene.outline(rect, [left, top, right, bottom], color);
         if pulse.is_some() {
             let [r, g, b, _] = palette::get().magenta;
@@ -939,6 +959,22 @@ impl<A: Copy + PartialEq> Layout<A> {
                 }
                 let time = start + cell_width * 2;
                 scene.text_px(time, text_y, recording.elapsed, Face::Chrome, ink);
+                limit = end + padding + scene.scaled(TAG_GAP);
+            }
+        }
+        if let Some(driven) = driven {
+            let start = limit + padding;
+            let cells = 2 + driven.label.chars().count() as i32;
+            let end = start + cells * cell_width;
+            if end + padding < x + width - right - cell_width * 2 {
+                let size = (end - start + padding * 2, height);
+                let yellow = palette::get().yellow;
+                scene.rounded(start - padding, pill_y, size, radius, yellow, yellow);
+                let ink = palette::get().dark_background;
+                let icon = driven.icon.to_string();
+                scene.text_px(start, text_y, &icon, Face::Icon, ink);
+                let label = start + cell_width * 2;
+                scene.text_px(label, text_y, driven.label, Face::Chrome, ink);
                 limit = end + padding + scene.scaled(TAG_GAP);
             }
         }
@@ -2432,6 +2468,53 @@ mod tests {
         };
         assert_eq!(outline(&drawn(true, 0.0)), Some(palette::get().cyan));
         assert_eq!(outline(&drawn(true, 1.0)), Some(palette::get().red));
+    }
+
+    #[test]
+    fn a_driven_pane_has_a_yellow_tag_after_the_recording_tag_and_a_yellow_outline() {
+        let mut layout: Layout = three_anchors();
+        layout.focused = 0;
+        let font = crate::Font::load(14.0);
+        let recordings = [Recording {
+            pane: 0,
+            strength: 0.0,
+            icon: 'r',
+            lit: true,
+            elapsed: "0:07",
+        }];
+        let drawn = |strength: f32| {
+            let mut scene = Scene::new(&font);
+            let chrome = Chrome {
+                recordings: &recordings,
+                driven: Some(Driven {
+                    pane: 0,
+                    strength,
+                    icon: 'd',
+                    label: "coax · Esc stops",
+                }),
+                ..Chrome::default()
+            };
+            layout.draw(&mut scene, chrome);
+            scene
+        };
+        let scene = drawn(0.0);
+        let [(recorded, _, _, _, red), (driven, _, _, _, yellow)] = rounded(&scene)[..] else {
+            panic!("two tags");
+        };
+        assert!(recorded < driven);
+        assert_eq!((red, yellow), (palette::get().red, palette::get().yellow));
+        let texts = texts(&scene);
+        assert!(texts.contains(&"d".to_string()));
+        assert!(texts.contains(&"coax · Esc stops".to_string()));
+        let outline = |scene: &Scene| {
+            (scene.shapes.iter()).find_map(|shape| match shape {
+                crate::Shape::Rect { color, .. } => Some(*color),
+                _ => None,
+            })
+        };
+        let full = outline(&drawn(1.0)).unwrap();
+        let yellow = palette::get().yellow;
+        assert!((0..4).all(|i| (full[i] - yellow[i]).abs() < 1e-6));
     }
 
     #[test]

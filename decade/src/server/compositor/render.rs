@@ -21,7 +21,9 @@ use crate::server::agents;
 use crate::server::chrome::draw::{Element, Paint, Shrink, px_point, px_size};
 use crate::server::workspace::{self, PaneAction, Tab, Workspace};
 
+use super::driving;
 use super::input::SidebarDrag;
+use super::record::ARROW;
 use super::{Overlay, State, popups_over, send_frames_surface_tree, window_origin};
 
 const SCRIM: Rgba = [0.0, 0.0, 0.0, 0.35];
@@ -54,6 +56,9 @@ impl State {
         let prompt = self.prompt();
         let mut times = Vec::new();
         let recordings = self.recording_marks(workspace, Instant::now(), &mut times);
+        let driven_mark = self.driven_mark(workspace);
+        let driven = (driven_mark.as_ref())
+            .map(|(pane, elapsed, label)| driving::driven(*pane, *elapsed, label));
         let State {
             gpu,
             size,
@@ -99,12 +104,14 @@ impl State {
                 pulse,
                 flash,
                 recordings: &recordings,
+                driven,
             }
         } else {
             Chrome {
                 pulse,
                 flash,
                 recordings: &recordings,
+                driven,
                 ..Chrome::default()
             }
         };
@@ -123,6 +130,11 @@ impl State {
             scale,
         };
         let mut elements: Vec<Element> = Vec::new();
+        if driven.is_some() {
+            let mut arrow = Scene::new(&paint.text.fonts.chrome);
+            draw_arrow(&mut arrow, pointer, scale.round().max(1.0) as i32);
+            paint.scene(&mut elements, &arrow, Point::default(), None);
+        }
         if let Some(prompt) = &prompt {
             let mut scene = Scene::new(&paint.text.fonts.menu);
             prompt.draw(&mut scene);
@@ -534,4 +546,28 @@ fn paint_picker(
     paint.scene(elements, &over, Point::default(), None);
     elements.extend(surfaces);
     paint.scene(elements, &under, Point::default(), None);
+}
+
+/// The arrow pointer with its tip at `tip`, each of its pixels `scale`
+/// pixels square, as one rectangle for each run of a colour in a row.
+fn draw_arrow(scene: &mut Scene, tip: Point<i32, Physical>, scale: i32) {
+    for (row, line) in ARROW.iter().enumerate() {
+        let bytes = line.as_bytes();
+        let mut column = 0;
+        while column < bytes.len() {
+            let mark = bytes[column];
+            let run = bytes[column..].iter().take_while(|&&b| b == mark).count();
+            let color = match mark {
+                b'#' => Some([0.0, 0.0, 0.0, 1.0]),
+                b'.' => Some([1.0, 1.0, 1.0, 1.0]),
+                _ => None,
+            };
+            if let Some(color) = color {
+                let x = tip.x + column as i32 * scale;
+                let y = tip.y + row as i32 * scale;
+                scene.rect(x, y, run as i32 * scale, scale, color);
+            }
+            column += run;
+        }
+    }
 }

@@ -10,6 +10,7 @@ use smithay::desktop::utils::under_from_surface_tree;
 use smithay::input::keyboard::{FilterResult, Keycode, Keysym, ModifiersState, keysyms};
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 
 use crate::chrome::context_menu::Place;
@@ -72,7 +73,8 @@ impl State {
     }
 
     /// Take the keyboard and pointer from every client and end decade's
-    /// own presses and hover, while the screenshot dialog is up.
+    /// own presses and hover, while the screenshot dialog is up or as an
+    /// agent's script starts.
     pub(super) fn block_input(&mut self) {
         self.stop_repeat();
         self.cancel_ctrl_timer();
@@ -110,6 +112,10 @@ impl State {
     }
 
     pub(super) fn pointer_moved(&mut self, location: Point<f64, Logical>, time: u32) {
+        if let Some(driving) = &mut self.driving {
+            driving.person = location;
+            return;
+        }
         let motion = location != self.pointer;
         self.pointer = location;
         if self.asking.is_some() {
@@ -204,22 +210,7 @@ impl State {
             self.focus(id);
         }
         let under = self.pane_under_pointer().filter(|_| !on_popover);
-        let focus = under.and_then(|id| {
-            let pane = self.layout().pane(id)?;
-            let (origin, _) = self.client_geometry(pane);
-            let toplevel = self.tab().toplevel(id)?.wl_surface();
-            let popup = popups_over(toplevel).find_map(|(popup, at)| {
-                let surface = popup.wl_surface();
-                under_from_surface_tree(surface, self.pointer, origin + at, WindowSurfaceType::ALL)
-            });
-            Some(match popup {
-                Some((surface, at)) => (surface, at.to_f64()),
-                None => (
-                    toplevel.clone(),
-                    (origin - window_origin(toplevel)).to_f64(),
-                ),
-            })
-        });
+        let focus = under.and_then(|id| self.client_under_pointer(id));
         pointer.motion(
             self,
             focus,
@@ -232,6 +223,44 @@ impl State {
         pointer.frame(self);
     }
 
+    /// Move the pointer to `location` for an agent's script, to the client
+    /// of the pane under it, past decade's chrome.
+    pub(super) fn agent_motion(&mut self, location: Point<f64, Logical>, time: u32) {
+        self.pointer = location;
+        let focus = (self.pane_under_pointer()).and_then(|id| self.client_under_pointer(id));
+        let pointer = self.seat.get_pointer().unwrap();
+        pointer.motion(
+            self,
+            focus,
+            &MotionEvent {
+                location,
+                serial: SERIAL_COUNTER.next_serial(),
+                time,
+            },
+        );
+        pointer.frame(self);
+        self.request_redraw();
+    }
+
+    /// The surface of pane `id`'s client or of a popup over it under the
+    /// pointer, with where the surface's origin is.
+    fn client_under_pointer(&self, id: usize) -> Option<(WlSurface, Point<f64, Logical>)> {
+        let pane = self.layout().pane(id)?;
+        let (origin, _) = self.client_geometry(pane);
+        let toplevel = self.tab().toplevel(id)?.wl_surface();
+        let popup = popups_over(toplevel).find_map(|(popup, at)| {
+            let surface = popup.wl_surface();
+            under_from_surface_tree(surface, self.pointer, origin + at, WindowSurfaceType::ALL)
+        });
+        Some(match popup {
+            Some((surface, at)) => (surface, at.to_f64()),
+            None => (
+                toplevel.clone(),
+                (origin - window_origin(toplevel)).to_f64(),
+            ),
+        })
+    }
+
     pub(super) fn pointer_left(&mut self) {
         if self.frame_hover.is_some() || self.hover.is_some() || self.tab_hover.is_some() {
             self.frame_hover = None;
@@ -242,6 +271,9 @@ impl State {
     }
 
     pub(super) fn pointer_button(&mut self, button: u32, pressed: bool, time: u32) {
+        if self.driving.is_some() {
+            return;
+        }
         if let Some(asking) = &self.asking {
             if pressed {
                 let armed = asking.armed(Instant::now());
@@ -369,7 +401,7 @@ impl State {
         self.forward_button(button, pressed, time);
     }
 
-    fn forward_button(&mut self, button: u32, pressed: bool, time: u32) {
+    pub(super) fn forward_button(&mut self, button: u32, pressed: bool, time: u32) {
         if !reaches_clients(button, self.settings.side_buttons) {
             return;
         }
@@ -393,7 +425,7 @@ impl State {
     }
 
     pub(super) fn pointer_scroll(&mut self, scroll: wire::Scroll) {
-        if self.asking.is_some() {
+        if self.asking.is_some() || self.driving.is_some() {
             return;
         }
         let source = match scroll.source {
@@ -425,6 +457,10 @@ impl State {
     }
 
     pub(super) fn keyboard(&mut self, evdev: u32, pressed: bool, time: u32) {
+        if self.driving.is_some() {
+            self.driven_key(evdev, pressed, time);
+            return;
+        }
         let keyboard = self.seat.get_keyboard().unwrap();
         let code = Keycode::new(evdev + 8);
         let state = if pressed {
@@ -676,6 +712,7 @@ impl State {
     fn pane_action(&mut self, id: usize, action: PaneAction) {
         match action {
             PaneAction::Captures => self.toggle_captures(id),
+            PaneAction::Input => self.toggle_input(id),
             PaneAction::Scratch => self.toggle_scratch(id),
             PaneAction::Pin => self.toggle_pin(id),
             PaneAction::Restart => {
@@ -837,6 +874,7 @@ impl State {
             zoomed: layout.zoom == Some(id),
             scratch: shown.is_scratch(pane),
             captures: info.captures,
+            input: info.input,
         })
     }
 

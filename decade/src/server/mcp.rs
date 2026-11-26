@@ -18,6 +18,7 @@ use smithay::reexports::calloop::channel::Sender;
 use tokio::sync::oneshot;
 
 use crate::png;
+use crate::server::drive::{Cell, Script, Step};
 use crate::server::scratch::Launch;
 
 pub struct Request {
@@ -97,6 +98,13 @@ pub enum Call {
     /// How the recording of pane `pane` is going, or how it ended.
     RecordStatus {
         pane: String,
+    },
+
+    /// Play `script` as pointer and key input in scratch pane `pane`, or
+    /// in the only scratch pane.
+    ScratchInput {
+        pane: Option<String>,
+        script: Script,
     },
 }
 
@@ -299,6 +307,47 @@ fn tools() -> Vec<Tool> {
             })),
         ),
         Tool::new(
+            "scratch.input",
+            "Move the pointer, click, drag, press keys and type in a scratch pane in the shown tab, as a script of steps that decade plays with exact timing through its own input path, so a recording shows each move and click. Unless the user has turned on accept input for the pane, decade asks the user first and waits up to 30 seconds. While the script plays, decade holds the user's own pointer and keyboard, and the user's Escape stops it. The call returns when the script ends, with how many steps ran; a script the user stopped, or that stopped because the pane went, fails with the reason. A step is an object whose do is one of: move (to, ms), click (optional at, button, double, ms), press and release (button or key), drag (optional from, to, button, ms), key (key, a name such as Return, Escape, Tab, Up or a, or a chord such as ctrl+c or ctrl+shift+c), type (text, ms per character) or wait (ms). move, click and drag glide over ms, 400 by default and 600 for a drag. A point is {x, y} in pane pixels, as screenshot gives them, or {col, row} counted from 0, which needs cell. A decade keybind chord in a key step goes to the pane's program; decade's own binding does not run. A script holds at most 500 steps and plays for at most 5 minutes",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": scratch_pane,
+                    "cell": {
+                        "type": "object",
+                        "description": "a terminal's cell grid in pane pixels, needed for points by col and row; decade cannot know it, so measure it from a screenshot",
+                        "properties": {
+                            "width": {"type": "number"},
+                            "height": {"type": "number"},
+                            "left": {"type": "number", "description": "where column 0 starts, 0 by default"},
+                            "top": {"type": "number", "description": "where row 0 starts, 0 by default"}
+                        },
+                        "required": ["width", "height"]
+                    },
+                    "steps": {
+                        "type": "array",
+                        "description": "the steps, played in order",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "do": {"type": "string", "enum": ["move", "click", "press", "release", "drag", "key", "type", "wait"]},
+                                "to": {"type": "object", "description": "{x, y} or {col, row}"},
+                                "at": {"type": "object", "description": "{x, y} or {col, row}"},
+                                "from": {"type": "object", "description": "{x, y} or {col, row}"},
+                                "button": {"type": "string", "enum": ["left", "right", "middle"]},
+                                "double": {"type": "boolean"},
+                                "key": {"type": "string"},
+                                "text": {"type": "string"},
+                                "ms": {"type": "integer"}
+                            },
+                            "required": ["do"]
+                        }
+                    }
+                },
+                "required": ["steps"]
+            })),
+        ),
+        Tool::new(
             "scratch.send",
             "Send a message to the program in a scratch pane. panes lists the verbs that program accepts under accepts, each a name or a name with a description of what it does",
             schema(json!({
@@ -360,6 +409,15 @@ struct ScratchRename {
     name: String,
 }
 
+/// The arguments of `scratch.input`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScratchInput {
+    pane: Option<String>,
+    cell: Option<Cell>,
+    steps: Vec<Step>,
+}
+
 /// The arguments of `scratch.send`.
 #[derive(Deserialize)]
 struct ScratchSend {
@@ -415,6 +473,13 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
         "record.status" => {
             let Screenshot { pane } = parse(name, arguments)?;
             Ok(Call::RecordStatus { pane })
+        }
+        "scratch.input" => {
+            let ScratchInput { pane, cell, steps } = parse(name, arguments)?;
+            Ok(Call::ScratchInput {
+                pane,
+                script: Script { cell, steps },
+            })
         }
         "scratch.send" => {
             let ScratchSend {
@@ -484,6 +549,8 @@ impl ServerHandler for Decade {
                  sends that program a message. scratch.status tells whether the program \
                  scratch.open last started in one still runs, or how it exited. \
                  scratch.rename gives one a new name, and no other pane can be renamed. \
+                 scratch.input plays a script of pointer moves, clicks, drags, keys and \
+                 typing in one, once the user allows it. \
                  Each takes the scratch pane's name, which may be left out when there is only one. \
                  They fail when the workspace has no scratch pane, or when the name is left \
                  out while there are several. \
@@ -703,6 +770,7 @@ mod tests {
                 "record",
                 "record.stop",
                 "record.status",
+                "scratch.input",
                 "scratch.send"
             ]
         );
@@ -798,6 +866,23 @@ mod tests {
             panic!("scratch.rename takes a pane and a name");
         };
         assert_eq!((pane.as_deref(), name.as_str()), (Some("viewer"), "docs"));
+        let Ok(Call::ScratchInput { pane, script }) = call_for(
+            "scratch.input",
+            schema(json!({
+                "cell": {"width": 9, "height": 20},
+                "steps": [{"do": "type", "text": "echo blah"}, {"do": "key", "key": "Return"}]
+            })),
+        ) else {
+            panic!("scratch.input takes a cell and steps");
+        };
+        assert_eq!(pane, None);
+        assert_eq!(script.steps.len(), 2);
+        assert_eq!(script.cell.map(|cell| cell.width), Some(9.0));
+        let Err(reason) = call_for("scratch.input", schema(json!({"steps": [], "speed": 2})))
+        else {
+            panic!("scratch.input refuses a field it does not know");
+        };
+        assert!(reason.starts_with("scratch.input: unknown field `speed`"));
         let Err(reason) = call_for("scratch.rename", Map::new()) else {
             panic!("scratch.rename needs a name");
         };

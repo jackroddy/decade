@@ -136,6 +136,9 @@ impl State {
             mcp::Call::RecordStop { pane } => {
                 let _ = self.stop_record(workspace, &pane, Some(request.reply));
             }
+            mcp::Call::ScratchInput { pane, script } => {
+                self.scratch_input(workspace, pane.as_deref(), script, caller, request.reply)
+            }
             call => {
                 let answer = self.mcp_call(workspace, call, caller);
                 let _ = request.reply.send(answer.map(mcp::Answer::Text));
@@ -203,8 +206,11 @@ impl State {
             mcp::Call::ScratchOpen { .. }
             | mcp::Call::Screenshot { .. }
             | mcp::Call::Record(_)
-            | mcp::Call::RecordStop { .. } => {
-                unreachable!("mcp_request answers scratch.open, screenshot, record and record.stop")
+            | mcp::Call::RecordStop { .. }
+            | mcp::Call::ScratchInput { .. } => {
+                unreachable!(
+                    "mcp_request answers scratch.open, screenshot, record, record.stop and scratch.input"
+                )
             }
         };
         let sent = format!("sent {verb} to pane {to}");
