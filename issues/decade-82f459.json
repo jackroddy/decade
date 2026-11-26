@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T08:49:58.237338659Z",
-  "updated_at": "2026-11-26T08:49:58.237338659Z",
+  "updated_at": "2026-11-26T09:02:45.819363814Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "b45cc835",
+      "at": "2026-11-26T09:02:45.819362924Z",
+      "author": "Jack Roddy/3cd5690e",
+      "text": "Jack decided the open points:\n\n- An agent sends a script: one call carries a list of steps (`move`, `click`, `drag`, `key`, `type`, `wait`, in the vocabulary `decade script` uses), and decade plays them with exact timing. No single-action tools.\n- A new per-pane mode, accept input, with its own dialog and its own tag, separate from accept captures.\n- While a script plays, decade holds the person's own pointer and keyboard the way the consent dialog does, shows that an agent is driving the pane, and lets Escape abort the script. Focus and the pointer return to where they were when it ends.\n- Positions are pane pixels or terminal cells. Finding text in a pane is left for a later issue.",
+      "commit": "10d8d65",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "10d8d65",
