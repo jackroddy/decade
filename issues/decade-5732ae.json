@@ -1,0 +1,31 @@
+{
+  "id": "decade-5732ae",
+  "title": "Should decade's side of the protocol be public in decade-channel?",
+  "body": "`decade-channel` exports types that only decade's server builds: `Reply`, the enum decade writes for each answer, and `Captured`, the base64 PNG inside `Reply::Screenshot`. decade uses them in `decade/src/server/channel.rs` and `decade/src/server/compositor/channels.rs`, so the server and the client share one definition of the wire. A client never needs them. Adding a variant to `Reply` is a breaking change to `decade-channel` even though clients do not use it.\n\n## Options\n\n- Keep them public, and mark `Reply` and `Message` `#[non_exhaustive]` so new variants stop breaking clients.\n- Move the shared wire types into a crate both depend on, and keep `decade-channel` to the client's API.\n- Hide them behind a cargo feature that only decade turns on.",
+  "type": "decision",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade-channel",
+    "decade"
+  ],
+  "parent": "decade-168095",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T03:22:20.762409013Z",
+  "updated_at": "2026-11-26T03:22:20.762409013Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
