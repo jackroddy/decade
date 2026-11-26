@@ -3,20 +3,20 @@
   "title": "An agent moves the pointer and types keys in a scratch pane",
   "body": "decade's MCP tools let an agent start a program in a scratch pane (`scratch.open`), capture it (`screenshot`) and record it (`record`, which can draw the pointer while it is over the pane). No tool lets an agent move the pointer or press a button or a key in a pane. A recording of a mouse-driven program, such as coax's README demo, therefore needs a person at the mouse, or the program has to fake the pointer and its own mouse input. coax tried the second: it drew a `↖` in a cell and fed itself mouse events, and the result looked wrong next to a real pointer.\n\nThe host compositor cannot do it either. Hyprland's `hyprctl dispatch movecursor` moves the cursor but has no click, and tools such as `ydotool` need `/dev/uinput`, which Jack's account cannot open. decade is the compositor for its panes, so it can send a pane's client real `wl_pointer` and `wl_keyboard` events.\n\n## Proposal\n\n- An MCP tool `pointer` moves decade's pointer within a scratch pane and presses buttons there: `move` to a point, `click`, `double`, `press` and `release` with a button, and `drag` from one point to another. A move or drag glides over a duration the call can set, so it looks like a hand moved it.\n- Points are pixels within the pane. A pane holding a terminal could also take a cell, a column and row, which the tool turns into the cell's centre from the terminal's cell size and padding.\n- An MCP tool `keys` types text into a scratch pane and presses named keys, at a pace the call can set.\n- Both act only on scratch panes, and ask the person first the way `screenshot` does, under an accept mode of their own.\n- `record` with `pointer: true` draws the pointer these tools move, so a recording shows each move and click.\n\n## Open\n\n- Whether the tools take a whole script, a list of steps with waits played in order, so a recording's timing does not depend on the agent's round trips.\n- What becomes of the person's own pointer while an agent drives one: hidden, frozen, or a second pointer.\n- How an agent learns where text sits in a pane, so it can aim at a word rather than a pixel. One answer is a `find` that returns the cell where a string appears in a terminal pane.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 1,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/3cd5690e",
-  "lease_expires": "2026-11-26T09:17:45.841158426Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T08:49:58.237338659Z",
-  "updated_at": "2026-11-26T09:02:45.841158426Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-26T10:42:34.509118653Z",
+  "closed_at": "2026-11-26T10:42:34.509118653Z",
+  "close_reason": "Landed in c2c1b21 and 70c84e8, merged into dev as 9efedb9. Jack has not yet seen the accept input dialog or the yellow indicator on a live server.",
+  "resolution": "done",
   "notes": [
     {
       "id": "b45cc835",
@@ -32,6 +32,9 @@
       "commit": "10d8d65",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "9efedb9",
+      "branch": "dev"
+    }
   }
 }
