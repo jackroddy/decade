@@ -1,0 +1,30 @@
+{
+  "id": "decade-168095",
+  "title": "A review of decade-channel's public API",
+  "body": "Writing `decade-channel`'s README for 0.2.0 meant using its whole public API from example programs, and several parts were awkward or wrong. Jack plans to review the API design as a whole before anyone polishes its documentation. Each child is one point the README work turned up.\n\nThe README in `decade-channel/README.md` and the programs in `decade-channel/examples/` are the current picture of how a client uses the crate. Expect to rewrite them after this review.",
+  "type": "milestone",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade-channel"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T03:22:20.690658559Z",
+  "updated_at": "2026-11-26T03:22:20.690658559Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
