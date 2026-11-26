@@ -10,7 +10,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-decade-channel = { path = "../decade-channel", version = "0.1.0" }
+decade-channel = { path = "../decade-channel", version = "0.2.0" }
 decade-ui = { path = "../decade-ui", version = "0.1.0" }
 rustix = { version = "0.38", features = ["event", "fs", "net", "process"] }
 serde = { version = "1.0.229", features = ["derive"] }

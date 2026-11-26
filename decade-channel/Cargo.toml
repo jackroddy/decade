@@ -1,6 +1,6 @@
 [package]
 name = "decade-channel"
-version = "0.1.0"
+version = "0.2.0"
 description = "client side of the decade socket, for decade-aware programs"
 readme = "README.md"
 edition.workspace = true

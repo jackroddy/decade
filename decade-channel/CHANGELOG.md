@@ -9,6 +9,8 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
 ### Added
 
 - `Channel::screenshot` sends a `screenshot` message carrying a
@@ -63,5 +65,6 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
   as a bare name, as before. A `&str` converts into one. `Pane` has an
   `accepts` field with the verbs its occupant listed in hello.
 
-[Unreleased]: https://github.com/jackroddy/decade/compare/decade-channel-v0.1.0...HEAD
+[Unreleased]: https://github.com/jackroddy/decade/compare/decade-channel-v0.2.0...HEAD
+[0.2.0]: https://github.com/jackroddy/decade/compare/decade-channel-v0.1.0...decade-channel-v0.2.0
 [0.1.0]: https://github.com/jackroddy/decade/releases/tag/decade-channel-v0.1.0
