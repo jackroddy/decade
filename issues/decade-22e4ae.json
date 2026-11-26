@@ -1,7 +1,7 @@
 {
   "id": "decade-22e4ae",
-  "title": "decade-channel 0.2.0 is released, with READMEs written to the readme skill",
-  "body": "coax depends on `decade-channel` through a path into this repository, so coax builds only beside a checkout of it. crates.io has `decade-channel` 0.1.0, but coax uses changes that are only on `dev`: `Agent::args`, `Restore`, `Subagent` and the `Screenshot` message. coax can drop the path once 0.2.0 is published, which is the last step of coax-550b84 in coax's foam. cmr, coax's other path dependency, is already out as 0.3.0.\n\n`dev` is 43 commits ahead of `main`, and those commits change the `decade` binary as well as `decade-channel`. The workspace `README.md` is 22 lines, `decade/README.md` 20 and `decade-channel/README.md` 4.\n\n## Proposal\n\n- Write the workspace's and both crates' READMEs to the `readme` skill in Jack's skills repository. cmr's README, in that skill's `examples/`, is the model so far.\n- Release `decade-channel` 0.2.0. The minor moves, because `Agent` gained a field and `Message` gained a variant, which breaks code that builds them or matches them without a wildcard.\n- Merge `dev` into `main` for the release, tag it `decade-channel-v0.2.0`, and Jack publishes.\n\n## Open\n\n- Whether the `decade` binary gets a release in the same merge, since `main` takes its changes too.",
+  "title": "decade-channel 0.2.0 is released, with a README written to the readme skill",
+  "body": "coax depends on `decade-channel` through a path into this repository, so coax builds only beside a checkout of it. crates.io has `decade-channel` 0.1.0, but coax uses changes that are only on `dev`: `Agent::args`, `Restore`, `Subagent` and the `Screenshot` message. coax can drop the path once 0.2.0 is published, which is the last step of coax-550b84 in coax's foam.\n\n`decade-channel/README.md` is 4 lines.\n\n## Proposal\n\n- Write `decade-channel`'s README to the `readme` skill.\n- Release `decade-channel` 0.2.0. The minor moves, because `Agent`, `AgentUpdate` and `Hello` gained fields and `Message` and `Reply` gained variants, which breaks code that builds them or matches them without a wildcard.\n- Merge `dev` into `main` for the release, tag it `decade-channel-v0.2.0`, and Jack publishes.\n\n## Out of scope\n\n- `decade-ui` is never released. Its code moves into una, a crate of its own, in una-0b6d69 in una's foam.\n- `decade` is not released in this merge. It depends on `decade-ui` by path, and crates.io cannot take it until it depends on a published una instead. Its unreleased changes reach `main` with this merge and wait there.\n- The workspace's and `decade`'s READMEs wait for `decade`'s next release.",
   "type": "feature",
   "status": "open",
   "priority": 1,
@@ -13,7 +13,7 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T01:28:20.367973105Z",
-  "updated_at": "2026-11-26T01:28:20.367973105Z",
+  "updated_at": "2026-11-26T03:04:37.829535253Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
