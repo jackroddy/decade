@@ -1,0 +1,30 @@
+{
+  "id": "decade-8ed42a",
+  "title": "Should Screenshot::file be a path?",
+  "body": "`Restore::cwd` is an `Option<PathBuf>`, but `Screenshot::file` is a `String`. `file` is the path the client says it will write, which decade shows in the consent dialog. Nothing ties it to the path the client then writes: `decade screenshot` sends the absolute path and writes the path it was given, and another client could show one path and write another.\n\n## Open\n\n- Should `file` be a `PathBuf`, sent as a string on the wire?\n- Should `Channel` write the file itself, so the path shown is the path written?",
+  "type": "decision",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade-channel"
+  ],
+  "parent": "decade-168095",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T03:22:20.75064081Z",
+  "updated_at": "2026-11-26T03:22:20.75064081Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
