@@ -1,0 +1,31 @@
+{
+  "id": "decade-0019ec",
+  "title": "Should decade acknowledge a verb it delivers?",
+  "body": "`Channel::send` writes a verb for another pane and returns. decade answers only when it cannot deliver, with a `Message::Error`. A sender cannot tell a delivered verb from one whose error has not arrived yet. The README's `send` example waits one second with `recv_timeout` before it reports success.\n\n## Options\n\n- decade answers each delivered verb with a short acknowledgement. This changes the protocol.\n- Keep the silence, and pair it with the request ids proposed in \"How does a client match a reply to the request that asked for it?\", so an error names the verb it is about.",
+  "type": "decision",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade-channel",
+    "decade"
+  ],
+  "parent": "decade-168095",
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T03:22:20.738893436Z",
+  "updated_at": "2026-11-26T03:22:20.738893436Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4d470b9",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
