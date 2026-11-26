@@ -20,22 +20,42 @@ command line and what the tool writes.
   refuses a FILE whose extension is neither `.mp4` nor `.gif` or
   disagrees with `--format`, a FILE that exists, and a FILE whose
   directory is missing.
-- The socket takes `record` and `record.stop` messages to decade, and
-  the MCP server has `record` and `record.stop` tools. `record` names a
-  pane and an absolute path, with optional `format`, `fps`, `duration`,
-  `width`, `quality`, `pointer` and `loop`. decade renders the pane as
-  for a screenshot and writes the frames to `ffmpeg`. It answers once
-  ffmpeg has written the file. A recording ends at its duration, after 5
-  minutes, at `record.stop`, or when the pane closes, its tab or
+- The socket takes `record` and `record.stop` messages to decade.
+  `record` names a pane and an absolute path, with optional `format`,
+  `fps`, `duration`, `width`, `quality`, `pointer` and `loop`. decade
+  renders the pane as for a screenshot and writes the frames to
+  `ffmpeg`. It answers once ffmpeg has written the file. A recording
+  ends at its duration, at its limit of 5 minutes for an mp4 or 1 minute
+  for a GIF, at `record.stop`, or when the pane closes, its tab or
   workspace leaves the screen, the workspace sleeps or closes, or the
-  requester disconnects. decade keeps what it recorded in every case. It
-  refuses a recording without `ffmpeg` on its `PATH`, of a pane already
-  being recorded, and into a file that exists or whose directory is
-  missing. The accept captures mode and its dialog cover recordings.
-  While a pane is being recorded, its outline pulses red, and a red tag
-  on its top edge holds a blinking recording icon and the time recorded.
-  The frames show neither. A pane verb may no longer be named `record`
-  or `record.stop`.
+  requester disconnects. decade cuts a longer duration to the limit. It
+  keeps what it recorded in every case. A recording that ends before its
+  first frame leaves no file and answers with an error. A recording
+  follows its pane through a rename. ffmpeg stamps each frame with the
+  time it reads it and writes a constant frame rate, so the video lasts
+  as long as the recording ran when frames are dropped or late.
+  `dropped` counts the frames left out while ffmpeg was behind. An mp4
+  without `width` loses an odd last column or row rather than being
+  scaled. When the pane changes size, decade keeps the top left of a
+  larger frame and pads a smaller one with black on the right and
+  bottom. decade refuses a recording without `ffmpeg` on its `PATH`, of
+  a pane already being recorded, into a file that exists or whose
+  directory is missing, and of a GIF whose memory estimate in ffmpeg
+  is over half of `MemAvailable`. The estimate is 90 MiB plus 4.5 bytes
+  for each pixel of each frame. The accept captures mode and its dialog
+  cover recordings. While a pane is being recorded, its outline pulses
+  red, and a red tag on its top edge holds a blinking recording icon
+  and the time recorded. The frames show neither. A pane verb may no
+  longer be named `record` or `record.stop`.
+- The MCP server has `record`, `record.stop` and `record.status` tools.
+  `record` takes the socket message's fields and returns as soon as the
+  recording starts. Its answer gives the video's size, its fps, the most
+  frames it can hold and, for a GIF, the memory estimate.
+  `record.stop` ends the recording, waits for ffmpeg, and answers with
+  the file, the frames written and dropped, the seconds and what ended
+  it. `record.status` gives the time and frames so far, and after the
+  end the same finished result. decade keeps each pane's last result
+  until its next recording starts.
 - `decade screenshot PANE FILE` asks decade for a PNG of pane PANE and
   writes it to FILE, relative to the directory the command runs in. It
   connects to the socket in `DECADE_SOCKET` and claims no pane. When

@@ -178,6 +178,9 @@ pub struct State {
     recordings: Vec<record::Recording>,
     next_recording: u64,
 
+    /// The result of each pane's last recording.
+    finished: Vec<record::Finished>,
+
     /// Where the thread feeding a recording's ffmpeg sends its result.
     recorded: calloop_channel::Sender<(u64, Result<(), String>)>,
     unplaced: Vec<ToplevelSurface>,
@@ -303,6 +306,7 @@ pub fn run() {
         capturing: Vec::new(),
         recordings: Vec::new(),
         next_recording: 0,
+        finished: Vec::new(),
         recorded,
         unplaced: Vec::new(),
         popups: PopupManager::default(),

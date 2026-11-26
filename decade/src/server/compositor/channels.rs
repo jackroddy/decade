@@ -133,6 +133,9 @@ impl State {
             mcp::Call::Record(record) => {
                 self.record(workspace, &record, caller, Requester::Mcp(request.reply))
             }
+            mcp::Call::RecordStop { pane } => {
+                let _ = self.stop_record(workspace, &pane, Some(request.reply));
+            }
             call => {
                 let answer = self.mcp_call(workspace, call, caller);
                 let _ = request.reply.send(answer.map(mcp::Answer::Text));
@@ -196,9 +199,12 @@ impl State {
                 let panes = Reply::Panes(shown.pane_list(caller));
                 return Ok(serde_json::to_string(&panes).unwrap());
             }
-            mcp::Call::RecordStop { pane } => return self.stop_record(workspace, &pane),
-            mcp::Call::ScratchOpen { .. } | mcp::Call::Screenshot { .. } | mcp::Call::Record(_) => {
-                unreachable!("mcp_request answers scratch.open, screenshot and record")
+            mcp::Call::RecordStatus { pane } => return self.record_status(workspace, &pane),
+            mcp::Call::ScratchOpen { .. }
+            | mcp::Call::Screenshot { .. }
+            | mcp::Call::Record(_)
+            | mcp::Call::RecordStop { .. } => {
+                unreachable!("mcp_request answers scratch.open, screenshot, record and record.stop")
             }
         };
         let sent = format!("sent {verb} to pane {to}");
@@ -537,7 +543,7 @@ impl State {
                     stop,
                     message,
                 } => {
-                    if let Err(reason) = self.stop_record(workspace, &stop.pane) {
+                    if let Err(reason) = self.stop_record(workspace, &stop.pane, None) {
                         let error = Reply::Error(decade_channel::Error { reason, message });
                         self.channel_send(client, &serde_json::to_string(&error).unwrap());
                     }

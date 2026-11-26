@@ -408,8 +408,8 @@ impl State {
             Asker::Record { plan, .. } => prompt::record_dialog(
                 &asking.agent,
                 &asking.pane,
-                plan.duration.map(|duration| duration.as_secs_f64()),
-                record::LONGEST.as_secs(),
+                plan.duration.map(record::span).as_deref(),
+                &record::span(record::limit(plan.format)),
                 &plan.file.display().to_string(),
             ),
         };
