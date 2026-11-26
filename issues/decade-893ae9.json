@@ -1,0 +1,28 @@
+{
+  "id": "decade-893ae9",
+  "title": "A window opened in a scratch pane after Chrome came up narrower than the pane",
+  "body": "In a scratch pane about 1749 × 1426 pixels, an agent ran `scratch.open` with `google-chrome-stable --app=...` and its own `--user-data-dir`, which filled the pane. A later `scratch.open` of `ghostty --font-size=18 -e ...` in the same pane came up about 770 pixels wide: `screenshot` returned a 770 × 1403 image, and the terminal had about 35 columns. `record`, started on the same pane at the same time, reported 1749 × 1403. The next `scratch.open` of ghostty, with Chrome no longer the pane's last window, filled the pane at 80 × 28. ghostty windows opened after mpv or after another ghostty filled the pane each time. Nobody knows yet whether decade sizes the new window from the previous window's last configure, or whether Chrome closing races the new window.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-26T09:18:58.576391549Z",
+  "updated_at": "2026-11-26T09:18:58.576391549Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "10d8d65",
+      "branch": "agent-input"
+    },
+    "closed": null
+  }
+}
