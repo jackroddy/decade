@@ -106,6 +106,14 @@ pub enum Call {
         pane: Option<String>,
         script: Script,
     },
+
+    /// Resize scratch pane `pane`, or the only scratch pane, to `width` by
+    /// `height` pixels.
+    ScratchResize {
+        pane: Option<String>,
+        width: u32,
+        height: u32,
+    },
 }
 
 /// Start the MCP server on a thread and return its URL.
@@ -349,6 +357,19 @@ fn tools() -> Vec<Tool> {
             })),
         ),
         Tool::new(
+            "scratch.resize",
+            "Resize a scratch pane in the shown tab to a width and height in pixels, the units screenshot uses, so a screenshot or recording of it comes out at that size. decade asks the user every time and waits up to 30 seconds; no setting lets a resize through without asking. decade moves the pane's borders, taking room from the panes beside it, to get as close to the size as the layout allows. A pane's size moves in whole cells of decade's grid, and a neighbour shrinks no smaller than decade's smallest pane. The pane keeps the size it reached until someone resizes it. The answer gives that size",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "pane": scratch_pane,
+                    "width": {"type": "integer", "description": "the width in pixels"},
+                    "height": {"type": "integer", "description": "the height in pixels"}
+                },
+                "required": ["width", "height"]
+            })),
+        ),
+        Tool::new(
             "scratch.send",
             "Send a message to the program in a scratch pane. panes lists the verbs that program accepts under accepts, each a name or a name with a description of what it does",
             schema(json!({
@@ -419,6 +440,15 @@ struct ScratchInput {
     steps: Vec<Step>,
 }
 
+/// The arguments of `scratch.resize`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScratchResize {
+    pane: Option<String>,
+    width: u32,
+    height: u32,
+}
+
 /// The arguments of `scratch.send`.
 #[derive(Deserialize)]
 struct ScratchSend {
@@ -480,6 +510,18 @@ fn call_for(name: &str, arguments: Map<String, Value>) -> Result<Call, String> {
             Ok(Call::ScratchInput {
                 pane,
                 script: Script { cell, steps },
+            })
+        }
+        "scratch.resize" => {
+            let ScratchResize {
+                pane,
+                width,
+                height,
+            } = parse(name, arguments)?;
+            Ok(Call::ScratchResize {
+                pane,
+                width,
+                height,
             })
         }
         "scratch.send" => {
@@ -551,7 +593,8 @@ impl ServerHandler for Decade {
                  scratch.open last started in one still runs, or how it exited. \
                  scratch.rename gives one a new name, and no other pane can be renamed. \
                  scratch.input plays a script of pointer moves, clicks, drags, keys and \
-                 typing in one, once the user allows it. \
+                 typing in one, once the user allows it. scratch.resize sets its size in \
+                 pixels, once the user allows it. \
                  Each takes the scratch pane's name, which may be left out when there is only one. \
                  They fail when the workspace has no scratch pane, or when the name is left \
                  out while there are several. \
@@ -772,6 +815,7 @@ mod tests {
                 "record.stop",
                 "record.status",
                 "scratch.input",
+                "scratch.resize",
                 "scratch.send"
             ]
         );
@@ -884,6 +928,22 @@ mod tests {
             panic!("scratch.input refuses a field it does not know");
         };
         assert!(reason.starts_with("scratch.input: unknown field `speed`"));
+        let Ok(Call::ScratchResize {
+            pane,
+            width,
+            height,
+        }) = call_for(
+            "scratch.resize",
+            schema(json!({"width": 1200, "height": 800})),
+        )
+        else {
+            panic!("scratch.resize takes a width and a height");
+        };
+        assert_eq!((pane, width, height), (None, 1200, 800));
+        let Err(reason) = call_for("scratch.resize", schema(json!({"width": 1200}))) else {
+            panic!("scratch.resize needs a height");
+        };
+        assert_eq!(reason, "scratch.resize: missing field `height`");
         let Err(reason) = call_for("scratch.rename", Map::new()) else {
             panic!("scratch.rename needs a name");
         };

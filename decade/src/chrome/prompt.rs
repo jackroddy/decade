@@ -32,6 +32,11 @@ static INPUT_CHOICES: [Choice<Answer>; 3] = [
     choice(Answer::Deny, "Deny", 'n'),
 ];
 
+static RESIZE_CHOICES: [Choice<Answer>; 2] = [
+    choice(Answer::Once, "Allow", 'y'),
+    choice(Answer::Deny, "Deny", 'n'),
+];
+
 /// The answer a key gives, for y, a and n.
 pub fn answer_for(key: char) -> Option<Answer> {
     (CHOICES.iter())
@@ -131,6 +136,28 @@ pub fn input_dialog(
     }
 }
 
+/// The dialog that asks the person whether `agent` may resize pane
+/// `pane` from `from` to `to` pixels. It offers no mode, so decade asks
+/// every time. The caller sets the rest.
+pub fn resize_dialog(
+    agent: &str,
+    pane: &str,
+    from: (i32, i32),
+    to: (u32, u32),
+) -> Dialog<'static, Answer> {
+    Dialog {
+        question: format!("{agent} asks to resize pane {pane}"),
+        detail: format!("from {}x{} to {}x{} pixels", from.0, from.1, to.0, to.1),
+        path: None,
+        choices: &RESIZE_CHOICES,
+        escape: Answer::Deny,
+        armed: false,
+        selected: 0,
+        window: (0, 0),
+        cell: (0, 0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +207,16 @@ mod tests {
         assert_eq!(dialog.escape, Answer::Deny);
         let one = input_dialog("An agent", "scratch", 1, None);
         assert_eq!(one.detail, "Escape stops it · 1 step at once");
+    }
+
+    #[test]
+    fn the_resize_dialog_names_both_sizes_and_offers_only_allow_and_deny() {
+        let dialog = resize_dialog("coax", "scratch", (812, 590), (1200, 800));
+        assert_eq!(dialog.question, "coax asks to resize pane scratch");
+        assert_eq!(dialog.detail, "from 812x590 to 1200x800 pixels");
+        let keys: Vec<char> = dialog.choices.iter().map(|choice| choice.key).collect();
+        assert_eq!(keys, ['y', 'n']);
+        assert_eq!(dialog.escape, Answer::Deny);
     }
 
     #[test]

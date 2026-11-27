@@ -5,6 +5,7 @@ mod input;
 mod pool;
 mod record;
 mod render;
+mod resizing;
 mod screenshot;
 mod selection;
 mod viewers;

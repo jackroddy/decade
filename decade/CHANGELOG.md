@@ -78,6 +78,12 @@ command line and what the tool writes.
   it. `record.status` gives the time and frames so far, and after the
   end the same finished result. decade keeps each pane's last result
   until its next recording starts.
+- The MCP tool `scratch.resize` sets a scratch pane's size to a width
+  and height in the pixels a screenshot of it has. decade asks the
+  person every time, and no mode skips the question. decade then moves
+  the pane's borders, taking room from the panes beside it, nearest
+  first, down to the smallest pane. The size moves in whole cells. The
+  pane keeps the size it reached, and the call answers with it.
 - `record` takes `pointer_scale` on MCP and the socket, and the command
   line takes `--pointer-scale N`. It sets how many video pixels each
   pixel of the 17-pixel arrow takes across and down, from 1 to 8. decade

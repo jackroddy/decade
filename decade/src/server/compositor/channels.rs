@@ -139,6 +139,14 @@ impl State {
             mcp::Call::ScratchInput { pane, script } => {
                 self.scratch_input(workspace, pane.as_deref(), script, caller, request.reply)
             }
+            mcp::Call::ScratchResize {
+                pane,
+                width,
+                height,
+            } => {
+                let size = (width, height);
+                self.scratch_resize(workspace, pane.as_deref(), size, caller, request.reply)
+            }
             call => {
                 let answer = self.mcp_call(workspace, call, caller);
                 let _ = request.reply.send(answer.map(mcp::Answer::Text));
@@ -207,9 +215,10 @@ impl State {
             | mcp::Call::Screenshot { .. }
             | mcp::Call::Record(_)
             | mcp::Call::RecordStop { .. }
-            | mcp::Call::ScratchInput { .. } => {
+            | mcp::Call::ScratchInput { .. }
+            | mcp::Call::ScratchResize { .. } => {
                 unreachable!(
-                    "mcp_request answers scratch.open, screenshot, record, record.stop and scratch.input"
+                    "mcp_request answers scratch.open, screenshot, record, record.stop, scratch.input and scratch.resize"
                 )
             }
         };

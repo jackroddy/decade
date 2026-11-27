@@ -11,6 +11,10 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 
 ### Added
 
+- `Layout::resize_to` moves a pane's borders so that the pane is as
+  close to a number of columns and rows as the splits allow. It takes
+  room from the panes beside it, nearest first, down to their smallest.
+  A zoomed layout is left as it is.
 - `Chrome::driven` names the pane an agent's input plays in, as a
   `Driven`. The layout mixes the pane's outline toward yellow by its
   `strength` and draws a yellow tag after the recording tag with its

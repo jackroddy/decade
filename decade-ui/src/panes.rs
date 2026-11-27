@@ -549,6 +549,23 @@ impl<A: Copy + PartialEq> Layout<A> {
         self.drag_boundary(&boundary, edge, edge);
     }
 
+    /// Move the borders of pane `id` so that it is as close to `columns`
+    /// by `rows` cells as the splits allow, taking room from the panes
+    /// beside it, nearest first, down to their smallest.
+    pub fn resize_to(&mut self, id: usize, (columns, rows): (u32, u32)) {
+        if self.zoom.is_some() {
+            return;
+        }
+        let Some(path) = leaf_path(&self.root, id) else {
+            return;
+        };
+        for (axis, length) in [(Axis::Horizontal, columns), (Axis::Vertical, rows)] {
+            let borders = moved_borders(&self.root, self.area, &path, axis, length);
+            set_borders(&mut self.root, self.area, &path, axis, &borders);
+        }
+        self.arrange();
+    }
+
     #[cfg(test)]
     pub fn add_transient(&mut self, name: String) -> usize {
         self.add_beside(self.focused, name)
@@ -1677,6 +1694,172 @@ fn find_boundary(
     found
 }
 
+/// The sides taken from the root down to the leaf of pane `id`, `true`
+/// for a split's second part.
+fn leaf_path(node: &Node, id: usize) -> Option<Vec<bool>> {
+    match node {
+        Node::Leaf(leaf) => (*leaf == id).then(Vec::new),
+        Node::Split { first, second, .. } => {
+            [(false, first), (true, second)]
+                .into_iter()
+                .find_map(|(side, child)| {
+                    let mut path = leaf_path(child, id)?;
+                    path.insert(0, side);
+                    Some(path)
+                })
+        }
+    }
+}
+
+/// The fewest cells along `axis` that `node` takes with each of its
+/// panes at `MIN_PANE`.
+fn min_length(node: &Node, axis: Axis) -> u32 {
+    match node {
+        Node::Leaf(_) => MIN_PANE,
+        Node::Split {
+            axis: here,
+            first,
+            second,
+            ..
+        } => {
+            let (a, b) = (min_length(first, axis), min_length(second, axis));
+            if *here == axis { a + b } else { a.max(b) }
+        }
+    }
+}
+
+/// The first cell and the length of `area` along `axis`.
+fn span(area: CellRect, axis: Axis) -> (u32, u32) {
+    match axis {
+        Axis::Horizontal => (area.column, area.columns),
+        Axis::Vertical => (area.row, area.rows),
+    }
+}
+
+/// A split along the axis being resized, on the path to a pane.
+struct Border {
+    /// Whether the pane is in the split's second part, so the border is
+    /// before the pane rather than after it.
+    before: bool,
+
+    /// The first cell of the split's second part.
+    at: u32,
+
+    /// The cells the border can move away from the pane before the part
+    /// beyond it is at its smallest.
+    room: u32,
+}
+
+/// Where each split along `axis` on `path` puts its border, outermost
+/// first, once the pane at the end of `path` is `length` cells long or
+/// as close to it as the splits allow.
+//
+// moving a border away from the pane moves every border
+// nearer the pane on the same side by as much, so the
+// parts between them keep their lengths:
+//
+//     | a |  b  |pane| c |  d  |
+//                    ^   ^
+//                    F1  F2      F2 moved 2 right moves F1 2 right
+//
+fn moved_borders(root: &Node, area: CellRect, path: &[bool], axis: Axis, length: u32) -> Vec<u32> {
+    let mut borders = Vec::new();
+    let (mut node, mut area) = (root, area);
+    let mut span_root = root;
+    for &in_second in path {
+        let Node::Split {
+            axis: here,
+            ratio,
+            first,
+            second,
+        } = node
+        else {
+            break;
+        };
+        let (a, b) = split_area(area, *here, *ratio);
+        let (inside, inside_area) = if in_second { (second, b) } else { (first, a) };
+        if *here == axis {
+            let room = if in_second {
+                span(a, axis).1.saturating_sub(min_length(first, axis))
+            } else {
+                span(b, axis).1.saturating_sub(min_length(second, axis))
+            };
+            borders.push(Border {
+                before: in_second,
+                at: span(b, axis).0,
+                room,
+            });
+            span_root = inside;
+        }
+        node = inside;
+        area = inside_area;
+    }
+    let current = span(area, axis).1;
+    let mut moves = vec![0_i64; borders.len()];
+    if length > current {
+        let mut wanted = length - current;
+        for before in [false, true] {
+            for i in (0..borders.len()).rev() {
+                if borders[i].before != before {
+                    continue;
+                }
+                let taken = wanted.min(borders[i].room);
+                wanted -= taken;
+                for (j, border) in borders.iter().enumerate().skip(i) {
+                    if border.before == before {
+                        moves[j] += taken as i64;
+                    }
+                }
+            }
+        }
+    } else {
+        let given = (current - length).min(current.saturating_sub(min_length(span_root, axis)));
+        let nearest =
+            (borders.iter().rposition(|border| !border.before)).or(borders.len().checked_sub(1));
+        if let Some(i) = nearest {
+            moves[i] -= given as i64;
+        }
+    }
+    (borders.iter().zip(moves))
+        .map(|(border, moved)| {
+            let moved = if border.before { -moved } else { moved };
+            (border.at as i64 + moved) as u32
+        })
+        .collect()
+}
+
+/// Set the ratio of each split along `axis` on `path` so that it puts its
+/// border at the cell `borders` gives it, outermost first.
+fn set_borders(root: &mut Node, area: CellRect, path: &[bool], axis: Axis, borders: &[u32]) {
+    let (mut node, mut area) = (root, area);
+    let mut borders = borders.iter();
+    for &in_second in path {
+        let Node::Split {
+            axis: here,
+            ratio,
+            first,
+            second,
+        } = node
+        else {
+            break;
+        };
+        if *here == axis
+            && let Some(&at) = borders.next()
+        {
+            let (start, length) = span(area, axis);
+            if length > 0 {
+                *ratio = (at - start) as f32 / length as f32;
+            }
+        }
+        let (a, b) = split_area(area, *here, *ratio);
+        (node, area) = if in_second {
+            (&mut **second, b)
+        } else {
+            (&mut **first, a)
+        };
+    }
+}
+
 /// The ratio of the split at the end of the path, and the cells it divides.
 fn split_at<'a>(
     node: &'a mut Node,
@@ -2225,6 +2408,85 @@ mod tests {
         let terminal = layout.pane(1).unwrap().rect.rows;
         layout.resize_toward(2, Direction::Up, 2);
         assert_eq!(layout.pane(1).unwrap().rect.rows, terminal - 2);
+    }
+
+    fn split(axis: Axis, first: Node, second: Node) -> Node {
+        Node::Split {
+            axis,
+            ratio: 0.5,
+            first: Box::new(first),
+            second: Box::new(second),
+        }
+    }
+
+    /// A layout of `root` over `AREA`, its panes named by their ids.
+    fn tree(root: Node, panes: usize) -> Layout {
+        let panes = (0..panes).map(|id| Pane::new(id, id.to_string())).collect();
+        Layout::restore(AREA, panes, root, 0, None)
+    }
+
+    fn columns(layout: &Layout) -> Vec<u32> {
+        layout.panes.iter().map(|pane| pane.rect.columns).collect()
+    }
+
+    #[test]
+    fn resizing_a_pane_to_a_size_moves_its_border_and_stops_at_the_neighbours_smallest() {
+        let mut layout = tree(split(Axis::Horizontal, Node::Leaf(0), Node::Leaf(1)), 2);
+        layout.resize_to(0, (70, 10));
+        assert_eq!(columns(&layout), [70, 30]);
+
+        // no split runs across the panes, so their height stays
+        assert_eq!(layout.pane(0).unwrap().rect.rows, 40);
+        layout.resize_to(1, (90, 40));
+        assert_eq!(columns(&layout), [10, 90]);
+        layout.resize_to(0, (100, 40));
+        assert_eq!(columns(&layout), [96, 4]);
+        layout.resize_to(0, (1, 40));
+        assert_eq!(columns(&layout), [4, 96]);
+    }
+
+    #[test]
+    fn a_pane_takes_room_from_the_neighbour_after_it_first_and_then_from_the_one_before() {
+        let inner = split(Axis::Horizontal, Node::Leaf(1), Node::Leaf(2));
+        let mut layout = tree(split(Axis::Horizontal, Node::Leaf(0), inner), 3);
+        assert_eq!(columns(&layout), [50, 25, 25]);
+        layout.resize_to(1, (40, 40));
+        assert_eq!(columns(&layout), [50, 40, 10]);
+        layout.resize_to(1, (70, 40));
+        assert_eq!(columns(&layout), [26, 70, 4]);
+    }
+
+    #[test]
+    fn growing_past_the_nearest_border_moves_the_outer_one_and_the_nearest_with_it() {
+        let inner = split(Axis::Horizontal, Node::Leaf(0), Node::Leaf(1));
+        let mut layout = tree(split(Axis::Horizontal, inner, Node::Leaf(2)), 3);
+        assert_eq!(columns(&layout), [25, 25, 50]);
+        layout.resize_to(0, (60, 40));
+        assert_eq!(columns(&layout), [60, 4, 36]);
+        layout.resize_to(0, (30, 40));
+        assert_eq!(columns(&layout), [30, 34, 36]);
+    }
+
+    #[test]
+    fn a_pane_shrinks_no_further_than_the_panes_stacked_with_it_allow() {
+        // pane 0 is stacked above panes 1 and 2, which sit side by
+        // side, so its column can narrow to 2 * MIN_PANE and no less
+        let below = split(Axis::Horizontal, Node::Leaf(1), Node::Leaf(2));
+        let left = split(Axis::Vertical, Node::Leaf(0), below);
+        let mut layout = tree(split(Axis::Horizontal, left, Node::Leaf(3)), 4);
+        layout.resize_to(0, (2, 30));
+        assert_eq!(columns(&layout), [8, 4, 4, 92]);
+        let rows: Vec<u32> = layout.panes.iter().map(|pane| pane.rect.rows).collect();
+        assert_eq!(rows, [30, 10, 10, 40]);
+    }
+
+    #[test]
+    fn a_zoomed_layout_is_not_resized() {
+        let mut layout = tree(split(Axis::Horizontal, Node::Leaf(0), Node::Leaf(1)), 2);
+        layout.toggle_zoom(0);
+        layout.resize_to(0, (70, 10));
+        layout.toggle_zoom(0);
+        assert_eq!(columns(&layout), [50, 50]);
     }
 
     fn texts(scene: &Scene) -> Vec<String> {

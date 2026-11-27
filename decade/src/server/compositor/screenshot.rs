@@ -21,6 +21,7 @@ use crate::server::workspace::PaneInfo;
 
 use super::driving::Played;
 use super::record::{Plan, Requester};
+use super::resizing::Resize;
 use super::{State, popups_over, send_frames_surface_tree, waits_for_frame};
 
 /// How long decade waits for the person to answer before it refuses.
@@ -54,6 +55,9 @@ pub(super) enum Asker {
 
     /// The MCP tool `scratch.input`.
     Input(Played),
+
+    /// The MCP tool `scratch.resize`.
+    Resize(Resize),
 }
 
 impl Asker {
@@ -66,6 +70,11 @@ impl Asker {
             _ => "screenshot",
         };
         match (self, unanswered) {
+            (Asker::Resize(_), Some(ask_for)) => format!(
+                "the person did not answer within {} seconds, so decade did not resize pane {pane}",
+                ask_for.as_secs()
+            ),
+            (Asker::Resize(_), None) => format!("the person refused to resize pane {pane}"),
             (Asker::Input(_), Some(ask_for)) => format!(
                 "the person did not answer within {} seconds, so decade played no input in pane {pane}",
                 ask_for.as_secs()
@@ -135,6 +144,7 @@ impl State {
         match asker {
             Asker::Record { to, plan } => self.start_recording(workspace, pane, to, plan),
             Asker::Input(played) => self.drive(workspace, &pane, played),
+            Asker::Resize(resize) => self.resize_scratch(workspace, &pane, resize),
             asker => self.capture_fresh(workspace, pane, asker),
         }
     }
@@ -145,6 +155,9 @@ impl State {
             Asker::Record { to, .. } => self.answer_record(to, Err(reason)),
             Asker::Input(played) => {
                 let _ = played.reply.send(Err(reason));
+            }
+            Asker::Resize(resize) => {
+                let _ = resize.reply.send(Err(reason));
             }
             asker => self.answer_asker(asker, Err(reason)),
         }
@@ -167,8 +180,8 @@ impl State {
                 };
                 self.channel_send(client, &serde_json::to_string(&reply).unwrap());
             }
-            Asker::Record { .. } | Asker::Input(_) => {
-                unreachable!("refuse answers a recording and input")
+            Asker::Record { .. } | Asker::Input(_) | Asker::Resize(_) => {
+                unreachable!("refuse answers a recording, input and a resize")
             }
         }
     }
@@ -238,6 +251,7 @@ impl State {
         let note = Some(match asker {
             Asker::Record { .. } => "record?".to_string(),
             Asker::Input(_) => "input?".to_string(),
+            Asker::Resize(_) => "resize?".to_string(),
             _ => "screenshot?".to_string(),
         });
 
@@ -470,6 +484,9 @@ impl State {
                     .then(|| record::span(Duration::from_millis(played.ms.div_ceil(100) * 100)))
                     .as_deref(),
             ),
+            Asker::Resize(resize) => {
+                prompt::resize_dialog(&asking.agent, &asking.pane, resize.from, resize.size)
+            }
         };
         Some(Dialog {
             armed: asking.armed(Instant::now()),

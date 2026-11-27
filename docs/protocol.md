@@ -464,7 +464,7 @@ A program decade starts in a pane gets an address ending in
 `?workspace=<id>&pane=<name>` instead. In the `panes` reply to a call on
 that address, `you` marks that pane.
 Its tools are `panes`, `agents`, `point`, `show`, `highlight`, `clear`,
-`screenshot`, `record`, `record.stop`, `record.status`, `scratch.open`, `scratch.send`, `scratch.status`, `scratch.rename` and `scratch.input`. decade delivers a pane verb from a tool
+`screenshot`, `record`, `record.stop`, `record.status`, `scratch.open`, `scratch.send`, `scratch.status`, `scratch.rename`, `scratch.input` and `scratch.resize`. decade delivers a pane verb from a tool
 call with `"from": "agent"`. decade answers `panes` with the pane list, in the shape
 of the socket's `panes` reply, `agents` with the agent list below, `screenshot` with an image, and
 every other call with a line saying what it did. When decade cannot act on a call, the result is a tool error whose
@@ -551,7 +551,7 @@ starts. A `record.status` for a pane with no recording fails with
 
 The person may mark any number of panes in a workspace as scratch panes,
 from the Ctrl bar. Marking one leaves the others marked.
-`scratch.open`, `scratch.send`, `scratch.status`, `scratch.rename` and `scratch.input` reach them, and every
+`scratch.open`, `scratch.send`, `scratch.status`, `scratch.rename`, `scratch.input` and `scratch.resize` reach them, and every
 agent in the workspace reaches every scratch pane. Each tool takes an
 optional `pane`, the name of a scratch pane, which may be a name the pane
 had before a rename. `pane` may be left out when the workspace has exactly
@@ -717,6 +717,47 @@ While a script plays, decade refuses a `screenshot` or `record` that
 would ask the person, with `an agent's input is playing in pane <pane>,
 and decade asks the person nothing until it ends`. One with accept
 captures on goes ahead.
+
+`scratch.resize` sets the size of a scratch pane's client area, so that
+a screenshot or recording of it comes out at a set size. It takes an
+optional `pane`, `width` and `height`, in the pixels of a `screenshot`
+of the pane:
+
+```json
+{"pane": "scratch", "width": 1200, "height": 800}
+```
+
+decade asks the person every time, in the dialog `screenshot` uses. No
+mode lets a resize through. The question is "coax asks to resize pane
+scratch", and the line under it reads "from 812x590 to 1200x800
+pixels". The choices are allow and deny, answered by y and n.
+
+Once the person allows it, decade moves the pane's borders. Along each
+axis it moves the border after the pane first, then the one before it.
+It takes room from the nearest pane beside it first, then from panes
+further out, down to the smallest pane decade draws, 4 cells across or
+down. A pane that shrinks gives its room to the pane after it, or to
+the one before it when nothing follows. A pane moves in whole cells of
+decade's grid, so decade rounds the size asked for to the nearest cell.
+The pane keeps the size it reached until someone resizes it, and decade
+saves it with the layout. The call answers with that size: "pane
+scratch is 1200x792 pixels, as close to 1200x800 as the layout allows",
+or "pane scratch is 1200x800 pixels" when it reached the size asked
+for.
+
+decade refuses the call with a tool error:
+
+| when | reason |
+|---|---|
+| `pane` names a pane that is not a scratch pane | `<pane> is not a scratch pane; the scratch panes are: <names>` |
+| the workspace has no scratch pane, or several and `pane` is left out | as for the other scratch tools |
+| the pane is in a tab that is not shown | `pane <pane> is in tab <n>, which is not shown` |
+| a pane in the tab is zoomed | `a pane is zoomed in pane <pane>'s tab, so decade cannot resize it` |
+| `width` or `height` is 0 | `width and height are pixels above 0, not <width>x<height>` |
+| the dialog is up for something else | `decade is already asking the person about another capture` |
+| a script of input plays | `an agent's input is playing in pane <pane>, and decade asks the person nothing until it ends` |
+| the person denies | `the person refused to resize pane <pane>` |
+| no answer within 30 seconds | `the person did not answer within 30 seconds, so decade did not resize pane <pane>` |
 
 ## Version
 
