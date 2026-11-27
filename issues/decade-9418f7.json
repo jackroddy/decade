@@ -3,7 +3,7 @@
   "title": "decade notifies an agent's pane when its background request ends",
   "body": "Some requests to decade finish after the call that started them has returned. The first is recording, on the `record` branch (decade-7fb578). MCP `record` returns as soon as the recording starts. The agent learns the outcome only by calling `record.status` or `record.stop`, so a recording that ends by its duration or because its pane closed goes unnoticed until the agent asks. A socket client gets the finished result as a message, but an agent talks to decade over MCP, and MCP has no way for decade to reach the model unasked.\n\ndecade knows which pane an agent runs in. An MCP address ends in `&pane=<name>` for a program started in a pane, and the socket `screenshot` and `record` verbs carry `for`. The client in that pane is usually coax, which runs the agent.\n\n## Proposal\n\n- A message from decade to a client, `notify`, carries a line of text for the agent and the call it is about, such as `record` with its result.\n- decade sends it to the client that claims the asking agent's pane when a background request ends: a recording that finishes by its duration, its cap, or its pane, tab or workspace going away. A recording the agent stopped with `record.stop` needs no notice, since that call returns the result.\n- `decade-channel` gains `Message::Notify`. This changes the protocol, so both crates' minors move.\n- What the client does with a notice is the client's business. coax's side is coax-87ae62 in coax's foam.\n\n## Open\n\n- What fields does `notify` carry beyond the text: the tool name, the pane, a JSON result?\n- What happens when no client claims the agent's pane: drop the notice, or keep it until one does?\n- Which other events send one, such as a scratch program exiting?",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [
     "decade",
@@ -13,13 +13,13 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/3cd5690e",
-  "lease_expires": "2026-11-27T01:47:41.430472496Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T05:20:52.895446495Z",
-  "updated_at": "2026-11-27T01:36:25.183833305Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-27T01:36:25.195740634Z",
+  "closed_at": "2026-11-27T01:36:25.195740634Z",
+  "close_reason": "Landed in 4605830: decade sends notify to the client claiming the asking agent's pane when a recording ends without record.stop, and decade-channel has Message::Notify and Notify. The note above lists the choices made.",
+  "resolution": "done",
   "notes": [
     {
       "id": "b3f5a5e2",
@@ -43,6 +43,9 @@
       "commit": "e9d73b4",
       "branch": "record"
     },
-    "closed": null
+    "closed": {
+      "commit": "4605830",
+      "branch": "dev"
+    }
   }
 }
