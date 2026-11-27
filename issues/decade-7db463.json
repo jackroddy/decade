@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-25T22:59:35.521871021Z",
-  "updated_at": "2026-11-25T22:59:35.521871021Z",
+  "updated_at": "2026-11-27T01:18:56.399777144Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "f8e8cf8f",
+      "at": "2026-11-27T01:18:56.399776564Z",
+      "author": "Jack Roddy/3cd5690e",
+      "text": "Jack chose the fix: decade starts pane programs with the user session's environment, read from `systemctl --user show-environment`, plus decade's own `DECADE_*` variables, and ignores the environment of the process that started decade. If systemd's user manager cannot be reached, decade falls back to its own environment.",
+      "commit": "9efedb9",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "4d470b9",
