@@ -1,0 +1,30 @@
+{
+  "id": "decade-6544c2",
+  "title": "A socket record.stop suppresses the notice and nobody gets the result",
+  "body": "decade sends a `notify` to the asking agent's pane when a recording ends without a `record.stop` (4605830, decade-9418f7), on the reasoning that a stop call returns the result to whoever stopped it. In `decade/src/server/compositor/record.rs` (near line 650) every `record.stop` sets `stopped`, including a socket `record.stop`, which gets no reply of its own (docs/protocol.md). If an agent starts a recording over MCP and a socket client stops it, nobody receives the result: the MCP caller was answered at start, and the notice is suppressed.\n\n## Proposal\n\nSet `stopped`, and so suppress the notice, only when the stop call waits for the result, which is the MCP `record.stop`.",
+  "type": "bug",
+  "status": "open",
+  "priority": 3,
+  "labels": [
+    "decade"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-27T01:41:37.111180605Z",
+  "updated_at": "2026-11-27T01:41:37.111180605Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4605830",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
