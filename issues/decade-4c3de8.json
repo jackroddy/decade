@@ -13,11 +13,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T07:05:52.116811218Z",
-  "updated_at": "2026-11-26T07:05:52.116811218Z",
+  "updated_at": "2026-11-27T01:18:56.425106589Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "eb034b4f",
+      "at": "2026-11-27T01:18:56.425106019Z",
+      "author": "Jack Roddy/3cd5690e",
+      "text": "Jack decided the open points: decade moves the pane's split borders to get as close to the requested size as the layout allows, taking room from neighbouring panes, and the answer gives the size reached. The pane keeps that size until someone resizes it.",
+      "commit": "9efedb9",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "10d8d65",
