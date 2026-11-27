@@ -16,7 +16,7 @@
   "lease_expires": "2026-11-27T01:47:41.430472496Z",
   "defer_until": null,
   "created_at": "2026-11-26T05:20:52.895446495Z",
-  "updated_at": "2026-11-27T01:32:41.430472496Z",
+  "updated_at": "2026-11-27T01:36:25.183833305Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -27,6 +27,14 @@
       "author": "Jack Roddy/3cd5690e",
       "text": "Jack put this in an unattended round without answering the open points, so the round builds it on these choices, which he can revise: a notice carries `text` for the agent, `about` naming the call it concerns (such as `record`), the `pane` the call was about, and an optional JSON `result`. decade drops a notice when no client claims the agent's pane, and logs that it did. Only a recording that ends without a `record.stop` call sends one in this first version.",
       "commit": "9efedb9",
+      "branch": "dev"
+    },
+    {
+      "id": "8059aea2",
+      "at": "2026-11-27T01:36:25.183832625Z",
+      "author": "Jack Roddy/3cd5690e",
+      "text": "Choices made in 4605830 that the notes left open:\n\n- Any `record.stop` that names the recording suppresses the notice, including one that arrives after the recording ended while ffmpeg finishes, since that call returns the result.\n- A socket `record` with `for` sends a notice to the client in that pane, besides the `record` answer to the client that asked. When both are the same client, it gets both.\n- `result` is the `Recorded` fields on success and is left out on failure. `text` then carries the failure reason.\n- `pane` is the recorded pane's name when the recording started.\n- `notify` is a reserved name for pane verbs. The protocol version stays 1, since no existing message changed shape.\n- coax's side, coax-87ae62, is untouched.",
+      "commit": "4605830",
       "branch": "dev"
     }
   ],
