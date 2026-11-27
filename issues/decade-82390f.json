@@ -3,7 +3,7 @@
   "title": "Sleeping workspaces sort to the bottom of the sidebar",
   "body": "`Frame::new` in `decade/src/chrome/frame.rs` orders the sidebar's workspace cards. It sorts `entries` by section first: the ungrouped workspaces come first, then each group's in the order of `groups`. Within a section it sorts by `Reverse(entry.state())`, so the card whose first agent has the most urgent state comes first. Ties keep the picker's order. `Entry::asleep` marks a sleeping workspace, which the card draws with the sleep mark on its disc and the state \"asleep\". The sort never reads `asleep`, so a sleeping card can sit above awake ones.\n\n## Proposal\n\nEach sleeping workspace sorts below every awake workspace of its own section, and stays in its group. The sort key becomes `(section, entry.asleep, Reverse(entry.state()))`, and sleeping cards keep the picker's order among themselves.\n\n## Out of scope\n\n- A sleeping workspace's card shrinks to one row: decade-ac3cdb.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 3,
   "labels": [
     "decade"
@@ -12,19 +12,22 @@
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/3cd5690e",
-  "lease_expires": "2026-11-27T01:34:44.331102567Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T01:30:51.60600478Z",
-  "updated_at": "2026-11-27T01:19:44.331102567Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-27T01:22:44.284722769Z",
+  "closed_at": "2026-11-27T01:22:44.284722769Z",
+  "close_reason": "Landed in 710bd05: Frame::new sorts by (section, asleep, Reverse(state)), so sleeping workspaces sit below the awake ones of their section in the picker's order.",
+  "resolution": "done",
   "notes": [],
   "stamps": {
     "created": {
       "commit": "4d470b9",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "710bd05",
+      "branch": "dev"
+    }
   }
 }
