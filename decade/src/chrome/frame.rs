@@ -589,7 +589,7 @@ impl Frame {
         for entry in &mut entries {
             entry.group = entry.group.filter(|_| section(entry.group) > 0);
         }
-        entries.sort_by_key(|entry| (section(entry.group), Reverse(entry.state())));
+        entries.sort_by_key(|entry| (section(entry.group), entry.asleep, Reverse(entry.state())));
         Frame {
             columns,
             rows,
@@ -814,6 +814,28 @@ impl Frame {
         (x, top + self.scaled(CARD_PADDING), size)
     }
 
+    /// The height of `entry`'s card: one row beside its disc while it
+    /// sleeps, and `CARD_LINES` rows otherwise.
+    fn card_height(&self, entry: &Entry) -> i32 {
+        let padding = self.scaled(CARD_PADDING);
+        if entry.asleep {
+            2 * padding + self.scaled(DISC)
+        } else {
+            2 * padding + CARD_LINES * self.cell.1
+        }
+    }
+
+    /// The top of the name on `entry`'s card whose top is `top`: level
+    /// with the disc's middle on a sleeping card.
+    fn card_name_top(&self, entry: &Entry, top: i32) -> i32 {
+        let below = if entry.asleep {
+            (self.scaled(DISC) - self.cell.1) / 2
+        } else {
+            0
+        };
+        top + self.scaled(CARD_PADDING) + below
+    }
+
     /// The open sidebar's cards and group headers that fit, each with its
     /// top and height in pixels, and the top of the `+ new workspace` row
     /// when it fits. A folded group shows its header and no cards.
@@ -842,7 +864,7 @@ impl Frame {
                 if entry.group != id {
                     continue;
                 }
-                let card = 2 * padding + CARD_LINES * row;
+                let card = self.card_height(entry);
                 if top + card > bottom {
                     return (rows, None);
                 }
@@ -973,11 +995,11 @@ impl Frame {
             return Some((at, popover.size.0 / cell_width - 2));
         }
         let (cards, _) = self.cards();
-        let &(_, top, _) = cards.iter().find(|&&(i, _, _)| self.entries[i].id == id)?;
+        let &(i, top, _) = cards.iter().find(|&&(i, _, _)| self.entries[i].id == id)?;
         let x = self.card_text();
         let (disc, _, _) = self.disc(top);
         let room = (disc - self.scaled(DISC_GAP) - x) / cell_width;
-        Some(((x, top + self.scaled(CARD_PADDING)), room))
+        Some(((x, self.card_name_top(&self.entries[i], top)), room))
     }
 
     /// What a click at pixel `x`, `y` does.
@@ -1377,6 +1399,7 @@ impl Frame {
         }
         let agent = entry.agents.first();
         let color = match agent {
+            _ if entry.asleep => None,
             Some(agent) if agent.dim.is_some() => Some(palette::get().muted),
             _ => stripe(entry.state()),
         };
@@ -1404,7 +1427,11 @@ impl Frame {
         } else {
             palette::get().faded_foreground
         };
-        scene.text_px(x, line(0), &name, Face::ChromeBold, name_color);
+        let name_top = self.card_name_top(entry, top);
+        scene.text_px(x, name_top, &name, Face::ChromeBold, name_color);
+        if entry.asleep {
+            return;
+        }
 
         let branch = (entry.branch.as_deref()).map(|branch| fit(branch, beside_disc / 2));
         let branch_width = branch.as_ref().map_or(0, |b| b.chars().count() + 2);
@@ -1428,11 +1455,7 @@ impl Frame {
         }
 
         let others = entry.agents.len().saturating_sub(1);
-        let (state, color) = if entry.asleep {
-            ("asleep".to_string(), palette::get().muted)
-        } else {
-            (state_text(agent, others), agent_tint(agent))
-        };
+        let (state, color) = (state_text(agent, others), agent_tint(agent));
         scene.text_px(x, line(2), &fit(&state, room), Face::Chrome, color);
 
         if let Some(message) = agent.and_then(Agent::card_message) {
@@ -1936,6 +1959,89 @@ mod tests {
         assert_eq!(frame.hit(left + 13, 506 + 4 + 13), Some(Hit::Show(0)));
     }
 
+    /// The open sidebar with foam, which needs attention, asleep, and
+    /// sail in a group of its own.
+    fn with_foam_asleep() -> Frame {
+        let mut entries = entries();
+        entries[2].asleep = true;
+        entries[3].group = Some(5);
+        let group = Group {
+            id: 5,
+            name: "tools".to_string(),
+            folded: false,
+        };
+        frame_of(true, entries, vec![group])
+    }
+
+    #[test]
+    fn a_sleeping_workspace_sorts_below_the_awake_ones_of_its_own_section() {
+        let mut entries = entries();
+        entries[2].asleep = true;
+        entries[3].asleep = true;
+        entries[3].group = Some(5);
+        entries[4].group = Some(5);
+        let group = Group {
+            id: 5,
+            name: "tools".to_string(),
+            folded: false,
+        };
+        let frame = frame_of(true, entries, vec![group]);
+        let names: Vec<_> = frame.entries.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["nail", "jack", "foam", "sufr", "sail"]);
+    }
+
+    #[test]
+    fn a_sleeping_card_is_one_row_beside_its_disc_and_the_rows_below_move_up() {
+        let frame = with_foam_asleep();
+        let (rows, new) = frame.sidebar_rows();
+        assert_eq!(
+            rows,
+            [
+                (Row::Card(0), 90, 98),
+                (Row::Card(1), 194, 98),
+                (Row::Card(2), 298, 98),
+                (Row::Card(3), 402, 4 + 26 + 4),
+                (Row::Header(0), 448, 26),
+                (Row::Card(4), 480, 98),
+            ]
+        );
+        assert_eq!(new, Some(590));
+        assert_eq!(frame.entries[3].name, "foam");
+
+        // the name sits level with the middle of the 26 px disc
+        assert_eq!(frame.workspace_name_at(2), Some(((17, 402 + 4 + 4), 24)));
+    }
+
+    #[test]
+    fn hits_on_and_below_a_sleeping_card_follow_its_height() {
+        let frame = with_foam_asleep();
+        let (left, top) = (6 + 244 - 6 - 26, 402 + 4);
+        assert_eq!(frame.hit(left + 13, top + 13), Some(Hit::Wake(2)));
+        assert_eq!(frame.hit(100, 402), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(100, 435), Some(Hit::Show(2)));
+        assert_eq!(frame.hit(100, 436), None);
+        assert_eq!(frame.hit(100, 448), Some(Hit::Group(5)));
+        assert_eq!(frame.hit(100, 480), Some(Hit::Show(3)));
+        assert_eq!(frame.hit(100, 590), Some(Hit::New));
+        assert_eq!(frame.section_at(441), None);
+        assert_eq!(frame.section_at(442), Some(5));
+    }
+
+    #[test]
+    fn a_sleeping_card_has_no_stripe() {
+        let mut scene = Scene::new(&decade_ui::Font::load(14.0));
+        with_foam_asleep().draw(&mut scene);
+        let stripes = (scene.shapes.iter())
+            .filter(|shape| match shape {
+                Shape::Rounded { at, size, .. } => at.x == 6 && size.width == 12,
+                _ => false,
+            })
+            .count();
+
+        // sail, sufr and nail keep theirs, and jack has no agent
+        assert_eq!(stripes, 3);
+    }
+
     fn with_jack_asleep(open: bool) -> Frame {
         let mut entries = entries();
         entries[0].asleep = true;
@@ -1964,13 +2070,15 @@ mod tests {
     }
 
     #[test]
-    fn a_sleeping_card_shows_the_sleep_mark_and_reads_asleep_and_its_tile_has_a_z() {
+    fn a_sleeping_card_shows_its_name_and_the_sleep_mark_and_its_tile_has_a_z() {
         let open = texts(&with_jack_asleep(true));
         assert!(open.contains(&SLEEP_MARK.to_string()));
-        assert!(open.contains(&"asleep".to_string()));
+        assert!(open.contains(&"jack".to_string()));
+        assert!(!open.contains(&"~/p/jack".to_string()));
         assert!(!open.contains(&"no agent".to_string()));
         let awake = texts(&frame(true));
         assert!(!awake.contains(&SLEEP_MARK.to_string()));
+        assert!(awake.contains(&"~/p/jack".to_string()));
         assert!(texts(&with_jack_asleep(false)).contains(&"z".to_string()));
         assert!(!texts(&frame(false)).contains(&"z".to_string()));
     }

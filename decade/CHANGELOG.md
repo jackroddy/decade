@@ -244,6 +244,10 @@ command line and what the tool writes.
 - An open popup follows its pane when the pane resizes. decade places
   the popup again inside the pane's new client area. Before, a menu could
   hang past the pane's edge or over a neighbour until it closed.
+- A sleeping workspace sorts below the awake ones of its own section of
+  the sidebar. Its card in the open sidebar is one row: the name and the
+  disc with the sleep mark, with no stripe. Clicking the disc still
+  wakes it. The closed sidebar's tiles are unchanged.
 
 ## [0.2.0] - 2026-11-12
 
