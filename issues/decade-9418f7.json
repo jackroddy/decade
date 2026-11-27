@@ -16,11 +16,20 @@
   "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T05:20:52.895446495Z",
-  "updated_at": "2026-11-26T05:20:52.917494753Z",
+  "updated_at": "2026-11-27T01:18:56.438517833Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "b3f5a5e2",
+      "at": "2026-11-27T01:18:56.438516973Z",
+      "author": "Jack Roddy/3cd5690e",
+      "text": "Jack put this in an unattended round without answering the open points, so the round builds it on these choices, which he can revise: a notice carries `text` for the agent, `about` naming the call it concerns (such as `record`), the `pane` the call was about, and an optional JSON `result`. decade drops a notice when no client claims the agent's pane, and logs that it did. Only a recording that ends without a `record.stop` call sends one in this first version.",
+      "commit": "9efedb9",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "e9d73b4",
