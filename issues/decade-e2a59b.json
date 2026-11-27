@@ -1,0 +1,31 @@
+{
+  "id": "decade-e2a59b",
+  "title": "scratch.resize can shrink a split neighbour's panes until they vanish",
+  "body": "`Layout::resize_to` in `decade-ui/src/panes.rs` (added in 4392ac1 for `scratch.resize`, decade-4c3de8) sets new ratios only on the splits along the path to the resized pane. A neighbour that is itself split keeps its inner ratios, so its panes shrink in proportion. `room` only guarantees that each neighbour as a whole stays at its minimum, and `arrange_node` gives any pane under `MIN_PANE` an empty rectangle, so it vanishes.\n\nA review probe on 100 columns with the layout `[0 | [1 | [2 | 3]]]` at 0.5 ratios ran `resize_to(0, (100, 40))` and got columns `[88, 6, 0, 0]`. Panes 2 and 3 disappeared. The docs and changelog say neighbours shrink \"down to their smallest\". A split neighbour with an uneven ratio, such as `[1|2]` at 0.2 shrunk to its 8-column minimum, loses pane 1 the same way.\n\n## Proposal\n\nWhen `resize_to` takes room from a split neighbour, it sets that neighbour's inner ratios so every pane inside stays at least `MIN_PANE`, or it limits `room` to what proportional shrinking keeps at that minimum. Add the probe's layout as a test.",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [
+    "decade-ui",
+    "decade"
+  ],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-27T01:41:37.098338557Z",
+  "updated_at": "2026-11-27T01:41:37.098338557Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4605830",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
