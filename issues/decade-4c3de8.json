@@ -13,7 +13,7 @@
   "lease_expires": "2026-11-27T01:40:51.007007471Z",
   "defer_until": null,
   "created_at": "2026-11-26T07:05:52.116811218Z",
-  "updated_at": "2026-11-27T01:25:51.007007471Z",
+  "updated_at": "2026-11-27T01:32:36.279351233Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
@@ -24,6 +24,14 @@
       "author": "Jack Roddy/3cd5690e",
       "text": "Jack decided the open points: decade moves the pane's split borders to get as close to the requested size as the layout allows, taking room from neighbouring panes, and the answer gives the size reached. The pane keeps that size until someone resizes it.",
       "commit": "9efedb9",
+      "branch": "dev"
+    },
+    {
+      "id": "b35c30c4",
+      "at": "2026-11-27T01:32:36.279350373Z",
+      "author": "Jack Roddy/3cd5690e",
+      "text": "Choices the round made that the issue and Jack's note left open, in 4392ac1:\n\n- The size is the pane's client area, the pixels a `screenshot` of the pane has. decade rounds each side to the nearest whole cell of its grid, since panes move in cells. A request of 640x400 at 9-pixel cells reaches 639x400.\n- Along each axis decade moves the border after the pane first, then the border before it. It takes room from the nearest pane first and then from panes further out, each down to `MIN_PANE`, 4 cells.\n- A shrinking pane gives its room to the pane after it, or to the one before it when nothing follows.\n- The dialog offers only Allow (y) and Deny (n).\n- decade refuses a tab with a zoomed pane, and a width or height of 0.",
+      "commit": "4392ac1",
       "branch": "dev"
     }
   ],
