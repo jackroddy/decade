@@ -3,20 +3,20 @@
   "title": "An agent asks to resize a scratch pane",
   "body": "decade's MCP tools let an agent start a program in a scratch pane (`scratch.open`), capture what it draws (`screenshot`) and record it (`record`). No tool sets the pane's size, so the pane is whatever size the layout gives it. A README recording needs a set size: a GIF about twice as wide in pixels as GitHub shows it, with the terminal inside at a set number of columns and rows. Today the person drags the pane by eye while the agent reads the size back.\n\n## Proposal\n\n- An MCP tool `scratch.resize` takes a scratch pane's name and a width and height in pixels.\n- decade asks the person every time. Unlike `screenshot` and `record`, no pane mode lets a resize through without asking.\n- The answer gives the size the pane ended up with, which can differ from the request when the layout cannot fit it.\n\n## Open\n\n- How the layout makes room: by shrinking the neighbouring panes, by floating the pane, or by refusing a size that does not fit.\n- Whether the pane goes back to its old size when its program exits, or only when an agent asks.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/3cd5690e",
-  "lease_expires": "2026-11-27T01:40:51.007007471Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T07:05:52.116811218Z",
-  "updated_at": "2026-11-27T01:32:36.279351233Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-27T01:32:36.293282027Z",
+  "closed_at": "2026-11-27T01:32:36.293282027Z",
+  "close_reason": "Landed in 4392ac1: the MCP tool scratch.resize asks every time, moves the pane's borders with Layout::resize_to and answers with the size reached. The note above lists the choices the issue left open.",
+  "resolution": "done",
   "notes": [
     {
       "id": "eb034b4f",
@@ -40,6 +40,9 @@
       "commit": "10d8d65",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "4392ac1",
+      "branch": "dev"
+    }
   }
 }
