@@ -14,17 +14,23 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 - `Channel::record` sends a `record` message carrying a `Record`: the
   pane, the absolute path of the file decade writes, the optional pane
   of the agent asking, and the optional `Format`, frame rate, duration,
-  width, quality, pointer, pointer scale and loop settings. decade's answer arrives
-  once the file is written, as `Message::Record` with a `Recorded`, or
+  width, quality, pointer, pointer scale and loop settings. decade's
+  answer arrives once the file is written, as `Message::Record` with a `Recorded`, or
   as `Message::Error`. `Recorded` gives the file, the frames written and
   dropped, the seconds recorded and what ended the recording.
 - `Channel::record_stop` sends a `record.stop` message carrying a
   `RecordStop`, which ends the recording of a pane.
+- `Message::Notify` carries a `Notify` from decade: a notice for the
+  agent in the client's pane about a call that ended after it returned.
+  `Notify` holds the `text` for the agent, the call it is `about`, the
+  `pane` the call was about, and the call's `result` as JSON when it
+  has one. decade sends one when a recording ends without a
+  `record.stop`.
 
 ### Changed
 
-- `Message` and `Reply` each have a `Record` variant. A `match` over
-  either without a wildcard arm no longer compiles.
+- `Message` and `Reply` each have `Record` and `Notify` variants. A
+  `match` over either without a wildcard arm no longer compiles.
 
 ## [0.2.0] - 2026-11-26
 

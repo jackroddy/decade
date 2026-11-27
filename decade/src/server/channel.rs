@@ -12,7 +12,7 @@ use crate::server::agents::Agents;
 
 /// The keys a pane verb may not take: decade's own verbs and the
 /// names decade's replies and forwarded messages use.
-const RESERVED: [&str; 11] = [
+const RESERVED: [&str; 12] = [
     "hello",
     "agent",
     "ended",
@@ -23,6 +23,7 @@ const RESERVED: [&str; 11] = [
     "record.stop",
     "welcome",
     "error",
+    "notify",
     "from",
 ];
 
@@ -766,6 +767,7 @@ mod tests {
             "record",
             "record.stop",
             "error",
+            "notify",
             "from",
         ] {
             let line = format!(r#"{{"to": "code", "{verb}": {{"pane": "chat"}}}}"#);

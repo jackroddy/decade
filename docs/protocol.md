@@ -127,7 +127,7 @@ exception.
 
 A pane verb may not be one of these names, which decade keeps for its own
 messages: `hello`, `agent`, `ended`, `panes`, `restore`, `screenshot`,
-`record`, `record.stop`, `welcome`, `error` and `from`.
+`record`, `record.stop`, `welcome`, `error`, `notify` and `from`.
 decade answers a message to a pane that uses one with an error and
 does not forward it.
 
@@ -443,6 +443,37 @@ Neither message gets a reply. decade refuses both from a client whose
 hello named no agent. decade also refuses `agent` from a client that
 claimed no pane.
 
+## Notices
+
+Some calls finish after the call that started them has returned. When
+one ends without the agent asking for its result, decade sends `notify`
+to the client that claims the pane of the agent that made the call:
+
+```json
+{"notify": {"text": "the recording of pane code ended: recorded 150 frames over 10.0 s to /work/demo.gif, 0 dropped; it ran for its duration", "about": "record", "pane": "code", "result": {"file": "/work/demo.gif", "frames": 150, "dropped": 0, "seconds": 10.0, "ended": "it ran for its duration"}}}
+```
+
+| field | value |
+|---|---|
+| `text` | a line for the agent |
+| `about` | the call the notice is about, such as `record` |
+| `pane` | the pane the call was about, by its name when the call started |
+| `result` | the call's result, in the shape of its answer; left out when the call failed, and `text` then gives the reason |
+
+The agent's pane is the one in the MCP address's `&pane=`, or in the
+socket message's `for`. decade sends no notice for a call that names no
+agent's pane. When no client claims the pane, decade drops the notice
+and writes a line saying so to its log. What the client does with a
+notice is its own business. A client that runs an agent may pass the
+text on to it.
+
+`record` is the one call that sends a notice. decade sends it when the
+recording ends without a `record.stop`: at its duration, at its limit,
+or when its pane, tab or workspace goes away. The notice gives the
+finished result that `record.stop` would have given. A recording asked
+for over the socket with `for` also sends one, besides the `record`
+answer to the client that asked.
+
 ## Errors
 
 Anything decade cannot act on comes back on the same connection:
@@ -547,7 +578,9 @@ while the recording runs, and says so while ffmpeg is still writing the
 file. Once ffmpeg has written it, both tools answer with that finished result, or with its error. decade
 keeps each pane's last finished result until the pane's next recording
 starts. A `record.status` for a pane with no recording fails with
-`pane <pane> has not been recorded`.
+`pane <pane> has not been recorded`. A recording that ends without a
+`record.stop` sends a `notify`, described under Notices, to the client
+in the pane of the agent that asked for it.
 
 The person may mark any number of panes in a workspace as scratch panes,
 from the Ctrl bar. Marking one leaves the others marked.

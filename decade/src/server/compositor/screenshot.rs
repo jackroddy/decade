@@ -50,8 +50,12 @@ pub(super) enum Asker {
     },
 
     /// The MCP tool `record` or the socket's `record`, which records the
-    /// pane by `plan`.
-    Record { to: Requester, plan: Plan },
+    /// pane by `plan` for the agent in pane `caller`.
+    Record {
+        to: Requester,
+        plan: Plan,
+        caller: Option<String>,
+    },
 
     /// The MCP tool `scratch.input`.
     Input(Played),
@@ -142,7 +146,9 @@ impl State {
     /// Capture or start recording pane `pane`, which the person allowed.
     fn allowed(&mut self, workspace: usize, pane: String, asker: Asker) {
         match asker {
-            Asker::Record { to, plan } => self.start_recording(workspace, pane, to, plan),
+            Asker::Record { to, plan, caller } => {
+                self.start_recording(workspace, pane, to, plan, caller)
+            }
             Asker::Input(played) => self.drive(workspace, &pane, played),
             Asker::Resize(resize) => self.resize_scratch(workspace, &pane, resize),
             asker => self.capture_fresh(workspace, pane, asker),

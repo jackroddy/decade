@@ -28,6 +28,10 @@ pub enum Message {
 
     /// The answer to `record`, once the file is written.
     Record(Recorded),
+
+    /// A notice for the agent in the client's pane about a call that
+    /// ended after it returned.
+    Notify(Notify),
     Show {
         from: String,
         show: Show,
@@ -450,6 +454,25 @@ pub struct Recorded {
     pub ended: String,
 }
 
+/// The payload of `notify`: a notice for the agent in the pane the client
+/// claims, about a call that ended after it returned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Notify {
+    /// A line for the agent.
+    pub text: String,
+
+    /// The call the notice is about, such as `record`.
+    pub about: String,
+
+    /// The pane the call was about.
+    pub pane: String,
+
+    /// The call's result, in the shape its answer has, such as a
+    /// `Recorded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+}
+
 /// A line decade writes to a client, other than a forwarded verb.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -459,6 +482,7 @@ pub enum Reply {
     Panes(Vec<Pane>),
     Screenshot(Captured),
     Record(Recorded),
+    Notify(Notify),
 }
 
 #[derive(Serialize)]
@@ -503,6 +527,10 @@ pub fn parse(line: &str) -> Result<Message, String> {
     if let Some(recorded) = object.remove("record") {
         let recorded = serde_json::from_value(recorded).map_err(|e| format!("bad record: {e}"))?;
         return Ok(Message::Record(recorded));
+    }
+    if let Some(notify) = object.remove("notify") {
+        let notify = serde_json::from_value(notify).map_err(|e| format!("bad notify: {e}"))?;
+        return Ok(Message::Notify(notify));
     }
     let from = object
         .remove("from")
@@ -1054,6 +1082,74 @@ mod tests {
         );
         assert_eq!(line(2), json!({"record.stop": {"pane": "code"}}));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_notice_from_decade_arrives_with_its_text_call_pane_and_result() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixListener;
+
+        let dir =
+            std::env::temp_dir().join(format!("decade-channel-notify-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("decade.sock");
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut hello = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut hello)
+                .unwrap();
+            let mut writer = &stream;
+            writer
+                .write_all(b"{\"welcome\":{\"pane\":\"chat\",\"version\":1}}\n")
+                .unwrap();
+            writer
+                .write_all(
+                    b"{\"notify\":{\"text\":\"the recording of pane code ended\",\"about\":\"record\",\"pane\":\"code\",\"result\":{\"file\":\"/work/demo.gif\",\"frames\":30,\"dropped\":0,\"seconds\":2.0,\"ended\":\"it ran for its duration\"}}}\n",
+                )
+                .unwrap();
+            writer
+                .write_all(b"{\"notify\":{\"text\":\"it failed\",\"about\":\"record\",\"pane\":\"code\"}}\n")
+                .unwrap();
+        });
+        let (_channel, rx) = Channel::connect(&path, "coax", &[], &[], Some("chat"), None).unwrap();
+        assert!(matches!(rx.recv().unwrap(), Message::Welcome { .. }));
+        let Message::Notify(notify) = rx.recv().unwrap() else {
+            panic!("a notice");
+        };
+        assert_eq!(
+            (
+                notify.text.as_str(),
+                notify.about.as_str(),
+                notify.pane.as_str()
+            ),
+            ("the recording of pane code ended", "record", "code")
+        );
+        let recorded: Recorded = serde_json::from_value(notify.result.unwrap()).unwrap();
+        assert_eq!(
+            (recorded.frames, recorded.ended.as_str()),
+            (30, "it ran for its duration")
+        );
+        let Message::Notify(failed) = rx.recv().unwrap() else {
+            panic!("a notice without a result");
+        };
+        assert_eq!(failed.result, None);
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_notify_reply_parses_back_into_the_notice() {
+        let notify = Notify {
+            text: "the recording of pane code ended".into(),
+            about: "record".into(),
+            pane: "code".into(),
+            result: Some(json!({"frames": 3})),
+        };
+        let line = serde_json::to_string(&Reply::Notify(notify.clone())).unwrap();
+        assert_eq!(parse(&line).unwrap(), Message::Notify(notify));
     }
 
     #[test]

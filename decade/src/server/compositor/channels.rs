@@ -3,7 +3,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Command, ExitStatus};
 use std::time::{Duration, Instant};
 
-use decade_channel::Reply;
+use decade_channel::{Notify, Reply};
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -152,6 +152,22 @@ impl State {
                 let _ = request.reply.send(answer.map(mcp::Answer::Text));
             }
         }
+    }
+
+    /// Send `notify` to the client that claims pane `caller` of workspace
+    /// `workspace`, or log that no client does and drop it.
+    pub(super) fn notify(&mut self, workspace: u32, caller: &str, notify: Notify) {
+        let claimant = (self.workspace_index(workspace))
+            .and_then(|index| self.workspaces[index].claimant(caller));
+        let Some(client) = claimant else {
+            eprintln!(
+                "decade: no client claims pane {caller}, so decade dropped the notice about {} of pane {}",
+                notify.about, notify.pane
+            );
+            return;
+        };
+        let line = serde_json::to_string(&Reply::Notify(notify)).unwrap();
+        self.channel_send(client, &line);
     }
 
     fn mcp_call(

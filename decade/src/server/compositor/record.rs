@@ -6,7 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
-use decade_channel::{Error, Format, Record, Recorded, Reply};
+use decade_channel::{Error, Format, Notify, Record, Recorded, Reply};
 use decade_ui::Recording as Marks;
 use serde_json::Value;
 use smithay::reexports::calloop::RegistrationToken;
@@ -257,6 +257,13 @@ pub(super) struct Recording {
 
     /// The MCP `record.stop` calls waiting for the file.
     stops: Vec<mcp::Reply>,
+
+    /// The pane of the agent that asked, whose client gets a notice when
+    /// the recording ends without a `record.stop`.
+    caller: Option<String>,
+
+    /// Whether a `record.stop` named the recording.
+    stopped: bool,
     started: Instant,
 
     /// The size of every frame, the pane's client area when it started.
@@ -314,9 +321,17 @@ impl State {
         to: Requester,
     ) {
         match self.record_checks(workspace, record) {
-            Ok((name, plan, true)) => self.start_recording(workspace, name, to, plan),
+            Ok((name, plan, true)) => {
+                let caller = caller.map(str::to_string);
+                self.start_recording(workspace, name, to, plan, caller)
+            }
             Ok((name, plan, false)) => {
-                self.ask(workspace, name, caller, Asker::Record { to, plan })
+                let asker = Asker::Record {
+                    to,
+                    plan,
+                    caller: caller.map(str::to_string),
+                };
+                self.ask(workspace, name, caller, asker)
             }
             Err(reason) => self.answer_record(to, Err(reason)),
         }
@@ -390,6 +405,7 @@ impl State {
         pane: String,
         to: Requester,
         plan: Plan,
+        caller: Option<String>,
     ) {
         let started = (self.check_free(workspace, &pane, &plan))
             .and_then(|()| self.client_px(workspace, &pane))
@@ -440,6 +456,8 @@ impl State {
             plan,
             client,
             stops: Vec::new(),
+            caller,
+            stopped: false,
             started: now,
             size,
             frames: Some(frames),
@@ -629,6 +647,7 @@ impl State {
             };
         };
         self.recordings[index].stops.extend(waiting);
+        self.recordings[index].stopped = true;
         if self.recordings[index].running() {
             self.stop_recording(index, "a stop call ended it".to_string());
         }
@@ -707,6 +726,10 @@ impl State {
         }
         for stop in recording.stops {
             let _ = stop.send(finished_text(&recording.pane, result.clone()));
+        }
+        if let Some(caller) = recording.caller.filter(|_| !recording.stopped) {
+            let notify = notice(&recording.pane, result.clone());
+            self.notify(recording.workspace, &caller, notify);
         }
         self.finished.push(Finished {
             workspace: recording.workspace,
@@ -800,6 +823,24 @@ fn finished_text(pane: &str, result: Result<Recorded, String>) -> Result<mcp::An
     match result {
         Ok(recorded) => Ok(mcp::Answer::Text(summary(&recorded))),
         Err(reason) => Err(format!("the recording of pane {pane} failed: {reason}")),
+    }
+}
+
+/// The notice to the asking agent's pane that the recording of pane
+/// `pane` ended with `result`.
+fn notice(pane: &str, result: Result<Recorded, String>) -> Notify {
+    let text = match finished_text(pane, result.clone()) {
+        Ok(mcp::Answer::Text(text)) => format!("the recording of pane {pane} ended: {text}"),
+        Ok(_) => unreachable!("a finished recording answers with text"),
+        Err(reason) => reason,
+    };
+    Notify {
+        text,
+        about: "record".to_string(),
+        pane: pane.to_string(),
+        result: result
+            .ok()
+            .map(|recorded| serde_json::to_value(recorded).unwrap()),
     }
 }
 
@@ -1251,6 +1292,33 @@ mod tests {
             Err("ffmpeg failed".to_string()),
         );
         assert_eq!(failed.unwrap_err(), "ffmpeg failed");
+    }
+
+    #[test]
+    fn a_notice_about_a_recording_gives_its_summary_and_result_or_the_failure() {
+        let recorded = Recorded {
+            file: "/work/demo.gif".to_string(),
+            frames: 30,
+            dropped: 0,
+            seconds: 2.0,
+            ended: "it ran for its duration".to_string(),
+        };
+        let done = notice("code", Ok(recorded.clone()));
+        assert_eq!(
+            done.text,
+            "the recording of pane code ended: recorded 30 frames over 2.0 s to /work/demo.gif, 0 dropped; it ran for its duration"
+        );
+        assert_eq!(
+            (done.about.as_str(), done.pane.as_str()),
+            ("record", "code")
+        );
+        assert_eq!(done.result, Some(serde_json::to_value(&recorded).unwrap()));
+        let failed = notice("code", Err("ffmpeg failed".to_string()));
+        assert_eq!(
+            failed.text,
+            "the recording of pane code failed: ffmpeg failed"
+        );
+        assert_eq!(failed.result, None);
     }
 
     #[test]

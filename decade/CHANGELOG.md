@@ -84,6 +84,15 @@ command line and what the tool writes.
   the pane's borders, taking room from the panes beside it, nearest
   first, down to the smallest pane. The size moves in whole cells. The
   pane keeps the size it reached, and the call answers with it.
+- decade sends the socket message `notify` to the client that claims an
+  agent's pane when a recording the agent asked for ends without a
+  `record.stop`. That covers a recording that runs to its duration or
+  limit, and one whose pane, tab or workspace goes away. The agent's
+  pane comes from the MCP address's `&pane=` or the socket message's
+  `for`. A notice carries `text` for the agent, `about` naming the call,
+  the `pane` the call was about, and the call's `result` when it
+  succeeded. decade drops a notice that no client claims, and logs that
+  it did. A pane verb may no longer be named `notify`.
 - `record` takes `pointer_scale` on MCP and the socket, and the command
   line takes `--pointer-scale N`. It sets how many video pixels each
   pixel of the 17-pixel arrow takes across and down, from 1 to 8. decade

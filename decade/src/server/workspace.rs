@@ -707,6 +707,12 @@ impl Workspace {
             .send(AGENT, to, verb, payload, &pane_names(&self.tabs))
     }
 
+    /// The client that claims the pane `pane` names, now or formerly.
+    pub fn claimant(&self, pane: &str) -> Option<usize> {
+        let pane = pane_names(&self.tabs).resolve(pane)?;
+        self.router.occupant(pane).map(|(client, _)| client)
+    }
+
     /// The pane an agent's show, highlight or clear of `kind` goes to.
     pub fn showing(&self, kind: &str, pane: Option<&str>) -> Result<String, String> {
         self.router.showing(kind, pane, &pane_names(&self.tabs))
