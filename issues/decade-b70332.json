@@ -3,20 +3,20 @@
   "title": "A recording can draw the pointer larger",
   "body": "The pointer that `record` draws into its frames is `ARROW` in `decade/src/server/compositor/record.rs`: 17 rows of pixels, each drawn `scale` pixels square, where `scale` is the output's scale factor rounded. At scale 1 it is 17 pixels tall. In a 1749 × 1886 recording of a scratch pane, which GitHub shows at half size in a README, that is about 8 pixels on the page, too small to follow. coax's README recording ran into it on the first take driven by `scratch_input`.\n\n## Proposal\n\n- `record` takes an optional `pointer_scale`, the number of frame pixels each `ARROW` pixel takes, defaulting to the output's scale as now.\n\n## Open\n\n- Whether the arrow should be drawn from a larger source than 17 rows when scaled, so its edges stay smooth instead of blocky.",
   "type": "feature",
-  "status": "in_progress",
+  "status": "closed",
   "priority": 2,
   "labels": [],
   "parent": null,
   "blocked_by": [],
   "related": [],
   "assignee": "Jack Roddy/3cd5690e",
-  "lease_expires": "2026-11-27T01:37:47.372031886Z",
+  "lease_expires": null,
   "defer_until": null,
   "created_at": "2026-11-26T11:08:15.361829447Z",
-  "updated_at": "2026-11-27T01:25:47.906859631Z",
-  "closed_at": null,
-  "close_reason": null,
-  "resolution": null,
+  "updated_at": "2026-11-27T01:25:47.918628125Z",
+  "closed_at": "2026-11-27T01:25:47.918628125Z",
+  "close_reason": "Landed in faa48a8: record takes pointer_scale on MCP and the socket and --pointer-scale on the command line. The note above records the nearest-neighbour choice.",
+  "resolution": "done",
   "notes": [
     {
       "id": "e48c34b4",
@@ -32,6 +32,9 @@
       "commit": "9efedb9",
       "branch": "dev"
     },
-    "closed": null
+    "closed": {
+      "commit": "faa48a8",
+      "branch": "dev"
+    }
   }
 }
