@@ -1,0 +1,28 @@
+{
+  "id": "decade-5adb32",
+  "title": "A pane reads keycodes through a default US keymap instead of the host's",
+  "body": "decade's viewer is a Wayland client of the host compositor. Its `wl_keyboard` handler in `viewer.rs` has arms for `Enter`, `Leave`, `RepeatInfo`, `Modifiers` and `Key`, and none for `Keymap`, so it drops the keymap the host sends. The viewer forwards raw keycodes to the server in `ViewerMessage::Key`. The server's seat builds its own keyboard in `server/compositor.rs`:\n\n```rust\nseat.add_keyboard(Default::default(), repeat.delay, repeat.rate)\n```\n\n`XkbConfig::default()` leaves rules, model, layout and variant empty and options `None`. libxkbcommon fills the gaps from `XKB_DEFAULT_*` in decade's environment, and otherwise compiles a plain US keymap. Clients in a pane read every keycode through that keymap.\n\nSo any remapping the host does in XKB never reaches a pane: a non-US layout, a variant such as Dvorak, a compose key, `caps:escape`, `ctrl:swapcaps`. Remaps below XKB still work, because they change the keycode itself: a udev hwdb entry, `hid_apple` options, keyd. This showed up with Hyprland's `kb_options = \"caps:escape\"`. Caps Lock sent Escape in every other window and Caps Lock in a decade pane.\n\n## Proposal\n\nThe viewer handles `wl_keyboard::Event::Keymap`. It maps the fd, reads the keymap text, and sends the text to the server in a new `ViewerMessage` variant. The server loads it with `KeyboardHandle::set_keymap_from_string`, which smithay 0.7 has. The host can send `Keymap` again when the layout changes, and the server applies each one it receives.\n\n## Rejected\n\n- Setting `XKB_DEFAULT_LAYOUT`, `XKB_DEFAULT_OPTIONS` and the rest in decade's environment. Someone has to keep them in step with the host config by hand. They also say nothing about a viewer on another machine with a different keyboard.\n- A udev hwdb remap. It works today because it acts below XKB, but it covers one key on one keyboard on one machine. It is the workaround in use on an Apple M3 Pro.\n\n## Cost\n\nThe new variant changes the wire protocol. `wire::VERSION` is 1 today, and a viewer and server of different builds need a rule for one that does not send or expect the keymap.\n\n## Open\n\n- With two viewers attached, whose keymap does the server use? The last one received is the simplest answer, but the two keyboards may differ.\n- If the server cannot compile a keymap, does it keep the one it has and report the error, or fall back to the default?",
+  "type": "bug",
+  "status": "open",
+  "priority": 2,
+  "labels": [],
+  "parent": null,
+  "blocked_by": [],
+  "related": [],
+  "assignee": null,
+  "lease_expires": null,
+  "defer_until": null,
+  "created_at": "2026-11-27T03:52:24.624134856Z",
+  "updated_at": "2026-11-27T03:52:24.624134856Z",
+  "closed_at": null,
+  "close_reason": null,
+  "resolution": null,
+  "notes": [],
+  "stamps": {
+    "created": {
+      "commit": "4605830",
+      "branch": "dev"
+    },
+    "closed": null
+  }
+}
