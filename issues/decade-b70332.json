@@ -13,11 +13,20 @@
   "lease_expires": "2026-11-27T01:37:47.372031886Z",
   "defer_until": null,
   "created_at": "2026-11-26T11:08:15.361829447Z",
-  "updated_at": "2026-11-27T01:22:47.372031886Z",
+  "updated_at": "2026-11-27T01:25:47.906859631Z",
   "closed_at": null,
   "close_reason": null,
   "resolution": null,
-  "notes": [],
+  "notes": [
+    {
+      "id": "e48c34b4",
+      "at": "2026-11-27T01:25:47.906858901Z",
+      "author": "Jack Roddy/3cd5690e",
+      "text": "The open point is settled with the simple choice. A scaled arrow is `ARROW` with each pixel repeated in a square of `pointer_scale` frame pixels, nearest-neighbour, so its edges stay blocky. No larger source was drawn. `pointer_scale` runs from 1 to 8, and decade refuses it with `pointer` false. Jack can revisit a smoother arrow if the blocky one looks wrong in a README.",
+      "commit": "faa48a8",
+      "branch": "dev"
+    }
+  ],
   "stamps": {
     "created": {
       "commit": "9efedb9",
