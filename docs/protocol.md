@@ -243,7 +243,7 @@ decade writes `file` itself, so it must be an absolute path. The other
 fields are optional:
 
 ```json
-{"record": {"pane": "code", "file": "/work/demo.gif", "for": "chat", "format": "gif", "fps": 15, "duration": 10, "width": 800, "pointer": true, "loop": true}}
+{"record": {"pane": "code", "file": "/work/demo.gif", "for": "chat", "format": "gif", "fps": 15, "duration": 10, "width": 800, "pointer": true, "pointer_scale": 2, "loop": true}}
 ```
 
 | field | value |
@@ -254,6 +254,7 @@ fields are optional:
 | `width` | the video's width in pixels, 2 to 7680, the height following the pane's aspect ratio; by default the pane's width |
 | `quality` | an mp4's crf for ffmpeg, 0 to 51, lower for better quality; 23 by default |
 | `pointer` | whether decade draws the pointer into the frames while its tip is over the pane's client area; true by default |
+| `pointer_scale` | how many frame pixels each pixel of the 17-pixel arrow takes across and down, 1 to 8; by default the display's scale, rounded |
 | `loop` | whether a GIF plays in a loop; true by default |
 
 An mp4 runs for at most 5 minutes and a GIF for at most 1 minute.
@@ -322,7 +323,8 @@ decade answers `record` with an error in these cases:
 | the extension is neither `.mp4` nor `.gif` | `<file> does not end in .mp4 or .gif` |
 | `format` and the extension disagree | `<file> does not end in .<format>, as format <format> needs` |
 | `quality` for a GIF, or `loop` for an mp4 | `quality is for an mp4, not a gif`, `loop is for a gif, not an mp4` |
-| a value out of range | `fps is 1 to 60, not <fps>`, `duration is a number of seconds above 0, not <duration>`, `width is 2 to 7680 pixels, not <width>`, `quality is 0 to 51, not <quality>` |
+| `pointer_scale` with `pointer` false | `pointer_scale is for a drawn pointer, not pointer false` |
+| a value out of range | `fps is 1 to 60, not <fps>`, `duration is a number of seconds above 0, not <duration>`, `width is 2 to 7680 pixels, not <width>`, `quality is 0 to 51, not <quality>`, `pointer_scale is 1 to 8, not <pointer_scale>` |
 | no pane answers to `pane` | `no pane named <pane>` |
 | the pane is in a tab that is not shown | `pane <pane> is in tab <n>, which is not shown` |
 | the pane is off the screen | `pane <pane> has no room to draw` |

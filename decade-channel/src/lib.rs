@@ -416,6 +416,10 @@ pub struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pointer: Option<bool>,
 
+    /// The frame pixels each pixel of the pointer takes across and down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer_scale: Option<u32>,
+
     /// Whether a GIF plays in a loop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#loop: Option<bool>,

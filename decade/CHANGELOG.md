@@ -78,6 +78,11 @@ command line and what the tool writes.
   it. `record.status` gives the time and frames so far, and after the
   end the same finished result. decade keeps each pane's last result
   until its next recording starts.
+- `record` takes `pointer_scale` on MCP and the socket, and the command
+  line takes `--pointer-scale N`. It sets how many video pixels each
+  pixel of the 17-pixel arrow takes across and down, from 1 to 8. decade
+  repeats each arrow pixel in a square, so a larger arrow keeps hard
+  edges. Without it, the arrow follows the display's scale as before.
 - `decade screenshot PANE FILE` asks decade for a PNG of pane PANE and
   writes it to FILE, relative to the directory the command runs in. It
   connects to the socket in `DECADE_SOCKET` and claims no pane. When

@@ -35,6 +35,7 @@ const QUALITY: u32 = 23;
 /// The highest crf libx264 takes.
 const WORST_QUALITY: u32 = 51;
 const MAX_WIDTH: u32 = 7680;
+const MAX_POINTER_SCALE: u32 = 8;
 
 /// ffmpeg's memory for a GIF besides its frames, and the bytes it holds
 /// for every two pixels of each frame.
@@ -113,6 +114,10 @@ pub(super) struct Plan {
     pub quality: u32,
     pub pointer: bool,
 
+    /// The frame pixels each pixel of `ARROW` takes across and down, or
+    /// `None` for the output's scale.
+    pub pointer_scale: Option<u32>,
+
     /// Whether a GIF plays in a loop.
     pub forever: bool,
 }
@@ -153,6 +158,16 @@ impl Plan {
         {
             return Err(format!("width is 2 to {MAX_WIDTH} pixels, not {width}"));
         }
+        if let Some(scale) = record.pointer_scale {
+            if record.pointer == Some(false) {
+                return Err("pointer_scale is for a drawn pointer, not pointer false".to_string());
+            }
+            if !(1..=MAX_POINTER_SCALE).contains(&scale) {
+                return Err(format!(
+                    "pointer_scale is 1 to {MAX_POINTER_SCALE}, not {scale}"
+                ));
+            }
+        }
         let quality = record.quality.unwrap_or(QUALITY);
         if quality > WORST_QUALITY {
             return Err(format!("quality is 0 to {WORST_QUALITY}, not {quality}"));
@@ -165,6 +180,7 @@ impl Plan {
             width: record.width,
             quality,
             pointer: record.pointer.unwrap_or(true),
+            pointer_scale: record.pointer_scale,
             forever: record.r#loop.unwrap_or(true),
         })
     }
@@ -531,7 +547,7 @@ impl State {
     fn record_frame(&mut self, index: usize) -> Result<Vec<u8>, String> {
         let recording = &self.recordings[index];
         let (tab, pane_id, size) = (recording.tab, recording.pane_id, recording.size);
-        let pointer = recording.plan.pointer;
+        let (pointer, pointer_scale) = (recording.plan.pointer, recording.plan.pointer_scale);
         let workspace = (self.workspace_index(recording.workspace))
             .ok_or_else(|| format!("workspace {} is closed", recording.workspace))?;
         let rect = self
@@ -546,7 +562,8 @@ impl State {
         if pointer && shows {
             let at = self.pointer.to_physical(self.scale).to_i32_round::<i32>();
             let tip = (at.x - rect.loc.x, at.y - rect.loc.y);
-            let scale = self.scale.round().max(1.0) as usize;
+            let scale =
+                pointer_scale.map_or(self.scale.round().max(1.0) as usize, |scale| scale as usize);
             draw_pointer(&mut frame, (width, height), tip, scale);
         }
         if (rect.size.w, rect.size.h) != size {
@@ -1022,6 +1039,7 @@ mod tests {
                 width: None,
                 quality: 23,
                 pointer: true,
+                pointer_scale: None,
                 forever: true,
             }
         );
@@ -1084,6 +1102,21 @@ mod tests {
                 ..file("/work/demo.mp4")
             }),
             "quality is 0 to 51, not 52"
+        );
+        assert_eq!(
+            refused(Record {
+                pointer_scale: Some(9),
+                ..file("/work/demo.mp4")
+            }),
+            "pointer_scale is 1 to 8, not 9"
+        );
+        assert_eq!(
+            refused(Record {
+                pointer: Some(false),
+                pointer_scale: Some(3),
+                ..file("/work/demo.mp4")
+            }),
+            "pointer_scale is for a drawn pointer, not pointer false"
         );
     }
 
@@ -1270,5 +1303,27 @@ mod tests {
             draw_pointer(&mut frame, (4, 4), tip, 2);
             assert!(frame.iter().all(|&byte| byte == 9), "tip {tip:?}");
         }
+    }
+
+    #[test]
+    fn a_pointer_at_scale_three_repeats_each_arrow_pixel_in_a_three_pixel_square() {
+        let side = 3 * ARROW.len();
+        let pixel = |frame: &[u8], x: usize, y: usize| frame[(y * side + x) * 4];
+        let mut frame = vec![9; side * side * 4];
+        draw_pointer(&mut frame, (side, side), (0, 0), 3);
+        for (row, line) in ARROW.iter().enumerate() {
+            for (column, mark) in line.chars().enumerate() {
+                let want = match mark {
+                    '#' => 0,
+                    '.' => 255,
+                    _ => 9,
+                };
+                for (dx, dy) in [(0, 0), (2, 0), (0, 2), (2, 2)] {
+                    let got = pixel(&frame, column * 3 + dx, row * 3 + dy);
+                    assert_eq!(got, want, "arrow ({column}, {row}) at +({dx}, {dy})");
+                }
+            }
+        }
+        assert_eq!(pixel(&frame, 3, 0), 9);
     }
 }

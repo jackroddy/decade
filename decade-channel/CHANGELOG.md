@@ -14,7 +14,7 @@ cargo's reading of it below 1.0: the **minor** is the breaking axis, so 0.2 to
 - `Channel::record` sends a `record` message carrying a `Record`: the
   pane, the absolute path of the file decade writes, the optional pane
   of the agent asking, and the optional `Format`, frame rate, duration,
-  width, quality, pointer and loop settings. decade's answer arrives
+  width, quality, pointer, pointer scale and loop settings. decade's answer arrives
   once the file is written, as `Message::Record` with a `Recorded`, or
   as `Message::Error`. `Recorded` gives the file, the frames written and
   dropped, the seconds recorded and what ended the recording.

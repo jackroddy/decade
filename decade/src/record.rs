@@ -74,6 +74,7 @@ fn request(pane: &str, flags: &[String]) -> Result<Record, String> {
             "--width" => record.width = Some(number(flag, &value()?)?),
             "--quality" => record.quality = Some(number(flag, &value()?)?),
             "--no-pointer" => record.pointer = Some(false),
+            "--pointer-scale" => record.pointer_scale = Some(number(flag, &value()?)?),
             "--once" => record.r#loop = Some(false),
             other => return Err(format!("no flag {other}")),
         }
@@ -151,6 +152,12 @@ mod tests {
         assert_eq!(
             request("code", &flags("--quality 18")).unwrap().quality,
             Some(18)
+        );
+        assert_eq!(
+            request("code", &flags("--pointer-scale 3"))
+                .unwrap()
+                .pointer_scale,
+            Some(3)
         );
         assert_eq!(request("code", &[]).unwrap().fps, None);
     }

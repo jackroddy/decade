@@ -279,6 +279,7 @@ fn tools() -> Vec<Tool> {
                     "width": {"type": "integer", "description": "the width in pixels, the height following the pane's aspect ratio; by default the pane's width"},
                     "quality": {"type": "integer", "description": "mp4 only: ffmpeg's crf, 0 to 51, lower for better quality; 23 by default"},
                     "pointer": {"type": "boolean", "description": "draw the pointer while it is over the pane; true by default"},
+                    "pointer_scale": {"type": "integer", "description": "the video pixels each pixel of the 17-pixel-tall arrow takes across and down, 1 to 8, for a pointer that stays visible in a video shown smaller; by default the display's scale"},
                     "loop": {"type": "boolean", "description": "gif only: play in a loop; true by default"}
                 },
                 "required": ["pane", "file"]
@@ -908,6 +909,14 @@ mod tests {
             ("code", "/work/a.mp4")
         );
         assert_eq!((record.duration, record.quality), (Some(4.5), Some(18)));
+        assert_eq!(record.pointer_scale, None);
+        let Ok(Call::Record(scaled)) = call_for(
+            "record",
+            schema(json!({"pane": "code", "file": "/work/a.mp4", "pointer_scale": 3})),
+        ) else {
+            panic!("a record call with a pointer scale");
+        };
+        assert_eq!(scaled.pointer_scale, Some(3));
         assert_eq!(
             (record.fps, record.format, record.r#loop),
             (None, None, None)

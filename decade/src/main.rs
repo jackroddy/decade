@@ -28,7 +28,8 @@ const USAGE: &str = "usage: decade [--class <app id>]
        decade script FILE
        decade screenshot PANE FILE
        decade record PANE FILE [--format mp4|gif] [--fps N] [--duration SECONDS]
-                     [--width N] [--quality N] [--no-pointer] [--once]
+                     [--width N] [--quality N] [--no-pointer] [--pointer-scale N]
+                     [--once]
        decade server";
 
 #[cfg(target_os = "linux")]
